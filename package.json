@@ -1,0 +1,37 @@
+{
+  "name": "@react-native-gamekit/workspace",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@11.8.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:docs": "pnpm --filter @react-native-gamekit/docs dev",
+    "dev:playground": "pnpm --filter @react-native-gamekit/playground dev",
+    "ios": "pnpm --filter @react-native-gamekit/playground ios",
+    "android": "pnpm --filter @react-native-gamekit/playground android",
+    "expo:prebuild": "pnpm --filter @react-native-gamekit/playground expo:prebuild",
+    "expo:prebuild:clean": "pnpm --filter @react-native-gamekit/playground expo:prebuild:clean",
+    "build": "turbo run build",
+    "build:gamekit": "pnpm --filter ./packages/gamekit build",
+    "build:docs": "pnpm --filter @react-native-gamekit/docs build",
+    "build:playground": "pnpm --filter @react-native-gamekit/playground build",
+    "lint": "turbo run lint",
+    "lint:docs": "pnpm --filter @react-native-gamekit/docs lint",
+    "lint:playground": "pnpm --filter @react-native-gamekit/playground lint",
+    "typecheck": "turbo run typecheck",
+    "typecheck:docs": "pnpm --filter @react-native-gamekit/docs typecheck",
+    "typecheck:playground": "pnpm --filter @react-native-gamekit/playground typecheck",
+    "test": "turbo run test",
+    "test:coverage": "turbo run test:coverage",
+    "pack:inspect": "pnpm --filter ./packages/gamekit pack:inspect",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.0",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,27 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+sharedWorkspaceLockfile: true
+saveWorkspaceProtocol: '*'
+
+catalog:
+  typescript: ~6.0.3
+
+overrides:
+  # Security floor for docs/build tooling transitive dependencies.
+  postcss: 8.5.25
+  sharp: 0.35.3
+  uuid: 11.1.1
+
+allowBuilds:
+  # esbuild is required by tsx, the loader used for the library's node:test suite.
+  esbuild: true
+  # Skia's postinstall downloads the prebuilt native binaries.
+  '@shopify/react-native-skia': true
+  # unrs-resolver validates its native binding; used by the ESLint toolchain.
+  unrs-resolver: true
+  # sharp is used by Next.js for production image optimization.
+  sharp: true

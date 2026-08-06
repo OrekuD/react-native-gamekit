@@ -1,0 +1,55 @@
+---
+title: Repository
+description: The monorepo layout and canonical workspace commands.
+---
+
+# Repository
+
+The repository is a pnpm + Turborepo monorepo with one shared lockfile.
+
+| Path | Package | Purpose |
+| --- | --- | --- |
+| `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library. |
+| `apps/playground` | `@react-native-gamekit/playground` | Expo dev-build playground (iOS/iPadOS/Android), tablet enabled. |
+| `apps/docs` | `@react-native-gamekit/docs` | This documentation site. |
+| `plans/` | — | Task plans; task boundaries are authoritative. |
+
+## Workspace commands
+
+Run from the repository root:
+
+```sh
+pnpm install             # workspace install, one shared lockfile
+pnpm dev                 # docs + playground development tasks
+pnpm dev:docs            # Fumadocs only
+pnpm dev:playground      # Expo/Metro only
+pnpm ios                 # build + run the playground on iOS
+pnpm android             # build + run the playground on Android
+pnpm expo:prebuild       # generate native playground projects (CNG)
+pnpm expo:prebuild:clean # regenerate from a clean state
+pnpm build               # workspace builds + docs production build
+pnpm lint                # lint all workspaces
+pnpm typecheck           # type-check all workspaces
+pnpm test                # run all workspace tests
+pnpm test:coverage       # tests with coverage where supported
+pnpm check               # lint -> typecheck -> test -> build, in that order
+```
+
+`ios`, `android`, and `expo:prebuild*` alter or compile native projects and
+are intentionally not cached by Turborepo.
+
+## Project invariants
+
+1. **No per-frame React state.** React props configure or observe a game
+   session; they never become the per-frame store.
+2. **Generated native directories stay untracked.** `apps/playground/ios` and
+   `apps/playground/android` are produced by CNG and must never be committed.
+3. **Native singleton dependency policy.** Native singletons live in the
+   playground's `dependencies`, the library's `peerDependencies`, and the
+   library's exact `devDependencies` — never in the library's normal
+   `dependencies`.
+4. **Test-first changes.** Write the failing test and/or compile-time fixture
+   before the implementation that makes it pass.
+5. **One lockfile.** `apps/*` and `packages/*` share the root pnpm workspace.
+
+See `AGENTS.md` at the repository root for the full invariants.

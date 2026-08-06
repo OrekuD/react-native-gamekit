@@ -1,0 +1,57 @@
+---
+title: Installation
+description: Set up the playground with local native development builds.
+---
+
+# Installation
+
+React Native GameKit is consumed from the `react-native-gamekit` package. The
+playground uses **local native development builds** — Expo Go is not a
+supported requirement.
+
+## Requirements
+
+- Node.js `>=22.13.0`
+- pnpm 11
+
+## Install the workspace
+
+```sh
+git clone https://github.com/OrekuD/react-native-gamekit.git
+cd react-native-gamekit
+pnpm install
+```
+
+## Generate native projects
+
+The `ios` and `android` directories are produced by Expo Continuous Native
+Generation (CNG). They are never committed — change native configuration
+through `app.json` and config plugins only.
+
+```sh
+pnpm expo:prebuild
+```
+
+Regenerate from a clean state with:
+
+```sh
+pnpm expo:prebuild:clean
+```
+
+## Run the playground
+
+```sh
+pnpm ios       # iOS / iPadOS simulator
+pnpm android   # Android emulator
+```
+
+The playground is a bootstrap status screen: it shows the current platform,
+the live window size (updating on rotation, resize, and iPad split view), and
+whether the local GameKit package import resolved.
+
+## Package consumers
+
+For a regular app, the package declares `react`, `react-native`, and `expo` as
+peer dependencies along with the native singletons (Skia, Gesture Handler,
+Reanimated, Worklets, Safe Area Context, and the required Expo modules). Your
+application must contain exactly one compatible copy of every native peer.

@@ -1,0 +1,13 @@
+{
+  "title": "React Native GameKit",
+  "pages": [
+    "index",
+    "---Getting Started---",
+    "getting-started/installation",
+    "getting-started/repository",
+    "---Concepts---",
+    "concepts/game-definition",
+    "---Reference---",
+    "compatibility"
+  ]
+}

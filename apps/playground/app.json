@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "React Native GameKit Playground",
+    "slug": "react-native-gamekit-playground-dev",
+    "version": "0.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "scheme": "rngamekitplayground",
+    "plugins": [
+      "expo-dev-client",
+      "expo-asset",
+      "expo-audio"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.reactnativegamekit.playground"
+    },
+    "android": {
+      "package": "com.reactnativegamekit.playground",
+      "predictiveBackGestureEnabled": false,
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

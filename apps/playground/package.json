@@ -1,0 +1,42 @@
+{
+  "name": "@react-native-gamekit/playground",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "scripts": {
+    "dev": "expo start",
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "expo:prebuild": "expo prebuild",
+    "expo:prebuild:clean": "expo prebuild --clean",
+    "build": "expo export --platform ios --output-dir dist",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/**/*.test.ts",
+    "test:coverage": "node --experimental-strip-types --experimental-test-coverage --test src/**/*.test.ts"
+  },
+  "dependencies": {
+    "@shopify/react-native-skia": "2.6.2",
+    "expo": "~57.0.10",
+    "expo-asset": "~57.0.8",
+    "expo-audio": "~57.0.3",
+    "expo-dev-client": "~57.0.10",
+    "expo-haptics": "~57.0.1",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-gamekit": "workspace:*",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-worklets": "0.10.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~57.0.1",
+    "typescript": "~6.0.3"
+  }
+}

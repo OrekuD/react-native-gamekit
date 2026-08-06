@@ -1,0 +1,38 @@
+---
+title: Compatibility
+description: The tested Expo, React Native, React, and native peer lines.
+---
+
+# Compatibility
+
+The first supported compatibility line is validated in the playground:
+
+| Dependency | Version |
+| --- | --- |
+| Expo | SDK 57 (`~57.0.10`) |
+| React Native | `0.86.2` |
+| React | `19.2.3` |
+| React Native Skia | `2.6.2` |
+| React Native Gesture Handler | `~2.32.0` |
+| React Native Reanimated | `4.5.1` |
+| React Native Worklets | `0.10.1` |
+| React Native Safe Area Context | `~5.7.0` |
+| Expo Asset | `~57.0.8` |
+| Expo Audio | `~57.0.3` |
+| Expo Haptics | `~57.0.1` |
+
+## Native singletons
+
+Skia, Gesture Handler, Reanimated, Worklets, Safe Area Context, and the
+required Expo modules are native singletons. They live in the playground's
+`dependencies`, the library's `peerDependencies`, and the library's exact
+`devDependencies`. Applications must contain exactly one compatible copy of
+every native peer.
+
+## Platforms
+
+- iOS and iPadOS (tablet enabled, both orientations)
+- Android (phones and tablets)
+
+Expo Go is **not** a supported requirement — the playground uses local native
+development builds via `expo prebuild` and `expo run:ios` / `expo run:android`.

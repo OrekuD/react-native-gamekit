@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.14.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build library
+        run: pnpm --filter ./packages/gamekit build
+
+      - name: Inspect package tarball
+        run: pnpm --filter ./packages/gamekit pack:inspect
+
+      - name: Build docs
+        run: pnpm --filter @react-native-gamekit/docs build
+
+      - name: Validate Expo config
+        run: pnpm --filter @react-native-gamekit/playground exec expo config --type public > /dev/null
+
+      - name: Validate Expo dependencies
+        run: pnpm --filter @react-native-gamekit/playground exec expo install --check
+
+      - name: Export playground (CI bundle)
+        run: pnpm --filter @react-native-gamekit/playground build
+
+      - name: Verify clean prebuild and native autolinking
+        run: |
+          # --no-install: CocoaPods and Gradle cannot run on Linux CI; the
+          # generated native projects and the JS-side autolinking check are
+          # what this step verifies.
+          pnpm --filter @react-native-gamekit/playground exec expo prebuild --clean --no-install
+          pnpm --filter @react-native-gamekit/playground exec expo-modules-autolinking verify --verbose

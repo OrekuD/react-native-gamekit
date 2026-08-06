@@ -1,0 +1,80 @@
+---
+title: Game Definition
+description: The provisional defineGame contract.
+---
+
+# Game Definition
+
+> **Provisional.** The `defineGame` shape below is provisional until reference
+> games validate it. Runtime methods such as `start`, `pause`, `setScene`, or
+> `dispose` are **not** implemented yet and are not documented as available.
+
+## Declaring a game
+
+```ts
+import { defineGame } from 'react-native-gamekit';
+
+const game = defineGame({
+  viewport: {
+    logicalSize: { width: 390, height: 844 },
+    scale: 'fit',
+    overflow: 'letterbox',
+  },
+  assets: [],
+  input: {},
+  scenes: {
+    menu: {},
+    level1: {},
+  },
+  initialScene: 'menu',
+});
+```
+
+`defineGame` validates the definition at the type level and preserves and
+returns the supplied definition. It does not start a scheduler, allocate a
+session, load assets, or register input.
+
+## Viewport
+
+The viewport declares the **logical size** the game is authored against,
+together with a **scale policy** and an **overflow policy**:
+
+| Policy | Behavior | Good for |
+| --- | --- | --- |
+| `scale: 'fit'` / `overflow: 'letterbox'` | Preserve the designed logical world and show bars/unused space where aspect ratios differ. | Competitive/fair games, pixel art, tightly composed arcade games |
+| `scale: 'fill'` / `overflow: 'crop'` | Fill the surface and crop excess logical area. | Cinematic backgrounds and experiences where edges are nonessential |
+| `scale: 'extend-world'` | Preserve scale but reveal more world on larger/wider surfaces. | Exploration and some action games; must consider gameplay fairness |
+| `overflow: 'adaptive'` | Let the scene select layout/bounds from breakpoint or capability rules. | Board, card, strategy, puzzle, and UI-heavy games |
+
+The chosen policy must affect both drawing and input hit-testing through the
+same transform — implemented in a later task.
+
+## Scene names are inferred
+
+`initialScene` must be one of the keys of `scenes`:
+
+```ts
+defineGame({
+  viewport,
+  assets: [],
+  input: {},
+  scenes: { menu: {}, level1: {} },
+  initialScene: 'level1', // ok
+  // initialScene: 'level2', // type error: not a scene key
+});
+```
+
+## Model
+
+- **Headless-first:** React props configure or observe a game session; they
+  never become the per-frame store.
+- **Immutable frames:** a system sees one immutable input/time snapshot for
+  one simulation tick.
+- **Command boundary:** world changes are requested through a defined command
+  boundary.
+- **Selector-based UI:** UI subscriptions are selector-based and only notify
+  React when the selected value changes.
+
+These rules are more durable than the provisional names — see the
+[research document](https://github.com/OrekuD/react-native-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md)
+for the full design sketch.

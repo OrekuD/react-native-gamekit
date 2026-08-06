@@ -1,0 +1,60 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+.pnpm-store/
+
+# turbo
+.turbo/
+
+# Expo
+.expo/
+expo-env.d.ts
+web-build/
+dist/
+
+# Fumadocs / Next.js
+.next/
+.source/
+out/
+next-env.d.ts
+
+# package build output (react-native-builder-bob)
+packages/gamekit/lib/
+
+# coverage
+coverage/
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+pnpm-debug.log*
+
+# macOS
+.DS_Store
+*.pem
+
+# local environment files
+.env
+.env.*
+!.env.example
+
+# typescript
+*.tsbuildinfo
+
+# generated native projects (Continuous Native Generation)
+/apps/playground/ios
+/apps/playground/android

@@ -1,0 +1,84 @@
+{
+  "name": "react-native-gamekit",
+  "version": "0.0.0",
+  "description": "A headless-first 2D game toolkit for React Native and Expo, built for mobile and tablet.",
+  "license": "MIT",
+  "main": "./lib/module/index.js",
+  "types": "./lib/typescript/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/src/index.d.ts",
+      "default": "./lib/module/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "react-native": "./lib/module/index.js",
+  "files": [
+    "lib",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "bob build",
+    "clean": "del-cli lib",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:coverage": "node --import tsx --experimental-test-coverage --test test/*.test.ts",
+    "prepack": "bob build",
+    "pack:inspect": "pnpm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@shopify/react-native-skia": "2.6.2",
+    "expo": "~57.0.10",
+    "expo-asset": "~57.0.8",
+    "expo-audio": "~57.0.3",
+    "expo-haptics": "~57.0.1",
+    "react": "^19.2.3",
+    "react-native": "~0.86.2",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-worklets": "0.10.1"
+  },
+  "devDependencies": {
+    "@shopify/react-native-skia": "2.6.2",
+    "@types/node": "^22.0.0",
+    "del-cli": "^7.0.0",
+    "eslint": "^9.39.0",
+    "expo": "57.0.10",
+    "expo-asset": "57.0.8",
+    "expo-audio": "57.0.3",
+    "expo-haptics": "57.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.2",
+    "react-native-builder-bob": "^0.43.0",
+    "react-native-gesture-handler": "2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "5.7.0",
+    "react-native-worklets": "0.10.1",
+    "tsx": "^4.19.0",
+    "typescript": "catalog:",
+    "typescript-eslint": "^8.0.0"
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      [
+        "module",
+        {
+          "esm": true
+        }
+      ],
+      [
+        "typescript",
+        {
+          "project": "tsconfig.build.json"
+        }
+      ]
+    ]
+  }
+}

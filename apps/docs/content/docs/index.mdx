@@ -1,0 +1,37 @@
+---
+title: Documentation
+description: Everything about defining games with React Native GameKit.
+---
+
+# Documentation
+
+React Native GameKit is a headless-first 2D game toolkit for React Native and
+Expo, built for mobile and tablet.
+
+The product boundary:
+
+- **Mobile and tablet.** Phones, iPad, Android tablets — including rotation,
+  split view, and resizable windows.
+- **Expo and React Native.** Development builds via `expo prebuild`; Expo Go is
+  not a supported requirement.
+- **Excellent 2D first.** A stable, well-tested 2D experience is the priority;
+  the architecture keeps seams open for future 3D work.
+
+## Headless-first
+
+React props configure or observe a game session; they never become the
+per-frame store. Game state advances through a headless session, not through
+React re-renders.
+
+## Getting started
+
+Start with [Installation](./getting-started/installation) to set up a
+development build, then read the
+[Game Definition](./concepts/game-definition) concept to understand the
+provisional `defineGame` contract.
+
+## Architecture research
+
+The [research document](https://github.com/OrekuD/react-native-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md)
+records the product direction, module boundaries, viewport policies, and the
+decision trail. Read it for background before extending the API.
