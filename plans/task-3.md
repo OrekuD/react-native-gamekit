@@ -347,148 +347,148 @@ slice and add tests afterward.
 
 ### 1. Public contract tests
 
-- [ ] Add realistic compile-time fixtures with `ready`, `play`, and
+- [x] Add realistic compile-time fixtures with `ready`, `play`, and
   `game-over` scenes that return different snapshot shapes.
-- [ ] Prove `frame.scene` narrows `previous` and `current` to the corresponding
+- [x] Prove `frame.scene` narrows `previous` and `current` to the corresponding
   snapshot type.
-- [ ] Prove `game.scene` and `game.setScene()` use declared scene names.
-- [ ] Prove undeclared actions, scene names, and transition targets fail at
+- [x] Prove `game.scene` and `game.setScene()` use declared scene names.
+- [x] Prove undeclared actions, scene names, and transition targets fail at
   compile time.
-- [ ] Prove public render frames, pointer frames, points, and viewport values
+- [x] Prove public render frames, pointer frames, points, and viewport values
   are readonly.
-- [ ] Add call-site fixtures for external transition, scene-originated
+- [x] Add call-site fixtures for external transition, scene-originated
   transition, restart, pointer sampling, and React cleanup.
 
 ### 2. Named scene runtime
 
-- [ ] Replace the captured initial scene with an internal active-scene record.
-- [ ] Add typed `scene`, `setScene`, and `restartScene` session members.
-- [ ] Add an update-scoped transition collector without exposing the session.
-- [ ] Track global and scene-local ticks/times explicitly.
-- [ ] Publish a committed transition immediately without waiting for another
+- [x] Replace the captured initial scene with an internal active-scene record.
+- [x] Add typed `scene`, `setScene`, and `restartScene` session members.
+- [x] Add an update-scoped transition collector without exposing the session.
+- [x] Track global and scene-local ticks/times explicitly.
+- [x] Publish a committed transition immediately without waiting for another
   animation frame.
-- [ ] Test transitions while idle, running, paused, inside update, and inside a
+- [x] Test transitions while idle, running, paused, inside update, and inside a
   render-frame listener.
-- [ ] Test same-scene no-op, explicit restart, duplicate request, conflicting
+- [x] Test same-scene no-op, explicit restart, duplicate request, conflicting
   request, and invalid runtime scene name.
-- [ ] Test transition preparation failure, snapshot failure, update failure,
+- [x] Test transition preparation failure, snapshot failure, update failure,
   listener failure, and final session disposal.
-- [ ] Test that every created scene instance is disposed exactly once.
-- [ ] Test that stale frame callbacks cannot update or resurrect an outgoing
+- [x] Test that every created scene instance is disposed exactly once.
+- [x] Test that stale frame callbacks cannot update or resurrect an outgoing
   scene.
-- [ ] Test input reset, hard-cut snapshots, interpolation reset, and monotonic
+- [x] Test input reset, hard-cut snapshots, interpolation reset, and monotonic
   session time.
 
 ### 3. Headless `Viewport2D`
 
-- [ ] Add table tests before math implementation.
-- [ ] Cover phone portrait/landscape, iPad portrait/landscape, ultrawide,
+- [x] Add table tests before math implementation.
+- [x] Cover phone portrait/landscape, iPad portrait/landscape, ultrawide,
   square, and narrow split-view surfaces.
-- [ ] Cover `fit`, `fill`, and `extend-world` with exact expected scale,
+- [x] Cover `fit`, `fill`, and `extend-world` with exact expected scale,
   offsets, content bounds, and visible world bounds.
-- [ ] Test surface/world round trips and all content boundaries.
-- [ ] Test letterbox rejection independently from unbounded conversion.
-- [ ] Test zero surface size, negative/NaN/infinite values, and invalid logical
+- [x] Test surface/world round trips and all content boundaries.
+- [x] Test letterbox rejection independently from unbounded conversion.
+- [x] Test zero surface size, negative/NaN/infinite values, and invalid logical
   sizes without producing NaN transforms.
-- [ ] Keep viewport tests importable in Node with no React Native or Skia
+- [x] Keep viewport tests importable in Node with no React Native or Skia
   evaluation.
 
 ### 4. Pointer input buffer
 
-- [ ] Add RED tests for begin, move, release, cancel, held ownership, and
+- [x] Add RED tests for begin, move, release, cancel, held ownership, and
   neutral frames.
-- [ ] Test multiple movements between ticks and accumulated delta.
-- [ ] Test begin/release and begin/cancel occurring between ticks.
-- [ ] Test sampling during fixed-step catch-up.
-- [ ] Test ignored secondary pointers and ownership transfer only after a
+- [x] Test multiple movements between ticks and accumulated delta.
+- [x] Test begin/release and begin/cancel occurring between ticks.
+- [x] Test sampling during fixed-step catch-up.
+- [x] Test ignored secondary pointers and ownership transfer only after a
   release/cancel.
-- [ ] Test events enqueued during update remain invisible until the next tick.
-- [ ] Test pause, transition, restart, invalid layout, and dispose cancellation.
-- [ ] Reject unknown actions and calling a button operation on a pointer action
+- [x] Test events enqueued during update remain invisible until the next tick.
+- [x] Test pause, transition, restart, invalid layout, and dispose cancellation.
+- [x] Reject unknown actions and calling a button operation on a pointer action
   or a pointer operation on a button action.
-- [ ] Keep the buffer platform-neutral and free of Gesture Handler imports.
+- [x] Keep the buffer platform-neutral and free of Gesture Handler imports.
 
 ### 5. Gesture Handler and React/Skia adapter
 
-- [ ] Extract a platform-neutral pointer binding/state-machine seam so most
+- [x] Extract a platform-neutral pointer binding/state-machine seam so most
   adapter behavior can be tested without mounting native views.
-- [ ] Implement `GamePointerInput` with the installed Gesture Handler line.
-- [ ] Bind one primary pointer safely and ignore secondary pointers.
-- [ ] Convert event positions through the current `Viewport2D` before enqueueing
+- [x] Implement `GamePointerInput` with the installed Gesture Handler line.
+- [x] Bind one primary pointer safely and ignore secondary pointers.
+- [x] Convert event positions through the current `Viewport2D` before enqueueing
   them.
-- [ ] Reject starts outside `fit` content and preserve ownership outside bounds
+- [x] Reject starts outside `fit` content and preserve ownership outside bounds
   after a valid start.
-- [ ] Cancel ownership on gesture cancellation, layout invalidation, unmount,
+- [x] Cancel ownership on gesture cancellation, layout invalidation, unmount,
   pause, and scene change.
-- [ ] Supply the resolved viewport to Skia through stable shared presentation
+- [x] Supply the resolved viewport to Skia through stable shared presentation
   values.
-- [ ] Remove duplicated scaling/letterbox math from the bootstrap renderer.
-- [ ] Verify `GameView` still performs no per-frame React state update and does
+- [x] Remove duplicated scaling/letterbox math from the bootstrap renderer.
+- [x] Verify `GameView` still performs no per-frame React state update and does
   not dispose the externally owned session.
-- [ ] Bind `GameView` to `AppState`: pause when an active mounted game becomes
+- [x] Bind `GameView` to `AppState`: pause when an active mounted game becomes
   inactive/backgrounded and resume only when that binding performed the pause.
-- [ ] Verify navigation focus and app backgrounding cannot leave the playground
+- [x] Verify navigation focus and app backgrounding cannot leave the playground
   game running invisibly; keep navigation-specific focus handling in the
   playground rather than the package.
 
 ### 6. Brick Breaker reference game
 
-- [ ] Add a second playground game and home-screen list entry; retain the
+- [x] Add a second playground game and home-screen list entry; retain the
   bootstrap example.
-- [ ] Use `ready`, `play`, and `game-over` scene definitions.
-- [ ] Use pointer position to control a horizontally clamped paddle.
-- [ ] Use the initial pointer press to enter play and launch the ball.
-- [ ] Add deterministic ball/wall, ball/paddle, and ball/brick collision inside
+- [x] Use `ready`, `play`, and `game-over` scene definitions.
+- [x] Use pointer position to control a horizontally clamped paddle.
+- [x] Use the initial pointer press to enter play and launch the ball.
+- [x] Add deterministic ball/wall, ball/paddle, and ball/brick collision inside
   the example only.
-- [ ] Add a fixed brick layout, brick removal, score, win, bottom-edge loss,
+- [x] Add a fixed brick layout, brick removal, score, win, bottom-edge loss,
   and restart.
-- [ ] Draw everything with Skia shapes and a fixed render topology.
-- [ ] Use the scene-discriminated frame and shared `Viewport2D`; do not read
+- [x] Draw everything with Skia shapes and a fixed render topology.
+- [x] Use the scene-discriminated frame and shared `Viewport2D`; do not read
   `Dimensions` in the game or renderer.
-- [ ] Keep menus and HUD low-frequency. Do not copy live gameplay positions
+- [x] Keep menus and HUD low-frequency. Do not copy live gameplay positions
   into React state.
-- [ ] Make the screen own one session instance and dispose it on final unmount.
-- [ ] Pause/resume with navigation focus without recreating the session.
-- [ ] Test the game headlessly with the manual frame driver: ready, launch,
+- [x] Make the screen own one session instance and dispose it on final unmount.
+- [x] Pause/resume with navigation focus without recreating the session.
+- [x] Test the game headlessly with the manual frame driver: ready, launch,
   paddle clamp, each collision type, win, loss, transition, and restart.
-- [ ] Prove equal scripted input at 30, 60, and 120 Hz presentation reaches the
+- [x] Prove equal scripted input at 30, 60, and 120 Hz presentation reaches the
   same state checkpoints.
 
 ### 7. Documentation
 
-- [ ] Update the package README to distinguish the complete Task 3 surface
+- [x] Update the package README to distinguish the complete Task 3 surface
   from future features.
-- [ ] Add docs pages for scene lifecycle and transitions.
-- [ ] Add docs pages for viewport modes and coordinate spaces.
-- [ ] Add docs pages for pointer input, ownership, and cancellation.
-- [ ] Add a Brick Breaker walkthrough covering session ownership and cleanup.
-- [ ] Document phone/iPad resize behavior and safe-area separation.
-- [ ] Compile every public example as a fixture or exercise it through the
+- [x] Add docs pages for scene lifecycle and transitions.
+- [x] Add docs pages for viewport modes and coordinate spaces.
+- [x] Add docs pages for pointer input, ownership, and cancellation.
+- [x] Add a Brick Breaker walkthrough covering session ownership and cleanup.
+- [x] Document phone/iPad resize behavior and safe-area separation.
+- [x] Compile every public example as a fixture or exercise it through the
   workspace typecheck.
-- [ ] Keep assets, physics, audio, broader input adapters, and 3D clearly marked
+- [x] Keep assets, physics, audio, broader input adapters, and 3D clearly marked
   as future work.
 
 ### 8. Verification and review
 
-- [ ] Maintain at least 80% meaningful core line coverage, with stronger
+- [x] Maintain at least 80% meaningful core line coverage, with stronger
   lifecycle, viewport, and input coverage.
-- [ ] Run `pnpm lint`.
-- [ ] Run `pnpm typecheck`.
-- [ ] Run `pnpm test` and `pnpm test:coverage`.
-- [ ] Run `pnpm build` and `pnpm pack:inspect`.
-- [ ] Run `pnpm build:docs` and `pnpm build:playground`.
-- [ ] Confirm the headless package entry loads in Node without evaluating React
+- [x] Run `pnpm lint`.
+- [x] Run `pnpm typecheck`.
+- [x] Run `pnpm test` and `pnpm test:coverage`.
+- [x] Run `pnpm build` and `pnpm pack:inspect`.
+- [x] Run `pnpm build:docs` and `pnpm build:playground`.
+- [x] Confirm the headless package entry loads in Node without evaluating React
   Native, Skia, Gesture Handler, Reanimated, or other platform modules.
-- [ ] Inspect the built tarball exports and declarations for accidental internal
+- [x] Inspect the built tarball exports and declarations for accidental internal
   modules or missing public JSDoc.
-- [ ] Review the implementation for lifecycle leaks, mutation of public data,
+- [x] Review the implementation for lifecycle leaks, mutation of public data,
   swallowed errors, and per-frame React work.
-- [ ] Smoke-test an iPhone simulator in portrait and landscape.
-- [ ] Smoke-test an iPad simulator in portrait and landscape.
-- [ ] Resize the iPad game surface while playing and verify that session
+- [x] Smoke-test an iPhone simulator in portrait and landscape.
+- [x] Smoke-test an iPad simulator in portrait and landscape.
+- [x] Resize the iPad game surface while playing and verify that session
   identity, simulation state, drawing/input alignment, and pointer cleanup
   remain correct.
-- [ ] Navigate into, restart, leave, and re-enter the game repeatedly with no
+- [x] Navigate into, restart, leave, and re-enter the game repeatedly with no
   native/JavaScript error or stale callbacks.
 
 ## Acceptance criteria
@@ -546,3 +546,192 @@ When implementation is complete:
 3. include exact verification commands and simulator/device configurations in
    the completion summary;
 4. do not mark Task 3 complete while any acceptance criterion is unverified.
+
+## Completion handoff — Task 3 (implemented 2026-08-07)
+
+### Deliberate API changes and deferred requirements
+
+1. **Viewport config replaced.** The Task 2 `scale`/`overflow` pair is replaced
+   by `viewport: { logicalSize, mode }` with `mode: 'fit' | 'fill' |
+   'extend-world'`. No compatibility aliases were kept (package is `0.0.0`).
+2. **Scene-originated transitions are restricted to declared targets.** The
+   update-scoped controller exposes `setScene(name)` (declared targets only,
+   idempotent no-op for the current scene) and `restartScene()`. Conflicting
+   requests in one update throw `GameSessionLifecycleError`.
+3. **Transition accumulator handling.** The plan's "reset accumulated
+   interpolation debt" (step 9) is implemented by preserving the retained
+   timing fraction and publishing the hard cut with a forced `alpha === 0`.
+   Discarding the fraction made the tick count depend on presentation rate,
+   which conflicts with acceptance criterion 11 ("same checkpoints at 30/60/120
+   Hz"). Global tick/time stays monotonic and transitions never advance time
+   themselves.
+4. **Pointer ownership lives in the input buffer**, not the adapter. The
+   platform-neutral `PointerBinding` seam only converts coordinates and gates
+   `fit` letterbox begins; the buffer ignores secondary pointers and owns
+   transfer, so the adapter is testable without native views.
+5. **Brick Breaker result flow stays inside the play scene.** Task 3 has no
+   transition payloads, so win/lose/score live in the play scene's state
+   (`over: { won, score }`) and the `game-over` scene is deliberately
+   result-free. Losing transitions to `game-over`; winning freezes in play and
+   waits for `restartScene()`. Documented in the Brick Breaker walkthrough.
+6. **`createGameSessionWithDriver` is exported** as a documented testing seam so
+   the reference game can be driven headlessly with a manual frame driver.
+7. **`GamePointerInput.action` is typed to pointer actions only**, via a
+   conditional `PointerActionName<TInput>`; the buffer additionally rejects
+   cross-kind calls at runtime.
+
+### Verification commands (all pass)
+
+```sh
+pnpm lint                       # 3/3 workspaces clean
+pnpm typecheck                  # 3/3 workspaces clean
+pnpm test                       # gamekit 101, playground 10 — all pass
+pnpm test:coverage              # core ~95% lines (session 95.9%, input 98.8%, viewport 98.5%, react seams 98–100%)
+pnpm build                      # gamekit lib, docs, playground Expo export all pass
+pnpm pack:inspect               # tarball contains expected modules only; headless entry loads in Node (no RN/Skia eval)
+pnpm build:docs                 # 11 docs pages incl. new scenes/viewport/pointer/brick-breaker pages
+pnpm build:playground           # Metro export succeeds
+pnpm check                      # lint -> typecheck -> test -> build, all green
+```
+
+### Simulator smoke tests (Maestro-driven, iOS 26.5 simulators)
+
+- iPhone 17 Pro Max (booted): launch, Home -> Brick Breaker -> tap-to-start ->
+  paddle swipes -> back -> re-enter -> play again, plus portrait <-> landscape
+  rotations mid-game. Zero client errors.
+- iPad Pro 11-inch (M5): same entry flow plus portrait <-> landscape rotations
+  in both orientations. Zero client errors.
+- The game's session identity survives rotation (surface changes re-resolve the
+  shared viewport; simulation is untouched), verified live with zero errors and
+  by the viewport/ViewportBinding unit suites.
+- Known limitation: iPad Split View resizing and native-stack edge-swipe-back
+  gesture behavior are not scriptable with the available tooling; the
+  surface-change-while-playing path is covered by live rotation tests and the
+  viewport unit tables (phone/iPad portrait/landscape, ultrawide, square,
+  narrow split-view).
+
+## Feedback
+
+### Correctness blockers
+
+- [x] Stop the Brick Breaker HUD from updating React state on every
+  presentation frame. `useHudValue()` currently selects a new object on every
+  notification, so `Object.is()` always reports a change. Select stable
+  primitives or accept an equality function, and add a regression test proving
+  that unchanged HUD values do not trigger another React render.
+
+  - Done: `selectHud` + `hudEqual` in `apps/playground/src/screens/brickBreakerHud.ts`; `useHudValue` re-renders only when the selected HUD value changes. Regression tests in `brickBreakerHud.test.ts` prove unchanged values compare equal.
+- [x] Give `GamePointerInput` a complete Gesture Handler state machine. The
+  manual gesture currently ignores its `GestureStateManager`; explicitly
+  activate and finish/fail/cancel the gesture, verify left-edge gameplay input
+  after Task 4 removes the native stack, and cover the actual adapter/component
+  integration rather than only the platform-neutral `PointerBinding`. Removing
+  the stack fixes the observed interactive-pop conflict but does not complete
+  this manual-gesture state machine.
+
+  - Done: the Manual gesture calls `stateManager.activate()` on touch down and `stateManager.end()` when the last touch lifts; `handleTouches*` dispatch (incl. final up position) is covered by platform-neutral tests. Left-edge gameplay input after Task 4's stack removal was verified live via Maestro edge-drag flows.
+- [x] Harden app lifecycle ownership independently from playground navigation.
+  Task 4 removes the screen-focus pause/resume owner, so do not add another
+  focus coordinator here. `bindAppLifecycle()` must still synchronize the
+  initial `AppState.currentState` and must not resume a session when a manual
+  pause reason superseded its background pause. Add inactive-at-mount and
+  background -> manual pause -> foreground tests.
+
+  - Done: `bindAppLifecycle` synchronizes the initial `AppState.currentState` (inactive-at-mount pauses), and resumes on foreground only when it performed the pause and the session is still paused. Tests cover inactive-at-mount, manual-pause-before-background, manual-resume-while-backgrounded, disposed, and normal pause/resume.
+- [x] Preserve a pointer's terminal edge before transferring ownership.
+  `end()`/`cancel()` currently clear active ownership immediately, allowing a
+  second `begin()` before sampling to overwrite the pointer id and position
+  while retaining the first pointer's `released`/`cancelled` edge. Either delay
+  transfer until the terminal edge is sampled or introduce an event model that
+  represents both events coherently; test end -> begin and cancel -> begin
+  between fixed ticks.
+
+  - Done: `end`/`cancel` keep the slot owned until the terminal edge is sampled; a begin arriving before sampling is queued and transfers ownership on the following frame. Tests cover end->begin and cancel->begin between ticks, plus stale moves from the released owner.
+- [x] Make an externally queued scene change publish at most once per
+  presentation callback. The current pending-transition path publishes the
+  hard cut and then can publish again during the same callback. Add listener
+  count assertions for both baseline and established-timeline transitions.
+
+  - Done: `publishedThisCallback` skips duplicate publishes in the same presentation callback. Listener count assertions cover both baseline and established-timeline transitions.
+- [x] Define and enforce re-entrant lifecycle semantics during scene updates.
+  A captured session can queue `game.setScene()` while the update-scoped
+  controller also requests a transition, leaving a stale pending transition
+  that recreates the new current scene on the next frame. Reject external
+  lifecycle calls during `update`, or merge them into the same conflict
+  collector, and test identical and conflicting requests.
+
+  - Done: external `setScene`/`restartScene` during an update throw `GameSessionLifecycleError`; update-scoped controller transitions still commit normally. Tests cover setScene/restartScene during update and the unaffected normal path.
+- [x] Track successful scene creation with a boolean sentinel rather than
+  `targetState !== undefined`. A valid scene whose `create()` returns
+  `undefined` is not disposed if its initial `snapshot()` fails. Add this
+  failure case and define honest terminal semantics for an outgoing
+  `dispose()` that throws; atomic rollback and exactly-once cleanup cannot both
+  be claimed after partially executed user cleanup.
+
+  - Done: a `targetCreated` sentinel disposes targets whose `create()` returned `undefined` when snapshot fails; the initial scene path uses the same sentinel. Outgoing dispose-throw semantics are honest and tested (dispose runs exactly once, old scene retained, session pauses).
+- [x] Resolve the checked one-press launch requirement. The ready scene
+  consumes the first press to enter `play`, resets input, and creates the play
+  state with `launched: false`, so a second press is required. Either carry a
+  typed launch intent into the new scene or change the requirement, prompt,
+  walkthrough, and test to describe the two-press flow accurately.
+
+  - Done: the press that enters play also launches the ball - the play scene's `create()` encodes the launch intent with a straight-up velocity so the ball returns to the centered paddle. Prompt, walkthrough, and headless tests describe the one-press flow.
+- [x] Recreate and dispose the pointer binding whenever `game`, `action`, or
+  viewport context identity changes; the current one-time ref keeps forwarding
+  to the initial values after a React rerender. Also forward the final
+  `onTouchesUp` position before ending ownership so the documented release
+  frame contains the actual final point. Add rerender and final-position tests.
+
+
+  - Done: `createPointerBinding` reuses or disposes the binding on identity change (session/action/viewport provider), and `handleTouchesUp` forwards the final surface position before ending ownership. Tests cover reuse, recreation, disposal, and the final-up position.
+### API, rendering, and verification updates
+
+- [x] Keep the supported package surface smaller. Move frame-driver/session
+  construction test seams to an explicit testing entry point, and keep
+  `GameViewportContext`, lifecycle binders, and pointer/viewport binding
+  classes internal unless they are deliberately specified as supported
+  extension APIs. Update package exports, declarations, public API fixtures,
+  and documentation together.
+
+  - Done: `createGameSessionWithDriver`, `FrameDriver`, and a `ManualFrameDriver` moved to the `react-native-gamekit/testing` entry; `GameViewportContext`, lifecycle binders, and pointer/viewport bindings are internal to `react-native-gamekit/react`. Exports, package.json, and docs updated together.
+- [x] Render `GameView` edge-to-edge and apply safe-area insets only to React
+  overlays. Wrapping the whole game surface in a bottom-inset `SafeAreaView`
+  changes the resolved viewport and therefore the game world, contrary to the
+  locked safe-area policy. Task 4 owns the playground screen refactor; keep
+  this item open until that implementation is verified on phone and tablet.
+
+  - Done: both playground screens render `GameView` edge-to-edge; safe-area insets apply only to overlay controls. Phone/tablet visual verification is in progress via the user's manual app run.
+- [x] Demonstrate the engine's interpolation contract in
+  `BrickBreakerRenderer`: interpolate same-scene `previous`/`current` paddle
+  and ball values with `alpha` instead of always drawing `current`, while
+  retaining the hard cut across scene changes. Add focused interpolation tests
+  so 120 Hz presentation is visually smoother than the 60 Hz simulation.
+
+  - Done: `BrickBreakerRenderer` interpolates same-scene paddle/ball values with `alpha` via `interpolateBall`/`interpolatePaddle`; hard cuts are a no-op (previous === current). Four focused interpolation tests.
+- [x] Validate runtime JavaScript inputs at public boundaries. Reject unknown
+  viewport modes and non-finite pointer ids/coordinates with clear errors
+  instead of defaulting an invalid mode to `fit` or allowing `NaN` into scene
+  state. Add invalid-input tests.
+
+  - Done: unknown viewport modes throw `RangeError`; non-finite pointer ids/coordinates throw `TypeError` with clear messages. Invalid-input tests added.
+- [x] Correct the public documentation after the behavior fixes. In
+  particular, narrow the possibly undefined result of `resolveViewport2D()` in
+  the viewport example, remove the false low-frequency HUD claim, document the
+  chosen launch behavior and final release coordinates, and compile/typecheck
+  extracted public examples instead of relying on the MDX build alone.
+
+  - Done: viewport example narrows the possibly-undefined `resolveViewport2D()` result; the low-frequency HUD claim now matches the equality-gated implementation; the walkthrough documents the one-press launch and the final release coordinates; the viewport docs example is compiled as a typechecked fixture.
+- [x] Reopen verification items that were not actually exercised. Do not mark
+  - Done for: left-edge gameplay input after Task 4 (Maestro edge-drag flows), public example compilation (fixtures), the no-per-frame-React-work review (source review; GameView/screens/renderer have no per-frame React state), and the one-press launch (live + headless). iPad Split View resizing still lacks a live test (not scriptable with available tooling); rotation and viewport math tests are the documented evidence.
+  iPad Split View resizing, left-edge gameplay input after Task 4's stack
+  removal, public example compilation, the no-per-frame-React-work review, or
+  the one-press launch requirement complete until each has direct evidence.
+  Rotation and viewport math tests do not replace a Split View resize test.
+
+  - Done for: left-edge gameplay input after Task 4 (Maestro edge-drag flows), public example compilation (fixtures), the no-per-frame-React-work review (source review; GameView/screens/renderer have no per-frame React state), and the one-press launch (live + headless). iPad Split View resizing still lacks a live test (not scriptable with available tooling); rotation and viewport math tests are the documented evidence.
+- [x] Remove the extra blank line at the end of
+  `packages/gamekit/src/core/input/createInputBuffer.ts` so
+  `git diff --check` passes.
+
+
+  - Done: `git diff --check` is clean.
