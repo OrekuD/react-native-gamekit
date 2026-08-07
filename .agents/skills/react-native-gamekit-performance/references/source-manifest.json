@@ -1,0 +1,71 @@
+{
+  "retrieved_at": "2026-08-07",
+  "repositories": [
+    {
+      "name": "react-native-skia",
+      "url": "https://github.com/Shopify/react-native-skia",
+      "default_branch": "main",
+      "revision": "923ac2c24c4f18455fbbde31488b819ccb22aa24",
+      "files": [
+        "apps/docs/docs/canvas/canvas.md",
+        "apps/docs/docs/canvas/rendering-modes.md",
+        "apps/docs/docs/canvas/contexts.md",
+        "apps/docs/docs/animations/reanimated3.md",
+        "apps/docs/docs/animations/gestures.md",
+        "apps/docs/docs/animations/hooks.md",
+        "apps/docs/docs/animations/textures.md",
+        "apps/docs/docs/paint/overview.md",
+        "apps/docs/docs/group.md",
+        "apps/docs/docs/pictures.md",
+        "apps/docs/docs/shapes/atlas.md",
+        "apps/docs/docs/shapes/path.md",
+        "apps/docs/docs/image.md",
+        "apps/docs/docs/text/paragraph.md",
+        "apps/docs/docs/shaders/language.md",
+        "apps/docs/docs/shaders/images.md",
+        "apps/docs/docs/image-filters/overview.md",
+        "apps/docs/docs/image-filters/runtime-shader.md",
+        "apps/docs/docs/getting-started/installation.md",
+        "apps/docs/docs/getting-started/bundle-size.md"
+      ]
+    },
+    {
+      "name": "react-native-reanimated",
+      "url": "https://github.com/software-mansion/react-native-reanimated",
+      "default_branch": "main",
+      "revision": "04a7c4023bb9ff4c71f25753bd332432da5a6a04",
+      "files": [
+        "docs/docs-reanimated/docs/guides/performance.md",
+        "docs/docs-reanimated/docs/guides/compatibility.mdx",
+        "docs/docs-reanimated/docs/guides/worklets.mdx",
+        "docs/docs-reanimated/docs/core/useSharedValue.mdx",
+        "docs/docs-reanimated/docs/core/useDerivedValue.mdx",
+        "docs/docs-reanimated/docs/advanced/useFrameCallback.mdx",
+        "docs/docs-reanimated/docs/advanced/useAnimatedReaction.mdx",
+        "docs/docs-reanimated/docs/advanced/makeMutable.mdx",
+        "docs/docs-reanimated/docs/advanced/useTimestamp.mdx",
+        "docs/docs-reanimated/docs/core/cancelAnimation.mdx",
+        "docs/docs-reanimated/docs/fundamentals/handling-gestures.mdx",
+        "docs/docs-reanimated/docs/fundamentals/applying-modifiers.mdx",
+        "docs/docs-reanimated/docs/animations/withTiming.mdx",
+        "docs/docs-reanimated/docs/animations/withSpring.mdx",
+        "docs/docs-reanimated/docs/animations/withDecay.mdx",
+        "docs/docs-reanimated/docs/device/useReducedMotion.mdx",
+        "docs/docs-reanimated/docs/guides/feature-flags.md",
+        "docs/docs-reanimated/docs/debugging/accurate-call-stacks.mdx",
+        "docs/docs-reanimated/docs/debugging/logger-configuration.mdx",
+        "docs/docs-worklets/docs/fundamentals/runtimeKinds.mdx",
+        "docs/docs-worklets/docs/fundamentals/closures.mdx",
+        "docs/docs-worklets/docs/fundamentals/sharing-memory.mdx",
+        "docs/docs-worklets/docs/threading/scheduleOnUI.mdx",
+        "docs/docs-worklets/docs/threading/scheduleOnRN.mdx",
+        "docs/docs-worklets/docs/threading/createWorkletRuntime.mdx",
+        "docs/docs-worklets/docs/threading/scheduleOnRuntime.mdx",
+        "docs/docs-worklets/docs/guides/call-tables.mdx",
+        "docs/docs-worklets/docs/bundleMode/overview.mdx",
+        "docs/docs-worklets/docs/guides/feature-flags.md",
+        "docs/docs-worklets/docs/guides/compatibility.mdx"
+      ]
+    }
+  ]
+}

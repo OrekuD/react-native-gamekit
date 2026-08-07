@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Native GameKit Performance"
+  short_description: "Build performant Skia-powered mobile games"
+  default_prompt: "Use $react-native-gamekit-performance to design or review a high-performance React Native GameKit rendering, animation, and input implementation."

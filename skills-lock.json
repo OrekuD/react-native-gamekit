@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "react-native-skia": {
+      "source": "tristanmanchester/agent-skills",
+      "sourceType": "github",
+      "skillPath": "react-native-skia/SKILL.md",
+      "computedHash": "1804dbfbdded1f21cbc7f93f6c52f7db514860ca42fbc76a3e323a61fe784e7b"
+    },
+    "reanimated-skia-performance": {
+      "source": "andreev-danila/skills",
+      "sourceType": "github",
+      "skillPath": "skills/reanimated-skia-performance/SKILL.md",
+      "computedHash": "14ab8be93ebb822d4f9c6ebdce0204f0b5e3837b15b43cdb061a06973751364e"
+    }
+  }
+}
