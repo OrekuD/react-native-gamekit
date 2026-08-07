@@ -1,25 +1,43 @@
 import { Canvas, type SkSize } from '@shopify/react-native-skia';
-import { useEffect, type ComponentType, type ReactNode } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  createContext,
+  useEffect,
+  useRef,
+  type ComponentType,
+  type ReactNode,
+} from 'react';
+import {
+  AppState,
+  StyleSheet,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
-import type { GameSession, RenderFrame } from '../core/session/types';
+import type { InputMap, SceneMap } from '../definition/types';
+import type { GameRenderFrame, GameSession } from '../core/session/types';
+import type { ResolvedViewport2D } from '../viewport2d';
+import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
+import { ViewportBinding } from './viewportBinding';
 
 /** Stable imperative values supplied to a Skia renderer component. */
-export interface GameRendererProps<TSnapshot> {
+export interface GameRendererProps<TScenes extends SceneMap> {
   /** Latest session frame, updated without React state. */
-  readonly frame: SharedValue<RenderFrame<TSnapshot>>;
+  readonly frame: SharedValue<GameRenderFrame<TScenes>>;
   /** Actual canvas size, including iPad resizing and split view. */
   readonly surfaceSize: SharedValue<SkSize>;
+  /** Latest resolved viewport shared with the input adapter. */
+  readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
 }
 
-/** Props for the first Skia-backed GameKit view. */
-export interface GameViewProps<TActionName extends string, TSnapshot> {
+/** Props for the Skia-backed GameKit view. */
+export interface GameViewProps<TScenes extends SceneMap, TInput extends InputMap> {
   /** Externally owned headless game session. */
-  readonly game: GameSession<TActionName, TSnapshot>;
-  /** Stable Skia renderer component for the session snapshot type. */
-  readonly renderer: ComponentType<GameRendererProps<TSnapshot>>;
+  readonly game: GameSession<TScenes, TInput>;
+  /** Stable Skia renderer component for the session's scene snapshots. */
+  readonly renderer: ComponentType<GameRendererProps<TScenes>>;
   /** Static React HUD and controls mounted above the canvas. */
   readonly children?: ReactNode;
   /** Optional style for the mounted surface. */
@@ -27,39 +45,83 @@ export interface GameViewProps<TActionName extends string, TSnapshot> {
 }
 
 /**
+ * Context supplying the shared resolved viewport to pointer input children.
+ *
+ * `GamePointerInput` consumes this binding so drawing and hit testing always
+ * use the same resolved viewport instance for a layout revision.
+ */
+export const GameViewportContext = createContext<ViewportBinding | null>(null);
+
+/**
  * Mount a headless GameSession into a Skia canvas.
  *
- * Presentation frames update Reanimated shared values directly. React owns
- * only the surface and static overlay tree; it is never the frame store.
+ * Presentation frames update Reanimated shared values directly and the
+ * resolved viewport updates only on layout changes. React owns the surface
+ * and static overlay tree; it is never the frame store. The session is
+ * started while mounted, paused on cleanup and app backgrounding, and is
+ * never disposed by this component — the creator owns disposal.
  */
-export function GameView<TActionName extends string, TSnapshot>({
+export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   game,
   renderer: Renderer,
   children,
   style,
-}: GameViewProps<TActionName, TSnapshot>) {
-  const frame = useSharedValue<RenderFrame<TSnapshot>>(() => game.getRenderFrame());
+}: GameViewProps<TScenes, TInput>) {
+  const frame = useSharedValue<GameRenderFrame<TScenes>>(() => game.getRenderFrame());
   const surfaceSize = useSharedValue<SkSize>({ width: 0, height: 0 });
+  const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
 
-  useEffect(
-    () =>
-      bindGameSession(game, (nextFrame) => {
-        frame.value = nextFrame;
-      }),
-    [frame, game],
-  );
+  const bindingRef = useRef<ViewportBinding | null>(null);
+  if (bindingRef.current === null || bindingRef.current.config !== game.viewport) {
+    bindingRef.current = new ViewportBinding(game.viewport);
+  }
+  const binding = bindingRef.current;
+
+  useEffect(() => {
+    const cleanupBinding = bindGameSession(game, (nextFrame) => {
+      frame.value = nextFrame;
+    });
+    const cleanupLifecycle = bindAppLifecycle(AppState, {
+      getStatus: () => game.status,
+      pause: () => {
+        if (game.status !== 'disposed') {
+          game.pause();
+        }
+      },
+      resume: () => {
+        if (game.status !== 'disposed') {
+          game.start();
+        }
+      },
+    });
+    return () => {
+      cleanupLifecycle();
+      cleanupBinding();
+      binding.dispose();
+    };
+  }, [binding, frame, game]);
 
   return (
-    <View style={[styles.surface, style]}>
-      <Canvas style={StyleSheet.absoluteFill} onSize={surfaceSize}>
-        <Renderer frame={frame} surfaceSize={surfaceSize} />
-      </Canvas>
-      {children === undefined ? null : (
-        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-          {children}
-        </View>
-      )}
-    </View>
+    <GameViewportContext.Provider value={binding}>
+      <View
+        style={[styles.surface, style]}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          surfaceSize.value = { width, height };
+          binding.setSurfaceSize({ width, height });
+          viewportValue.value = binding.resolved;
+        }}
+      >
+        <Canvas style={StyleSheet.absoluteFill} onSize={surfaceSize}>
+          <Renderer frame={frame} surfaceSize={surfaceSize} viewport={viewportValue} />
+        </Canvas>
+        {children === undefined ? null : (
+          <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+            {children}
+          </View>
+        )}
+      </View>
+    </GameViewportContext.Provider>
   );
 }
 

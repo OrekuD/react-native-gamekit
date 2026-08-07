@@ -1,4 +1,5 @@
-import type { GameSession, RenderFrame } from '../core/session/types';
+import type { InputMap, SceneMap } from '../definition/types';
+import type { GameRenderFrame, GameSession } from '../core/session/types';
 
 /**
  * Bind a live session to an imperative presentation sink.
@@ -6,9 +7,9 @@ import type { GameSession, RenderFrame } from '../core/session/types';
  * This platform-neutral lifecycle seam keeps the React adapter testable
  * without loading React Native or Skia in the headless test runner.
  */
-export function bindGameSession<TActionName extends string, TSnapshot>(
-  game: GameSession<TActionName, TSnapshot>,
-  present: (frame: RenderFrame<TSnapshot>) => void,
+export function bindGameSession<TScenes extends SceneMap, TInput extends InputMap>(
+  game: GameSession<TScenes, TInput>,
+  present: (frame: GameRenderFrame<TScenes>) => void,
 ): () => void {
   present(game.getRenderFrame());
   const subscription = game.addRenderFrameListener(present);
