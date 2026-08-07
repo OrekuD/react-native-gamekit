@@ -11,8 +11,7 @@ it('binds presentation imperatively and pauses without disposing on cleanup', ()
   const definition = defineGame({
     viewport: {
       logicalSize: { width: 320, height: 180 },
-      scale: 'fit',
-      overflow: 'letterbox',
+      mode: 'fit',
     },
     assets: [],
     input: {},

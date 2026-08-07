@@ -21,8 +21,7 @@ const emptyScene = () =>
 describe('defineGame', () => {
   const viewport = {
     logicalSize: { width: 390, height: 844 },
-    scale: 'fit',
-    overflow: 'letterbox',
+    mode: 'fit',
   } as const;
 
   it('preserves and returns the supplied definition', () => {

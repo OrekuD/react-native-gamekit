@@ -17,8 +17,7 @@ const emptyScene = defineScene({
 
 const viewport = {
   logicalSize: { width: 390, height: 844 },
-  scale: 'fit',
-  overflow: 'letterbox',
+  mode: 'fit',
 } as const;
 
 // Scene names are inferred: `initialScene` must be one of the `scenes` keys.
@@ -47,8 +46,8 @@ defineGame({
 });
 
 defineGame({
-  // @ts-expect-error scale must be a declared scale policy
-  viewport: { logicalSize: { width: 390, height: 844 }, scale: 'zoom', overflow: 'letterbox' },
+  // @ts-expect-error mode must be a declared viewport mode
+  viewport: { logicalSize: { width: 390, height: 844 }, mode: 'zoom' },
   assets: [],
   input: {},
   scenes: { menu: emptyScene },
@@ -56,8 +55,8 @@ defineGame({
 });
 
 defineGame({
-  // @ts-expect-error overflow must be a declared overflow policy
-  viewport: { logicalSize: { width: 390, height: 844 }, scale: 'fit', overflow: 'stretch' },
+  // @ts-expect-error the Task 2 scale/overflow pair is replaced by mode
+  viewport: { logicalSize: { width: 390, height: 844 }, scale: 'fit', overflow: 'letterbox' },
   assets: [],
   input: {},
   scenes: { menu: emptyScene },
@@ -66,7 +65,7 @@ defineGame({
 
 defineGame({
   // @ts-expect-error logicalSize width must be a number
-  viewport: { logicalSize: { width: '390', height: 844 }, scale: 'fit', overflow: 'letterbox' },
+  viewport: { logicalSize: { width: '390', height: 844 }, mode: 'fit' },
   assets: [],
   input: {},
   scenes: { menu: emptyScene },
@@ -106,5 +105,51 @@ defineGame({
   // @ts-expect-error input values must be input actions
   input: { move: 'left' },
   scenes: { menu: emptyScene },
+  initialScene: 'menu',
+});
+
+const undeclaredTransitionScene = defineScene({
+  actions: [],
+  transitions: ['missing-scene'],
+  create: () => ({}),
+  update: ({ state }) => state,
+  snapshot: () => null,
+});
+
+// @ts-expect-error every declared transition target must be a declared scene
+defineGame({
+  viewport,
+  assets: [],
+  input: {},
+  scenes: { menu: undeclaredTransitionScene },
+  initialScene: 'menu',
+});
+
+defineGame({
+  viewport,
+  assets: [],
+  input: { primary: { type: 'pointer' } },
+  scenes: {
+    menu: defineScene({
+      actions: ['primary'],
+      transitions: ['level1'],
+      create: () => ({}),
+      update: ({ state, input, transition }) => {
+        if (input.pointer('primary').pressed) {
+          transition.setScene('level1');
+        }
+        // @ts-expect-error scene transitions are restricted to declared targets
+        transition.setScene('menu');
+        return state;
+      },
+      snapshot: () => null,
+    }),
+    level1: defineScene({
+      actions: [],
+      create: () => ({}),
+      update: ({ state }) => state,
+      snapshot: () => null,
+    }),
+  },
   initialScene: 'menu',
 });

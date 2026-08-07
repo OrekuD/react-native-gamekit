@@ -7,8 +7,7 @@ import { ManualFrameDriver } from './helpers/ManualFrameDriver.ts';
 
 const viewport = {
   logicalSize: { width: 320, height: 180 },
-  scale: 'fit',
-  overflow: 'letterbox',
+  mode: 'fit',
 } as const;
 
 function createCounterGame(
