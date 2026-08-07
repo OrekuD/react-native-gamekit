@@ -7,7 +7,11 @@
     "getting-started/repository",
     "---Concepts---",
     "concepts/game-definition",
+    "concepts/scenes-and-transitions",
+    "concepts/viewport",
+    "concepts/pointer-input",
     "---Reference---",
+    "reference/brick-breaker",
     "compatibility"
   ]
 }

@@ -4,8 +4,8 @@ A React Native game toolkit for mobile and tablet, built on Expo. This repositor
 
 | Path | Package | Purpose |
 | --- | --- | --- |
-| `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library: fixed-step headless session plus a React/Skia adapter. |
-| `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android. |
+| `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library: fixed-step headless session, named scenes and transitions, button/pointer input, viewport math, and a React/Skia adapter. |
+| `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android: the first runtime slice and the Brick Breaker reference game. |
 | `apps/docs` | `@react-native-gamekit/docs` | Fumadocs (Next.js) documentation site. |
 
 Product and architecture research lives in [`REACT_NATIVE_GAMEKIT_RESEARCH.md`](./REACT_NATIVE_GAMEKIT_RESEARCH.md).
@@ -54,6 +54,36 @@ development session.
 pnpm dev:docs   # http://localhost:3000
 pnpm build:docs
 ```
+
+## Current API surface (provisional)
+
+The headless entry (`react-native-gamekit`) imports nothing native and runs in
+Node for deterministic tests:
+
+- `defineGame` / `defineScene` — static, type-checked game definitions with
+  inferred scene, snapshot, action, and transition types.
+- `createGameSession` — one authoritative fixed-step session. Named scenes,
+  deterministic transitions and restarts, monotonic global time with
+  scene-local time, and scene-discriminated render frames.
+- `InputFrame` button and pointer actions with immutable per-tick sampling,
+  one-tick edges, ownership, and cancellation.
+- `Viewport2D` headless math — `fit`, `fill`, and `extend-world` modes;
+  `resolveViewport2D`, `worldToSurface`, `surfaceToWorld`,
+  `containsSurfacePoint`.
+
+The React entry (`react-native-gamekit/react`) adds:
+
+- `GameView` — mounts a Skia canvas, resolves the viewport from the mounted
+  surface, binds `AppState`, and never renders per-frame React state.
+- `GamePointerInput` — Gesture Handler adapter that feeds logical coordinates
+  through the shared viewport.
+
+The playground ships two games: the first runtime slice (a moving Skia circle)
+and Brick Breaker (three scenes, pointer paddle, deterministic collisions,
+win/lose/restart). See the docs for the walkthrough.
+
+Assets, physics, audio, haptics, broader input adapters, and 3D are explicitly
+future work.
 
 ## Workspace commands
 

@@ -1,0 +1,91 @@
+---
+title: Viewport and Coordinate Spaces
+description: The three viewport modes, the headless Viewport2D math, and the coordinate authority shared by drawing and input.
+---
+
+# Viewport and Coordinate Spaces
+
+> **Provisional.** The three modes and the headless math module are
+> implemented; breakpoint-driven adaptive layouts are future work.
+
+## One coordinate authority
+
+React Native layout points are the only surface unit. Physical pixels never
+enter the viewport math. The authored logical world and the mounted surface
+are connected by one resolved transform that drawing and hit testing share —
+`GameView` and `GamePointerInput` consume the same resolved viewport for a
+layout revision, so the renderer and your finger agree after any resize.
+
+## Configuring the viewport
+
+```ts
+const game = defineGame({
+  viewport: {
+    logicalSize: { width: 320, height: 180 },
+    mode: 'fit',
+  },
+  // ...
+});
+```
+
+Three modes are supported:
+
+| Mode | Scale rule | Visible result | Input rule |
+| --- | --- | --- | --- |
+| `fit` | Minimum uniform scale | Entire authored world plus letterbox space | A pointer cannot begin in letterbox space |
+| `fill` | Maximum uniform scale | Surface filled; authored edges may be cropped | The full surface is interactive |
+| `extend-world` | Fit-scale logical units | Visible world expands on the longer surface axis | The full surface maps into the expanded world |
+
+`fit` is the fair default for arcade games: everyone sees the same world and
+the letterbox is inert. `extend-world` reveals more of the world on wider or
+taller surfaces — deliberate design, since seeing more can be an advantage.
+There is no invalid `fit`-plus-crop combination anymore; the old
+`scale`/`overflow` pair is replaced by `mode`.
+
+## Headless viewport math
+
+`resolveViewport2D`, `worldToSurface`, `surfaceToWorld`, and
+`containsSurfacePoint` are pure functions with no React, Skia, or platform
+dependencies — they run in Node tests directly.
+
+```ts
+import { resolveViewport2D, surfaceToWorld } from 'react-native-gamekit';
+
+const viewport = resolveViewport2D(game.viewport, { width: 390, height: 844 });
+// undefined until the surface has positive size on both axes
+
+if (viewport !== undefined) {
+  const world = surfaceToWorld(viewport, { x: 195, y: 400 });
+}
+```
+
+A resolved viewport is immutable plain data:
+
+- `surfaceSize` — the actual mounted size;
+- `logicalBounds` — the authored bounds `{ x: 0, y: 0, width, height }`;
+- `visibleLogicalBounds` — the portion of the world visible on the surface;
+- `contentBounds` — the surface region covered by visible world content;
+- `scale`, `offsetX`, `offsetY` — the linear transform
+  `surface = world * scale + offset`.
+
+Invalid authored sizes throw a `RangeError` naming the invalid dimension. A
+zero-sized layout is normal before the first layout pass and resolves to
+`undefined`. Round trips are stable within a documented floating-point
+tolerance. Conversion stays mathematical everywhere — `containsSurfacePoint`
+is the operation that decides whether a gesture may begin, which is how
+letterbox space rejects input in `fit` mode.
+
+## Resizing and rotation
+
+- A resize may cause a React layout update; it must never cause a simulation
+  update, scene transition, session recreation, or input jump.
+- If resizing temporarily produces an invalid surface, the active pointer is
+  cancelled and drawing is suspended until a valid viewport is available.
+- Safe-area layout belongs to the React overlay and never silently modifies
+  the logical world or its transform.
+
+## Future work
+
+Adaptive breakpoint layouts, cameras, scrolling worlds, and parallax remain
+future work; the surface/world mapping owned by `Viewport2D` is the only
+camera-like transform today.

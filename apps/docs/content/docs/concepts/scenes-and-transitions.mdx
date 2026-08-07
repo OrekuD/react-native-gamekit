@@ -1,0 +1,112 @@
+---
+title: Scenes and Transitions
+description: Named scene lifecycle, deterministic transitions, restarts, and the update-scoped transition controller.
+---
+
+# Scenes and Transitions
+
+> **Provisional.** Scene lifecycle is implemented and exercised by the Brick
+> Breaker reference game, but the exact shapes remain provisional.
+
+## Named scenes
+
+A game declares one or more scenes, each with its own state and snapshot
+shape. The active scene is created fresh from its definition whenever the
+session enters it; scene state is never reused across instances.
+
+```ts
+const ready = defineScene({
+  actions: ['primary'],
+  transitions: ['play'],
+  create: () => ({ ready: true }),
+  update: ({ state, input, transition }) => {
+    if (input.pointer('primary').pressed) {
+      transition.setScene('play');
+    }
+    return state;
+  },
+  snapshot: ({ state }) => ({ ready: state.ready }),
+});
+```
+
+`transitions` declares the only scenes this scene may move to. `defineGame`
+rejects undeclared targets at compile time and the runtime enforces the same
+rule when a scene misbehaves.
+
+## Update-scoped transitions
+
+The `transition` value inside `update` is the only way a scene changes scenes.
+It is valid only for that update:
+
+- `setScene(name)` commits the transition after the current update completes
+  successfully. Setting the current scene is an idempotent no-op.
+- `restartScene()` recreates the current scene with fresh state.
+- Repeated identical requests in one update are harmless; conflicting requests
+  throw a `GameSessionLifecycleError` instead of depending on call order.
+- Retaining the controller and calling it later throws a lifecycle error.
+
+Transition payloads do not exist yet. A scene that needs to share results must
+keep that flow inside its own state — this is why Brick Breaker's win state
+lives inside the play scene rather than being passed to a results screen.
+
+## External lifecycle operations
+
+```ts
+game.scene;            // live readonly getter: 'ready' | 'play' | 'game-over'
+game.setScene('play'); // accepts only declared scene names
+game.restartScene();
+```
+
+While running, an external transition commits at the next fixed-step boundary.
+While idle or paused, it commits synchronously and publishes the new frame.
+At most one different pending external transition is allowed; a conflicting
+second request throws. `setScene(currentScene)` is a no-op, and an external
+transition never advances simulation tick or time itself.
+
+## Commit ordering
+
+A transition requested during a successful update commits in this exact order:
+
+1. sample the current scene's input;
+2. run its update and collect at most one transition intent;
+3. create the target scene and extract its initial snapshot;
+4. on any failure, keep the old scene and its pre-update state, leave session
+   tick/time unchanged, pause the session, clean up the partial target, and
+   rethrow the original error;
+5. on success, advance session tick/time for the successful update;
+6. dispose the outgoing scene exactly once using its candidate final state;
+7. install the new scene with `sceneTick: 0` and `sceneElapsedSeconds: 0`;
+8. clear pending and held input;
+9. publish one hard-cut frame with `previous === current` and `alpha === 0`.
+
+The next simulation update receives `sceneTick: 1`. Global `tick` and
+`elapsedSeconds` continue monotonically from the session, so scene-local time
+resets while global time never goes backwards.
+
+## Lifecycle boundary
+
+The lifecycle is intentionally small:
+
+```text
+create -> update zero or more times -> dispose exactly once
+```
+
+There are no `load`, `enter`, `exit`, `pause`, or `resume` hooks yet — they
+arrive when assets and services give them concrete semantics. Session
+pause/resume stops and restarts scheduling without recreating the scene.
+
+## Render frames are scene-discriminated
+
+`getRenderFrame()` returns a discriminated union. Narrowing on `scene` narrows
+both `previous` and `current` to that scene's snapshot type:
+
+```ts
+const frame = game.getRenderFrame();
+
+if (frame.scene === 'play') {
+  frame.current.ball; // typed as the play snapshot
+}
+```
+
+On a transition, `previous` and `current` are both snapshots from the new
+scene — frames never interpolate between two scene types.

@@ -1,0 +1,89 @@
+---
+title: Brick Breaker Walkthrough
+description: How the reference game owns its session, uses named scenes, shares one viewport, and cleans up.
+---
+
+# Brick Breaker Walkthrough
+
+Brick Breaker is the Task 3 reference game. It is a small but complete
+single-player arcade loop: ready → play → game-over → ready, a pointer-driven
+paddle, deterministic ball/wall, ball/paddle, and ball/brick collision, score,
+win, loss, and restart — all running on the provisional GameKit API.
+
+The game lives in
+[`apps/playground/src/games/brickBreakerGame.ts`](https://github.com/OrekuD/react-native-gamekit/blob/main/apps/playground/src/games/brickBreakerGame.ts)
+and is fully headless: it imports only `react-native-gamekit`, declares no
+React, Skia, or Gesture Handler types, and is driven in Node tests with a
+manual frame driver.
+
+## Scene structure
+
+- `ready` — a prompt scene. A pointer press calls `transition.setScene('play')`.
+- `play` — owns the whole gameplay flow: paddle clamping, launch, collisions,
+  score, win, and loss detection all live in this scene's state.
+- `game-over` — a deliberately result-free screen. Because Task 3 transitions
+  carry no payloads, the final score cannot cross scenes; the win result stays
+  inside the play scene (`over: { won: true, score }`), which demonstrates the
+  intended constraint until a typed payload design lands.
+
+The loop is `ready → play → game-over → ready`. The press that enters play
+also launches the ball — Task 3 transitions carry no payloads, so the launch
+intent is encoded in the play scene's initial state (one press, not two).
+Winning freezes the ball in play and waits for a press that calls
+`restartScene()`; losing transitions to the generic game-over screen.
+
+## Session ownership and cleanup
+
+The screen owns exactly one session and disposes it on final unmount:
+
+```ts
+const [session] = useState(() => createBrickBreakerSession());
+
+useEffect(
+  () => () => {
+    session.dispose();
+  },
+  [session],
+);
+```
+
+`GameView` starts the session while mounted and pauses it on unmount and app
+backgrounding, but never disposes it — the creator owns disposal. Navigation
+focus is playground policy: `useFocusEffect` pauses the session when the
+screen loses focus and resumes it on focus, so the game never runs invisibly
+under a pushed screen.
+
+## One viewport for drawing and input
+
+The renderer authors geometry in logical coordinates and applies the shared
+`viewport` shared value supplied by `GameView`. `GamePointerInput` converts
+through the same resolved viewport, so the paddle follows the finger exactly
+after any rotation or iPad resize. The renderer has a fixed Skia topology —
+one background, one paddle, one ball, and 32 brick rects — and dead bricks
+render with zero size; React never sees live gameplay positions.
+
+## Low-frequency HUD
+
+The score, scene name, and prompts flow to React through `selectHud` +
+`hudEqual` (pure functions in `src/screens/brickBreakerHud.ts`): React
+re-renders only when the selected HUD value actually changes, and unchanged
+frames keep the previous state object. Live ball and paddle positions never
+enter React state.
+
+## Interpolation
+
+The renderer blends same-scene `previous`/`current` paddle and ball values
+with the frame's `alpha` (`src/renderers/interpolation.ts`), so a 120 Hz
+presentation is visually smoother than the 60 Hz simulation. Scene-transition
+hard cuts publish `previous === current`, making the interpolation a no-op —
+frames never blend two scenes.
+
+## Headless tests
+
+`brickBreakerGame.test.ts` drives the real game with the
+`react-native-gamekit/testing` entry (`createGameSessionWithDriver` plus a
+`ManualFrameDriver`), covering: entering play with the ball in motion, paddle
+clamping, each collision type, wall containment, loss, win, the full scene
+cycle, and identical checkpoints at 30, 60, and 120 Hz presentation. The
+pointer up event forwards its final surface position before ending ownership,
+so the release frame carries the actual release point.

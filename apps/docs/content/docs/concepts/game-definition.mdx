@@ -1,57 +1,73 @@
 ---
 title: Game Definition and Session
-description: Define a functional scene and run it in the provisional fixed-step session.
+description: Define scenes, run a fixed-step session, and mount the Skia view.
 ---
 
 # Game Definition and Session
 
-> **Provisional.** The first runtime slice is implemented, but these names and
-> shapes remain provisional until reference games validate them.
+> **Provisional.** The names and shapes remain provisional until reference
+> games validate them.
 
 ## Define the static game
 
 `defineGame` remains pure: it validates and returns configuration without
 starting time, loading assets, or allocating a live session. `defineScene`
-infers the state returned by `create` and the renderer-specific snapshot.
+infers the state returned by `create`, the renderer-specific snapshot, the
+actions the scene reads, and the scene names it may transition to.
 
 ```ts
 import { createGameSession, defineGame, defineScene } from 'react-native-gamekit';
 
-const definition = defineGame({
+const game = defineGame({
   viewport: {
     logicalSize: { width: 320, height: 180 },
-    scale: 'fit',
-    overflow: 'letterbox',
+    mode: 'fit',
   },
   assets: [],
   input: {
-    boost: { type: 'button' },
+    primary: { type: 'pointer' },
   },
   scenes: {
+    ready: defineScene({
+      actions: ['primary'],
+      transitions: ['play'],
+      create: () => ({ ready: true }),
+      update: ({ state, input, transition }) => {
+        if (input.pointer('primary').pressed) {
+          transition.setScene('play');
+        }
+        return state;
+      },
+      snapshot: ({ state }) => ({ ready: state.ready }),
+    }),
     play: defineScene({
-      actions: ['boost'],
-      create: () => ({ x: 0 }),
-      update: ({ state, input, deltaSeconds }) => ({
-        x: state.x + (input.button('boost').held ? 180 : 60) * deltaSeconds,
+      actions: ['primary'],
+      create: () => ({ x: 160 }),
+      update: ({ state, input }) => ({
+        x: state.x + (input.pointer('primary').position?.x ?? state.x),
       }),
       snapshot: ({ state }) => ({ x: state.x }),
     }),
   },
-  initialScene: 'play',
+  initialScene: 'ready',
 });
 
-const game = createGameSession(definition);
+const session = createGameSession(game);
 ```
 
-`initialScene` is constrained to the keys of `scenes`, and session input calls
-are constrained to the keys of `input`.
+`initialScene` is constrained to the keys of `scenes`, every scene action must
+exist in the game input map, and every declared transition target must be a
+declared scene — all enforced at compile time.
 
 ## Fixed-step session
 
-`game.start()` starts an idle session and resumes a paused session.
-`game.pause()` discards suspended wall time. `game.dispose()` permanently
-stops the session and releases the scene. These operations are idempotent in
-their applicable states.
+`session.start()` starts an idle session and resumes a paused session.
+`session.pause()` discards suspended wall time. `session.dispose()` permanently
+stops the session and releases the active scene. These operations are
+idempotent in their applicable states. `session.scene` is a live readonly
+getter, and `session.setScene(name)` / `session.restartScene()` drive
+transitions externally. See [Scenes and Transitions](./scenes-and-transitions)
+for the full lifecycle contract.
 
 The simulation uses a fixed 60 Hz step by default. A phone presenting at 60 Hz
 and an iPad presenting at 120 Hz therefore advance the same number of gameplay
@@ -60,37 +76,41 @@ ticks over the same elapsed time.
 Each update receives:
 
 - readonly scene state;
-- one immutable semantic input snapshot;
-- a constant `deltaSeconds`;
-- deterministic tick and elapsed-simulation values.
+- one immutable semantic input snapshot (button and pointer actions);
+- an update-scoped transition controller;
+- constant `deltaSeconds`;
+- deterministic global `tick` / `elapsedSeconds` and scene-local
+  `sceneTick` / `sceneElapsedSeconds`.
 
-Each presentation frame contains `previous` and `current` snapshots plus an
+Each presentation frame is a discriminated union: narrowing on `frame.scene`
+narrows `previous` and `current` to that scene's snapshot type, plus an
 interpolation `alpha`. The snapshot payload belongs to the renderer; the core
-does not define a universal 2D/3D transform, camera, or material model.
+does not define a universal transform, camera, or material model.
 
 ## Skia GameView
 
 ```tsx
-import { GameView } from 'react-native-gamekit/react';
+import { GameView, GamePointerInput } from 'react-native-gamekit/react';
 
-<GameView game={game} renderer={MySkiaRenderer}>
-  <MyStaticHud />
+<GameView game={session} renderer={MySkiaRenderer}>
+  <GamePointerInput game={session} action="primary" />
 </GameView>
 ```
 
-The Skia renderer receives shared `frame` and `surfaceSize` values. They update
-without placing positions or tick counters in React state. Static React
-children remain available for HUD and accessible controls.
-
-`GameView` starts the externally owned session while mounted and pauses it on
-cleanup. The code that created the session remains responsible for final
-disposal.
+The Skia renderer receives shared `frame`, `surfaceSize`, and `viewport`
+values. They update without placing positions or tick counters in React state.
+Static React children remain available for HUD and accessible controls.
+`GameView` starts the externally owned session while mounted, pauses it on
+cleanup and app backgrounding, and never disposes it — the creator owns
+disposal. `GamePointerInput` converts touches through the same resolved
+viewport, so hit testing and drawing always agree.
 
 ## Current boundary
 
-The first runtime slice has one synchronous initial scene and button actions.
-Scene transitions, async loading, gesture mapping, viewport input conversion,
-ECS, physics, assets, audio, and haptics are later work.
+The runtime supports named scenes and deterministic transitions, button and
+pointer actions, the three viewport modes, and resizing. Assets, physics,
+audio, broader input adapters (keyboard, gamepad, virtual sticks), and 3D are
+clearly future work.
 
 See the
 [research document](https://github.com/OrekuD/react-native-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md)

@@ -1,0 +1,85 @@
+---
+title: Pointer Input
+description: Pointer actions, immutable per-tick sampling, ownership, and cancellation.
+---
+
+# Pointer Input
+
+> **Provisional.** One primary pointer action is implemented. Multitouch
+> gameplay, virtual sticks, keyboard, mouse hover, and controllers are future
+> work.
+
+## Declaring a pointer action
+
+```ts
+const game = defineGame({
+  input: {
+    primary: { type: 'pointer' },
+  },
+  // ...
+});
+```
+
+Button actions (`type: 'button'`) still exist. Calling a button operation on a
+pointer action or a pointer operation on a button action throws at runtime.
+
+## Reading the pointer
+
+Scenes read the pointer once per simulation tick:
+
+```ts
+const pointer = input.pointer('primary');
+
+pointer.active;    // true while the owning pointer is down
+pointer.pressed;   // one-tick edge when a pointer began
+pointer.released;  // one-tick edge when the owner lifted
+pointer.cancelled; // one-tick edge on cancellation
+pointer.pointerId; // stable platform pointer identifier
+pointer.position;  // logical world position while owned
+pointer.delta;     // logical movement since the previous tick
+```
+
+`pressed`, `released`, and `cancelled` are one-tick edges. `delta` accumulates
+movement between ticks and resets after each sample, so game rules never
+depend on how many native move events arrived in a frame. The release/cancel
+frame retains the final position; the next neutral frame clears it. Movement
+deltas and positions are logical/world coordinates — platform timestamps and
+Gesture Handler event objects never enter the simulation API.
+
+## Ownership and secondary pointers
+
+The first pointer to begin owns the action until it releases or cancels.
+Secondary pointers are ignored: their begins, moves, and ends have no effect.
+Ownership transfers only after the owner releases or cancels.
+
+## Mounting the adapter
+
+Gesture Handler is an implementation detail of the React adapter:
+
+```tsx
+<GameView game={game} renderer={MyRenderer}>
+  <GamePointerInput game={game} action="primary" />
+</GameView>
+```
+
+`GamePointerInput` covers the game surface, converts event positions through
+the viewport owned by `GameView`, and forwards logical coordinates into the
+input buffer. A pointer cannot begin in `fit` letterbox space; after a valid
+start, movement outside the content still maps through the unbounded transform
+so gameplay can clamp it deliberately.
+
+## Cancellation
+
+The active pointer is cancelled and neutralized by:
+
+- gesture cancellation from the platform;
+- a layout revision (resize, rotation, split view) that invalidates the
+  transform;
+- unmounting `GamePointerInput`;
+- pausing the session;
+- committing a scene transition or restart;
+- disposing the session.
+
+Neutralization guarantees a fresh restart never sees a stuck or phantom
+pointer. Pause, transition, restart, and dispose reset the buffer directly so
+the next tick after any of those events observes neutral input.
