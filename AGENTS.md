@@ -32,7 +32,7 @@ pnpm check          # lint -> typecheck -> test -> build, in that order
 5. **Expo Go is not a supported requirement.** The playground uses local native development builds via `expo prebuild` and `expo run:ios`/`expo run:android`.
 6. **One lockfile.** `apps/*` and `packages/*` share the root pnpm workspace with a single lockfile. Never initialize a nested package manager.
 7. **Framework-owned TypeScript configs.** Expo and Next.js extend their framework-owned base configs. The root `tsconfig.base.json` applies only to non-framework packages.
-8. **Documented provisional API only.** The `defineGame` shape is provisional until reference games validate it. Do not document unimplemented runtime methods (`start`, `pause`, `setScene`, `dispose`) as available.
+8. **Documented provisional API only.** The `defineGame`, `defineScene`, `createGameSession`, and `GameView` shapes remain provisional until reference games validate them. Document only implemented runtime methods; scene transitions, `setScene`, `restart`, and a separate `resume` method do not exist yet.
 
 ## Repository layout
 

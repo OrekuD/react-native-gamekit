@@ -45,9 +45,10 @@ pnpm ios       # iOS / iPadOS simulator
 pnpm android   # Android emulator
 ```
 
-The playground is a bootstrap status screen: it shows the current platform,
-the live window size (updating on rotation, resize, and iPad split view), and
-whether the local GameKit package import resolved.
+The playground runs the first complete runtime slice: a fixed-step headless
+session drives one interpolated Skia object, and a pressable semantic action
+changes its speed. The overlay retains live window diagnostics for rotation,
+resize, and iPad split-view checks.
 
 ## Package consumers
 

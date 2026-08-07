@@ -6,7 +6,14 @@
  * type layer must reject. If any expectation stops erroring, the contract
  * has loosened and this fixture must be updated (or the regression fixed).
  */
-import { defineGame, type GameDefinition } from '../src/index.ts';
+import { defineGame, defineScene, type GameDefinition } from '../src/index.ts';
+
+const emptyScene = defineScene({
+  actions: [],
+  create: () => ({}),
+  update: ({ state }) => ({ ...state }),
+  snapshot: () => null,
+});
 
 const viewport = {
   logicalSize: { width: 390, height: 844 },
@@ -22,7 +29,7 @@ const game = defineGame({
     { id: 'remote-audio', source: 'https://example.com/theme.mp3' },
   ],
   input: {},
-  scenes: { menu: {}, level1: {} },
+  scenes: { menu: emptyScene, level1: emptyScene },
   initialScene: 'menu',
 });
 
@@ -34,7 +41,7 @@ defineGame({
   viewport,
   assets: [],
   input: {},
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   // @ts-expect-error initialScene must reference an existing scene key
   initialScene: 'missing',
 });
@@ -44,7 +51,7 @@ defineGame({
   viewport: { logicalSize: { width: 390, height: 844 }, scale: 'zoom', overflow: 'letterbox' },
   assets: [],
   input: {},
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   initialScene: 'menu',
 });
 
@@ -53,7 +60,7 @@ defineGame({
   viewport: { logicalSize: { width: 390, height: 844 }, scale: 'fit', overflow: 'stretch' },
   assets: [],
   input: {},
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   initialScene: 'menu',
 });
 
@@ -62,7 +69,7 @@ defineGame({
   viewport: { logicalSize: { width: '390', height: 844 }, scale: 'fit', overflow: 'letterbox' },
   assets: [],
   input: {},
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   initialScene: 'menu',
 });
 
@@ -80,7 +87,7 @@ defineGame({
   // @ts-expect-error assets entries must be asset descriptors
   assets: [{ id: 'hero' }],
   input: {},
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   initialScene: 'menu',
 });
 
@@ -89,7 +96,7 @@ defineGame({
   // @ts-expect-error asset sources must be remote URIs or static require handles
   assets: [{ id: 'hero', source: { uri: 'https://example.com/hero.png' } }],
   input: {},
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   initialScene: 'menu',
 });
 
@@ -98,6 +105,6 @@ defineGame({
   assets: [],
   // @ts-expect-error input values must be input actions
   input: { move: 'left' },
-  scenes: { menu: {} },
+  scenes: { menu: emptyScene },
   initialScene: 'menu',
 });

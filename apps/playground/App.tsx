@@ -1,56 +1,85 @@
+import { Circle } from '@shopify/react-native-skia';
 import { StatusBar } from 'expo-status-bar';
-import { Platform, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useDerivedValue } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { defineGame } from 'react-native-gamekit';
-import { bootstrapGame } from './src/games/bootstrapGame';
+import { GameView, type GameRendererProps } from 'react-native-gamekit/react';
+import {
+  bootstrapDefinition,
+  bootstrapGame,
+  type BootstrapSnapshot,
+} from './src/games/bootstrapGame';
 
-/**
- * Bootstrap status screen.
- *
- * Shows the app identity, current platform, the live window size (updates on
- * rotation, resize, and iPad split view), and whether the local GameKit
- * package import resolved. No game rendering yet.
- */
+function BootstrapRenderer({
+  frame,
+  surfaceSize,
+}: GameRendererProps<BootstrapSnapshot>) {
+  const scale = useDerivedValue(() => {
+    const logical = bootstrapDefinition.viewport.logicalSize;
+    return Math.min(
+      surfaceSize.value.width / logical.width,
+      surfaceSize.value.height / logical.height,
+    );
+  });
+  const x = useDerivedValue(() => {
+    const logical = bootstrapDefinition.viewport.logicalSize;
+    const value = frame.value;
+    const worldX =
+      value.previous.ball.x +
+      (value.current.ball.x - value.previous.ball.x) * value.alpha;
+    return (surfaceSize.value.width - logical.width * scale.value) / 2 + worldX * scale.value;
+  });
+  const y = useDerivedValue(() => {
+    const logical = bootstrapDefinition.viewport.logicalSize;
+    return (
+      (surfaceSize.value.height - logical.height * scale.value) / 2 +
+      frame.value.current.ball.y * scale.value
+    );
+  });
+  const radius = useDerivedValue(
+    () => frame.value.current.ball.radius * scale.value,
+  );
+  const color = useDerivedValue(() => frame.value.current.ball.color);
+
+  return (
+    <Circle
+      cx={x}
+      cy={y}
+      r={radius}
+      color={color}
+    />
+  );
+}
+
+/** First end-to-end GameKit runtime and Skia playground. */
 export default function App() {
   const { width, height } = useWindowDimensions();
-  const gameKitLoaded = typeof defineGame === 'function';
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>React Native GameKit</Text>
-          <Text style={styles.subtitle}>Playground</Text>
+      <GameView game={bootstrapGame} renderer={BootstrapRenderer} style={styles.game}>
+        <View pointerEvents="none" style={styles.header}>
+          <Text style={styles.eyebrow}>React Native GameKit</Text>
+          <Text style={styles.title}>First runtime slice</Text>
+          <Text style={styles.meta}>
+            {Platform.OS} · {Math.round(width)} × {Math.round(height)} pt
+          </Text>
         </View>
 
-        <View style={styles.card}>
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Platform</Text>
-            <Text style={styles.rowValue}>{Platform.OS}</Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Window size</Text>
-            <Text style={styles.rowValue}>
-              {Math.round(width)} × {Math.round(height)} pt
-            </Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>GameKit import</Text>
-            <Text style={[styles.rowValue, gameKitLoaded ? styles.ok : styles.missing]}>
-              {gameKitLoaded ? 'loaded' : 'missing'}
-            </Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>Initial scene</Text>
-            <Text style={styles.rowValue}>{bootstrapGame.initialScene}</Text>
-          </View>
+        <View pointerEvents="box-none" style={styles.controls}>
+          <Pressable
+            accessibilityHint="Makes the ball move faster while held"
+            accessibilityLabel="Boost"
+            accessibilityRole="button"
+            onPressIn={() => bootstrapGame.input.press('boost')}
+            onPressOut={() => bootstrapGame.input.release('boost')}
+            style={({ pressed }) => [styles.boost, pressed && styles.boostPressed]}
+          >
+            <Text style={styles.boostLabel}>Hold to boost</Text>
+          </Pressable>
         </View>
-
-        <Text style={styles.hint}>
-          Resize, rotate, or split the window — the size above updates live.
-        </Text>
-      </View>
+      </GameView>
       <StatusBar style="light" />
     </SafeAreaView>
   );
@@ -59,67 +88,60 @@ export default function App() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0b0f14',
+    backgroundColor: '#080b12',
   },
-  container: {
+  game: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 24,
-    gap: 28,
+    backgroundColor: '#0f1420',
   },
   header: {
     alignItems: 'center',
-    gap: 4,
+    paddingHorizontal: 24,
+    paddingTop: 28,
   },
-  title: {
-    color: '#e8edf4',
-    fontSize: 28,
+  eyebrow: {
+    color: '#8b5cf6',
+    fontSize: 12,
     fontWeight: '700',
-    letterSpacing: -0.5,
-  },
-  subtitle: {
-    color: '#5f6b7a',
-    fontSize: 13,
-    fontWeight: '600',
-    letterSpacing: 3,
+    letterSpacing: 1.8,
     textTransform: 'uppercase',
   },
-  card: {
-    alignSelf: 'stretch',
-    backgroundColor: '#121820',
-    borderColor: '#1f2833',
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingVertical: 6,
+  title: {
+    color: '#f4f4f5',
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+    marginTop: 6,
   },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingVertical: 12,
-  },
-  rowLabel: {
-    color: '#5f6b7a',
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  rowValue: {
-    color: '#e8edf4',
-    fontVariant: ['tabular-nums'],
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  ok: {
-    color: '#4ade80',
-  },
-  missing: {
-    color: '#f87171',
-  },
-  hint: {
-    color: '#5f6b7a',
+  meta: {
+    color: '#71717a',
     fontSize: 12,
-    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+    marginTop: 7,
+  },
+  controls: {
+    alignItems: 'center',
+    bottom: 28,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  boost: {
+    backgroundColor: '#7c3aed',
+    borderRadius: 999,
+    minHeight: 52,
+    minWidth: 168,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  boostPressed: {
+    backgroundColor: '#6d28d9',
+    transform: [{ scale: 0.98 }],
+  },
+  boostLabel: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

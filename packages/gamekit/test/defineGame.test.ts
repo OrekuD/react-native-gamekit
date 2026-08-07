@@ -1,7 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { defineGame } from '../src/index.ts';
+import { defineGame, defineScene } from '../src/index.ts';
+
+const emptyScene = () =>
+  defineScene({
+    actions: [],
+    create: () => ({}),
+    update: ({ state }) => ({ ...state }),
+    snapshot: () => null,
+  });
 
 /**
  * Bootstrap contract for `defineGame`.
@@ -22,7 +30,7 @@ describe('defineGame', () => {
       viewport,
       assets: [],
       input: {},
-      scenes: { menu: {} },
+      scenes: { menu: emptyScene() },
       initialScene: 'menu',
     } as const;
 
@@ -30,7 +38,7 @@ describe('defineGame', () => {
 
     assert.equal(game, definition, 'defineGame must return the same object it received');
     assert.deepEqual(game.viewport, viewport);
-    assert.deepEqual(game.scenes, { menu: {} });
+    assert.equal(game.scenes.menu.kind, 'gamekit.scene');
     assert.equal(game.initialScene, 'menu');
     assert.deepEqual(game.assets, []);
     assert.deepEqual(game.input, {});
@@ -43,17 +51,17 @@ describe('defineGame', () => {
         { id: 'hero', source: 42 },
         { id: 'theme', source: 'https://example.com/theme.mp3' },
       ],
-      input: { move: {} },
-      scenes: { menu: { name: 'menu' }, level1: { name: 'level1' } },
+      input: { move: { type: 'button' } },
+      scenes: { menu: emptyScene(), level1: emptyScene() },
       initialScene: 'level1',
     });
 
     assert.equal(game.initialScene, 'level1');
-    assert.equal(game.scenes.level1?.name, 'level1');
+    assert.equal(game.scenes.level1?.kind, 'gamekit.scene');
     assert.deepEqual(game.assets, [
       { id: 'hero', source: 42 },
       { id: 'theme', source: 'https://example.com/theme.mp3' },
     ]);
-    assert.deepEqual(game.input, { move: {} });
+    assert.deepEqual(game.input, { move: { type: 'button' } });
   });
 });

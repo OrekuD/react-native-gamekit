@@ -4,7 +4,7 @@ A React Native game toolkit for mobile and tablet, built on Expo. This repositor
 
 | Path | Package | Purpose |
 | --- | --- | --- |
-| `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library. Bootstrap stage: the `defineGame` definition contract only. |
+| `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library: fixed-step headless session plus a React/Skia adapter. |
 | `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android. |
 | `apps/docs` | `@react-native-gamekit/docs` | Fumadocs (Next.js) documentation site. |
 
@@ -35,6 +35,18 @@ pnpm android
 ```
 
 Generated `apps/playground/ios` and `apps/playground/android` directories are untracked. Regenerate them from scratch with `pnpm expo:prebuild:clean` and review them only when CNG changes are intentional.
+
+If Expo reports that it cannot replace React Native's `HMRClient` with
+`expo/src/async-require/hmr.ts`, stop any existing Metro process before
+restarting the playground with a clean cache:
+
+```sh
+pnpm --filter @react-native-gamekit/playground exec expo start --dev-client --clear
+```
+
+Then press `i` in the Expo terminal to open the installed iOS development
+build. Do not reuse a Metro server started with `CI=true` for an interactive
+development session.
 
 ### Docs
 

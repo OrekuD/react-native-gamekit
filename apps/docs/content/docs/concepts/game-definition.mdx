@@ -1,80 +1,97 @@
 ---
-title: Game Definition
-description: The provisional defineGame contract.
+title: Game Definition and Session
+description: Define a functional scene and run it in the provisional fixed-step session.
 ---
 
-# Game Definition
+# Game Definition and Session
 
-> **Provisional.** The `defineGame` shape below is provisional until reference
-> games validate it. Runtime methods such as `start`, `pause`, `setScene`, or
-> `dispose` are **not** implemented yet and are not documented as available.
+> **Provisional.** The first runtime slice is implemented, but these names and
+> shapes remain provisional until reference games validate them.
 
-## Declaring a game
+## Define the static game
+
+`defineGame` remains pure: it validates and returns configuration without
+starting time, loading assets, or allocating a live session. `defineScene`
+infers the state returned by `create` and the renderer-specific snapshot.
 
 ```ts
-import { defineGame } from 'react-native-gamekit';
+import { createGameSession, defineGame, defineScene } from 'react-native-gamekit';
 
-const game = defineGame({
+const definition = defineGame({
   viewport: {
-    logicalSize: { width: 390, height: 844 },
+    logicalSize: { width: 320, height: 180 },
     scale: 'fit',
     overflow: 'letterbox',
   },
   assets: [],
-  input: {},
-  scenes: {
-    menu: {},
-    level1: {},
+  input: {
+    boost: { type: 'button' },
   },
-  initialScene: 'menu',
+  scenes: {
+    play: defineScene({
+      actions: ['boost'],
+      create: () => ({ x: 0 }),
+      update: ({ state, input, deltaSeconds }) => ({
+        x: state.x + (input.button('boost').held ? 180 : 60) * deltaSeconds,
+      }),
+      snapshot: ({ state }) => ({ x: state.x }),
+    }),
+  },
+  initialScene: 'play',
 });
+
+const game = createGameSession(definition);
 ```
 
-`defineGame` validates the definition at the type level and preserves and
-returns the supplied definition. It does not start a scheduler, allocate a
-session, load assets, or register input.
+`initialScene` is constrained to the keys of `scenes`, and session input calls
+are constrained to the keys of `input`.
 
-## Viewport
+## Fixed-step session
 
-The viewport declares the **logical size** the game is authored against,
-together with a **scale policy** and an **overflow policy**:
+`game.start()` starts an idle session and resumes a paused session.
+`game.pause()` discards suspended wall time. `game.dispose()` permanently
+stops the session and releases the scene. These operations are idempotent in
+their applicable states.
 
-| Policy | Behavior | Good for |
-| --- | --- | --- |
-| `scale: 'fit'` / `overflow: 'letterbox'` | Preserve the designed logical world and show bars/unused space where aspect ratios differ. | Competitive/fair games, pixel art, tightly composed arcade games |
-| `scale: 'fill'` / `overflow: 'crop'` | Fill the surface and crop excess logical area. | Cinematic backgrounds and experiences where edges are nonessential |
-| `scale: 'extend-world'` | Preserve scale but reveal more world on larger/wider surfaces. | Exploration and some action games; must consider gameplay fairness |
-| `overflow: 'adaptive'` | Let the scene select layout/bounds from breakpoint or capability rules. | Board, card, strategy, puzzle, and UI-heavy games |
+The simulation uses a fixed 60 Hz step by default. A phone presenting at 60 Hz
+and an iPad presenting at 120 Hz therefore advance the same number of gameplay
+ticks over the same elapsed time.
 
-The chosen policy must affect both drawing and input hit-testing through the
-same transform — implemented in a later task.
+Each update receives:
 
-## Scene names are inferred
+- readonly scene state;
+- one immutable semantic input snapshot;
+- a constant `deltaSeconds`;
+- deterministic tick and elapsed-simulation values.
 
-`initialScene` must be one of the keys of `scenes`:
+Each presentation frame contains `previous` and `current` snapshots plus an
+interpolation `alpha`. The snapshot payload belongs to the renderer; the core
+does not define a universal 2D/3D transform, camera, or material model.
 
-```ts
-defineGame({
-  viewport,
-  assets: [],
-  input: {},
-  scenes: { menu: {}, level1: {} },
-  initialScene: 'level1', // ok
-  // initialScene: 'level2', // type error: not a scene key
-});
+## Skia GameView
+
+```tsx
+import { GameView } from 'react-native-gamekit/react';
+
+<GameView game={game} renderer={MySkiaRenderer}>
+  <MyStaticHud />
+</GameView>
 ```
 
-## Model
+The Skia renderer receives shared `frame` and `surfaceSize` values. They update
+without placing positions or tick counters in React state. Static React
+children remain available for HUD and accessible controls.
 
-- **Headless-first:** React props configure or observe a game session; they
-  never become the per-frame store.
-- **Immutable frames:** a system sees one immutable input/time snapshot for
-  one simulation tick.
-- **Command boundary:** world changes are requested through a defined command
-  boundary.
-- **Selector-based UI:** UI subscriptions are selector-based and only notify
-  React when the selected value changes.
+`GameView` starts the externally owned session while mounted and pauses it on
+cleanup. The code that created the session remains responsible for final
+disposal.
 
-These rules are more durable than the provisional names — see the
+## Current boundary
+
+The first runtime slice has one synchronous initial scene and button actions.
+Scene transitions, async loading, gesture mapping, viewport input conversion,
+ECS, physics, assets, audio, and haptics are later work.
+
+See the
 [research document](https://github.com/OrekuD/react-native-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md)
-for the full design sketch.
+for the full architecture direction.

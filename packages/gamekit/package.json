@@ -10,6 +10,10 @@
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
+    "./react": {
+      "types": "./lib/typescript/src/react.d.ts",
+      "default": "./lib/module/react.js"
+    },
     "./package.json": "./package.json"
   },
   "react-native": "./lib/module/index.js",
@@ -45,6 +49,7 @@
   "devDependencies": {
     "@shopify/react-native-skia": "2.6.2",
     "@types/node": "^22.0.0",
+    "@types/react": "19.2.18",
     "del-cli": "^7.0.0",
     "eslint": "^9.39.0",
     "expo": "57.0.10",
