@@ -1,26 +1,4 @@
-/** The logical size of the game viewport in design points. */
-export interface LogicalSize {
-  /** Logical width in points. */
-  readonly width: number;
-  /** Logical height in points. */
-  readonly height: number;
-}
-
-/** How the logical viewport scales onto the mounted surface. */
-export type ScalePolicy = 'fit' | 'fill' | 'extend-world';
-
-/** How area outside the logical viewport is treated. */
-export type OverflowPolicy = 'letterbox' | 'crop' | 'adaptive';
-
-/** The authored viewport policy for a game. */
-export interface Viewport {
-  /** The logical coordinate space the game is authored against. */
-  readonly logicalSize: LogicalSize;
-  /** How the logical viewport scales onto the mounted game surface. */
-  readonly scale: ScalePolicy;
-  /** How area outside the logical viewport is treated. */
-  readonly overflow: OverflowPolicy;
-}
+import type { Viewport } from '../viewport2d/types';
 
 /** A URI or static React Native resource handle. */
 export type AssetSource = string | number;
@@ -33,7 +11,7 @@ export interface AssetDescriptor {
   readonly source: AssetSource;
 }
 
-/** The button action supported by the first runtime slice. */
+/** The button action supported by the runtime. */
 export interface ButtonInputAction {
   /** Discriminant for a digital button action. */
   readonly type: 'button';
@@ -41,8 +19,16 @@ export interface ButtonInputAction {
   readonly description?: string;
 }
 
-/** A named input action. More action kinds will be added deliberately. */
-export type InputAction = ButtonInputAction;
+/** A single primary pointer action driven by touch or a mouse pointer. */
+export interface PointerInputAction {
+  /** Discriminant for a pointer action. */
+  readonly type: 'pointer';
+  /** Optional human-readable description for diagnostics and tooling. */
+  readonly description?: string;
+}
+
+/** A named semantic input action. */
+export type InputAction = ButtonInputAction | PointerInputAction;
 
 /** The collection of semantic input actions declared by a game. */
 export type InputMap = Readonly<Record<string, InputAction>>;
@@ -50,14 +36,17 @@ export type InputMap = Readonly<Record<string, InputAction>>;
 /**
  * Structural marker shared by all definitions created with `defineScene`.
  *
- * It lets `defineGame` retain each scene's inferred state and snapshot types
- * without erasing them into a universal world or renderer shape.
+ * It lets `defineGame` retain each scene's inferred state, snapshot, action,
+ * and transition types without erasing them into a universal world or
+ * renderer shape.
  */
 export interface SceneDefinitionMarker {
   /** Internal scene-definition discriminator. */
   readonly kind: 'gamekit.scene';
   /** @internal Type witness for actions consumed by this scene. */
   readonly __actionType?: string;
+  /** @internal Type witness for transition targets declared by this scene. */
+  readonly __transitionType?: string;
 }
 
 /** The collection of functional scenes declared by a game. */
@@ -82,6 +71,6 @@ export interface GameDefinition<
   readonly input: TInput;
   /** Functional scenes keyed by stable scene name. */
   readonly scenes: TScenes;
-  /** The scene created by the first runtime slice. */
+  /** The scene created first when a session starts. */
   readonly initialScene: TInitialScene;
 }

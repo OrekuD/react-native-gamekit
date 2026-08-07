@@ -14,7 +14,11 @@
       "types": "./lib/typescript/src/react.d.ts",
       "default": "./lib/module/react.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./testing": {
+      "types": "./lib/typescript/src/testing.d.ts",
+      "default": "./lib/module/testing.js"
+    }
   },
   "react-native": "./lib/module/index.js",
   "files": [

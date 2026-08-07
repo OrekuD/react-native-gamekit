@@ -1,8 +1,14 @@
 export { createGameSession } from './core/session/createGameSession';
-export { GameSessionDisposedError } from './core/session/types';
-export type { ButtonState, InputController, InputFrame } from './core/input/types';
+export { GameSessionDisposedError, GameSessionLifecycleError } from './core/session/types';
+export type {
+  ButtonState,
+  InputController,
+  InputFrame,
+  PointerState,
+} from './core/input/types';
 export type {
   DeepReadonly,
+  GameRenderFrame,
   GameSession,
   GameSessionStatus,
   GameSubscription,
@@ -16,17 +22,30 @@ export type {
   GameDefinition,
   InputAction,
   InputMap,
-  LogicalSize,
-  OverflowPolicy,
-  ScalePolicy,
+  PointerInputAction,
   SceneDefinitionMarker,
   SceneMap,
-  Viewport,
 } from './definition/types';
+export type { Point2D } from './geometry/types';
 export { defineScene } from './scene/defineScene';
 export type {
   SceneDefinition,
   SceneSnapshot,
   SceneSnapshotContext,
+  SceneTransitionController,
   SceneUpdate,
 } from './scene/types';
+export {
+  containsSurfacePoint,
+  resolveViewport2D,
+  surfaceToWorld,
+  worldToSurface,
+} from './viewport2d';
+export type {
+  LogicalSize,
+  Rect,
+  ResolvedViewport2D,
+  SurfaceSize,
+  Viewport,
+  ViewportMode,
+} from './viewport2d';

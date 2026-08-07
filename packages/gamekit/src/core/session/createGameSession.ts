@@ -1,14 +1,15 @@
 import type { GameDefinition, InputMap, SceneMap } from '../../definition/types';
-import type { SceneSnapshot } from '../../scene/types';
+import type { SceneTransitionController } from '../../scene/types';
 import { createAnimationFrameDriver, type FrameDriver, type FrameHandle } from '../frameDriver';
 import { createInputBuffer } from '../input/createInputBuffer';
 import type { InputFrame } from '../input/types';
 import {
   GameSessionDisposedError,
+  GameSessionLifecycleError,
   type DeepReadonly,
+  type GameRenderFrame,
   type GameSession,
   type GameSessionStatus,
-  type RenderFrame,
 } from './types';
 
 const DEFAULT_FIXED_STEP_MS = 1000 / 60;
@@ -21,18 +22,38 @@ interface SessionOptions {
   readonly maxFrameDeltaMs?: number;
 }
 
-interface ErasedScene<TSnapshot> {
+interface ErasedScene {
   readonly actions: readonly string[];
+  readonly transitions: readonly string[];
   create(): unknown;
   update(frame: {
     readonly state: unknown;
     readonly input: InputFrame<string>;
+    readonly transition: SceneTransitionController<string>;
     readonly tick: number;
+    readonly sceneTick: number;
     readonly deltaSeconds: number;
     readonly elapsedSeconds: number;
+    readonly sceneElapsedSeconds: number;
   }): unknown;
-  snapshot(context: { readonly state: unknown }): TSnapshot;
+  snapshot(context: { readonly state: unknown }): unknown;
   dispose?(state: unknown): void;
+}
+
+interface ActiveScene {
+  readonly name: string;
+  readonly definition: ErasedScene;
+  state: unknown;
+  sceneTick: number;
+  sceneElapsedSeconds: number;
+}
+
+type TransitionIntent =
+  | { readonly kind: 'setScene'; readonly name: string }
+  | { readonly kind: 'restart' };
+
+interface UpdateScope {
+  intent?: TransitionIntent;
 }
 
 function freezeObject<T>(value: T): T {
@@ -53,6 +74,17 @@ function deepFreeze<T>(value: T, seen = new WeakSet<object>()): DeepReadonly<T> 
   return Object.freeze(value) as DeepReadonly<T>;
 }
 
+function describeIntent(intent: TransitionIntent): string {
+  return intent.kind === 'restart' ? 'restartScene()' : `setScene("${intent.name}")`;
+}
+
+function sameIntent(a: TransitionIntent, b: TransitionIntent): boolean {
+  if (a.kind === 'restart') {
+    return b.kind === 'restart';
+  }
+  return b.kind === 'setScene' && a.name === b.name;
+}
+
 /** Create a live session using the platform animation-frame driver. */
 export function createGameSession<
   const TScenes extends SceneMap,
@@ -60,10 +92,7 @@ export function createGameSession<
   const TInitialScene extends keyof TScenes,
 >(
   definition: GameDefinition<TScenes, TInput, TInitialScene>,
-): GameSession<
-  Extract<keyof TInput, string>,
-  SceneSnapshot<TScenes[TInitialScene]>
-> {
+): GameSession<TScenes, TInput> {
   return createGameSessionWithDriver(definition, {
     frameDriver: createAnimationFrameDriver(),
   });
@@ -77,13 +106,7 @@ export function createGameSessionWithDriver<
 >(
   definition: GameDefinition<TScenes, TInput, TInitialScene>,
   options: SessionOptions,
-): GameSession<
-  Extract<keyof TInput, string>,
-  SceneSnapshot<TScenes[TInitialScene]>
-> {
-  type ActionName = Extract<keyof TInput, string>;
-  type Snapshot = SceneSnapshot<TScenes[TInitialScene]>;
-
+): GameSession<TScenes, TInput> {
   const fixedStepMs = options.fixedStepMs ?? DEFAULT_FIXED_STEP_MS;
   const maxCatchUpSteps = options.maxCatchUpSteps ?? DEFAULT_MAX_CATCH_UP_STEPS;
   const maxFrameDeltaMs = options.maxFrameDeltaMs ?? fixedStepMs * DEFAULT_MAX_CATCH_UP_STEPS;
@@ -98,24 +121,56 @@ export function createGameSessionWithDriver<
     throw new RangeError('maxFrameDeltaMs must be a finite positive number');
   }
 
-  const sceneName = String(definition.initialScene);
-  const scene = definition.scenes[definition.initialScene] as unknown as ErasedScene<Snapshot>;
-
-  for (const action of scene.actions) {
-    if (!Object.hasOwn(definition.input, action)) {
-      throw new Error(`Scene "${sceneName}" uses undeclared input action: ${action}`);
+  const erasedSceneMap: Record<string, ErasedScene> = {};
+  for (const [name, scene] of Object.entries(definition.scenes)) {
+    const erased = scene as unknown as ErasedScene;
+    for (const action of erased.actions) {
+      if (!Object.hasOwn(definition.input, action)) {
+        throw new Error(`Scene "${name}" uses undeclared input action: ${action}`);
+      }
     }
+    for (const target of erased.transitions ?? []) {
+      if (!Object.hasOwn(definition.scenes, target)) {
+        throw new Error(`Scene "${name}" declares an unknown transition target: ${target}`);
+      }
+    }
+    erasedSceneMap[name] = erased;
   }
 
-  let state: unknown = freezeObject(scene.create());
-  let currentSnapshot: DeepReadonly<Snapshot>;
-
+  // Create the initial scene instance synchronously.
+  const initialSceneName = String(definition.initialScene);
+  const initialDefinition = erasedSceneMap[initialSceneName];
+  if (initialDefinition === undefined) {
+    throw new Error(`Unknown initial scene: ${initialSceneName}`);
+  }
+  let initialState: unknown;
+  let initialCreated = false;
   try {
-    currentSnapshot = deepFreeze(scene.snapshot({ state }));
+    initialState = freezeObject(initialDefinition.create());
+    initialCreated = true;
   } catch (error) {
-    scene.dispose?.(state);
     throw error;
   }
+  let initialSnapshot: DeepReadonly<unknown>;
+  try {
+    initialSnapshot = deepFreeze(initialDefinition.snapshot({ state: initialState }));
+  } catch (error) {
+    if (initialCreated) {
+      initialDefinition.dispose?.(initialState);
+    }
+    throw error;
+  }
+
+  let activeScene: ActiveScene = {
+    name: initialSceneName,
+    definition: initialDefinition,
+    state: initialState,
+    sceneTick: 0,
+    sceneElapsedSeconds: 0,
+  };
+  let sceneName: string = initialSceneName;
+  let currentSnapshot: DeepReadonly<unknown> = initialSnapshot;
+  let previousSnapshot: DeepReadonly<unknown> = initialSnapshot;
 
   let status: GameSessionStatus = 'idle';
   let generation = 0;
@@ -123,15 +178,19 @@ export function createGameSessionWithDriver<
   let previousTimestampMs: number | undefined;
   let accumulatorMs = 0;
   let tick = 0;
-  let previousSnapshot = currentSnapshot;
-  let renderFrame: RenderFrame<Snapshot> = Object.freeze({
+  let pendingTransition: TransitionIntent | undefined;
+  let hardCutPending = false;
+  let publishedThisCallback = false;
+  let updateInProgress = false;
+  let renderFrame: GameRenderFrame<TScenes> = Object.freeze({
+    scene: sceneName,
     previous: previousSnapshot,
     current: currentSnapshot,
     alpha: 0,
     tick: 0,
     elapsedSeconds: 0,
-  });
-  const listeners = new Set<(frame: RenderFrame<Snapshot>) => void>();
+  }) as unknown as GameRenderFrame<TScenes>;
+  const listeners = new Set<(frame: GameRenderFrame<TScenes>) => void>();
 
   const assertLive = () => {
     if (status === 'disposed') {
@@ -142,16 +201,24 @@ export function createGameSessionWithDriver<
   const inputBuffer = createInputBuffer(definition.input, assertLive);
 
   const publish = () => {
-    const alpha = Math.max(0, Math.min(accumulatorMs / fixedStepMs, 1 - Number.EPSILON));
-    renderFrame = Object.freeze({
+    // A committed transition publishes a hard cut with `previous === current`
+    // and `alpha === 0`, regardless of the retained timing fraction.
+    const alpha = hardCutPending
+      ? 0
+      : Math.max(0, Math.min(accumulatorMs / fixedStepMs, 1 - Number.EPSILON));
+    hardCutPending = false;
+    publishedThisCallback = true;
+    const frame = Object.freeze({
+      scene: sceneName,
       previous: previousSnapshot,
       current: currentSnapshot,
       alpha,
       tick,
       elapsedSeconds: (tick * fixedStepMs) / 1000,
-    });
+    }) as unknown as GameRenderFrame<TScenes>;
+    renderFrame = frame;
     for (const listener of [...listeners]) {
-      listener(renderFrame);
+      listener(frame);
     }
   };
 
@@ -179,16 +246,163 @@ export function createGameSessionWithDriver<
     }
   };
 
+  /**
+   * Transition to `targetName` following the deterministic ordering:
+   * prepare the target -> dispose the outgoing scene exactly once -> advance
+   * session time when the request came from a successful update -> install
+   * the new scene with scene-local time reset -> clear input and
+   * interpolation debt -> install hard-cut snapshots.
+   *
+   * On any preparation or disposal failure the old scene and its state are
+   * retained, session tick/time are left unchanged, and the original error is
+   * rethrown after cleaning up any partially created target.
+   */
+  const commitTransition = (intent: TransitionIntent, outgoingFinalState: unknown, advanceTimeTick: number | undefined) => {
+    const targetName = intent.kind === 'restart' ? activeScene.name : intent.name;
+    const targetDefinition = erasedSceneMap[targetName];
+    if (targetDefinition === undefined) {
+      throw new GameSessionLifecycleError(`Unknown scene: ${targetName}`);
+    }
+
+    let targetState: unknown;
+    let targetCreated = false;
+    let targetSnapshot: DeepReadonly<unknown>;
+    try {
+      targetState = freezeObject(targetDefinition.create());
+      targetCreated = true;
+      targetSnapshot = deepFreeze(targetDefinition.snapshot({ state: targetState }));
+    } catch (error) {
+      if (targetCreated) {
+        try {
+          targetDefinition.dispose?.(targetState);
+        } catch {
+          // Cleanup failures during failure handling are best effort.
+        }
+      }
+      throw error;
+    }
+
+    try {
+      activeScene.definition.dispose?.(outgoingFinalState);
+    } catch (error) {
+      // The outgoing scene's dispose already ran (possibly partially) and is
+      // not retried; the old scene remains active with that honest caveat.
+      if (targetCreated) {
+        try {
+          targetDefinition.dispose?.(targetState);
+        } catch {
+          // Best effort.
+        }
+      }
+      throw error;
+    }
+
+    if (advanceTimeTick !== undefined) {
+      tick = advanceTimeTick;
+    }
+    activeScene = {
+      name: targetName,
+      definition: targetDefinition,
+      state: targetState,
+      sceneTick: 0,
+      sceneElapsedSeconds: 0,
+    };
+    sceneName = targetName;
+    currentSnapshot = targetSnapshot;
+    previousSnapshot = targetSnapshot;
+    inputBuffer.reset();
+    // Keep the accumulated timing fraction: discarding it would make the tick
+    // count depend on presentation rate (acceptance criterion 11). The hard cut
+    // is still published with alpha 0 via `hardCutPending`.
+    hardCutPending = true;
+  };
+
+  const requestPendingTransition = (intent: TransitionIntent) => {
+    if (pendingTransition !== undefined && !sameIntent(pendingTransition, intent)) {
+      throw new GameSessionLifecycleError(
+        `Conflicting pending scene transition (${describeIntent(pendingTransition)} then ${describeIntent(intent)})`,
+      );
+    }
+    pendingTransition = intent;
+  };
+
+  let activeUpdateScope: UpdateScope | undefined;
+
+  const makeTransitionController = (scope: UpdateScope): SceneTransitionController<string> => {
+    const assertActive = () => {
+      if (activeUpdateScope !== scope) {
+        throw new GameSessionLifecycleError(
+          'Scene transition controller is only valid during its owning scene update',
+        );
+      }
+    };
+    return Object.freeze({
+      setScene(name: string) {
+        assertActive();
+        if (name === activeScene.name) {
+          return; // Idempotent no-op.
+        }
+        if (!Object.hasOwn(definition.scenes, name)) {
+          throw new GameSessionLifecycleError(`Unknown scene: ${name}`);
+        }
+        const declared = activeScene.definition.transitions ?? [];
+        if (!declared.includes(name)) {
+          throw new GameSessionLifecycleError(
+            `Scene "${activeScene.name}" can only transition to its declared targets (missing "${name}")`,
+          );
+        }
+        if (
+          scope.intent !== undefined &&
+          !(scope.intent.kind === 'setScene' && scope.intent.name === name)
+        ) {
+          throw new GameSessionLifecycleError(
+            `Conflicting scene transition requests in one update (${describeIntent(scope.intent)} then setScene("${name}"))`,
+          );
+        }
+        scope.intent = { kind: 'setScene', name };
+      },
+      restartScene() {
+        assertActive();
+        if (scope.intent !== undefined && scope.intent.kind !== 'restart') {
+          throw new GameSessionLifecycleError(
+            `Conflicting scene transition requests in one update (${describeIntent(scope.intent)} then restartScene())`,
+          );
+        }
+        scope.intent = { kind: 'restart' };
+      },
+    });
+  };
+
   const schedule = (activeGeneration: number) => {
     frameHandle = options.frameDriver.requestFrame((timestampMs) => {
       if (status !== 'running' || generation !== activeGeneration) {
         return;
       }
       frameHandle = undefined;
+      publishedThisCallback = false;
+
+      // A pending external transition commits at the next fixed-step boundary
+      // without advancing simulation tick/time.
+      if (pendingTransition !== undefined) {
+        const pending = pendingTransition;
+        pendingTransition = undefined;
+        try {
+          commitTransition(pending, activeScene.state, undefined);
+        } catch (error) {
+          pauseInternal();
+          throw error;
+        }
+        publishOrPause();
+        if (status !== 'running' || generation !== activeGeneration) {
+          return;
+        }
+      }
 
       if (previousTimestampMs === undefined) {
         previousTimestampMs = timestampMs;
-        publishOrPause();
+        if (!publishedThisCallback) {
+          publishOrPause();
+        }
         if (status === 'running' && generation === activeGeneration) {
           schedule(activeGeneration);
         }
@@ -209,24 +423,44 @@ export function createGameSessionWithDriver<
           generation === activeGeneration
         ) {
           const nextTick = tick + 1;
+          const nextSceneTick = activeScene.sceneTick + 1;
           const input = inputBuffer.sample();
+          const scope: UpdateScope = {};
+          activeUpdateScope = scope;
+          updateInProgress = true;
           const nextState = freezeObject(
-            scene.update({
-              state,
+            activeScene.definition.update({
+              state: activeScene.state,
               input,
+              transition: makeTransitionController(scope),
               tick: nextTick,
+              sceneTick: nextSceneTick,
               deltaSeconds: fixedStepMs / 1000,
               elapsedSeconds: (nextTick * fixedStepMs) / 1000,
+              sceneElapsedSeconds: (nextSceneTick * fixedStepMs) / 1000,
             }),
           );
+          activeUpdateScope = undefined;
+          updateInProgress = false;
+          const intent = scope.intent;
           if (isDisposed()) {
             return;
           }
-          const nextSnapshot = deepFreeze(scene.snapshot({ state: nextState }));
+          if (intent !== undefined) {
+            // A transition requested during update commits after this update
+            // completes successfully. The update consumed one fixed step; the
+            // hard-cut frame publishes at the end of this presentation callback.
+            commitTransition(intent, nextState, nextTick);
+            accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
+            break;
+          }
+          const nextSnapshot = deepFreeze(activeScene.definition.snapshot({ state: nextState }));
           if (isDisposed()) {
             return;
           }
-          state = nextState;
+          activeScene.state = nextState;
+          activeScene.sceneTick = nextSceneTick;
+          activeScene.sceneElapsedSeconds = nextSceneTick * (fixedStepMs / 1000);
           previousSnapshot = currentSnapshot;
           currentSnapshot = nextSnapshot;
           tick = nextTick;
@@ -234,6 +468,8 @@ export function createGameSessionWithDriver<
           catchUpSteps += 1;
         }
       } catch (error) {
+        activeUpdateScope = undefined;
+        updateInProgress = false;
         pauseInternal();
         throw error;
       }
@@ -242,18 +478,23 @@ export function createGameSessionWithDriver<
         accumulatorMs %= fixedStepMs;
       }
 
-      publishOrPause();
+      if (!publishedThisCallback) {
+        publishOrPause();
+      }
       if (status === 'running' && generation === activeGeneration) {
         schedule(activeGeneration);
       }
     });
   };
 
-  const session: GameSession<ActionName, Snapshot> = {
+  const session: GameSession<TScenes, TInput> = {
     get status() {
       return status;
     },
-    scene: sceneName,
+    get scene() {
+      return sceneName as keyof TScenes;
+    },
+    viewport: definition.viewport,
     input: inputBuffer.controller,
     start() {
       assertLive();
@@ -269,6 +510,51 @@ export function createGameSessionWithDriver<
     pause() {
       assertLive();
       pauseInternal();
+      if (pendingTransition !== undefined) {
+        const pending = pendingTransition;
+        pendingTransition = undefined;
+        try {
+          commitTransition(pending, activeScene.state, undefined);
+        } catch (error) {
+          throw error;
+        }
+        publishOrPause();
+      }
+    },
+    setScene(name: keyof TScenes) {
+      assertLive();
+      if (updateInProgress) {
+        throw new GameSessionLifecycleError(
+          'External scene transitions cannot be requested during a scene update',
+        );
+      }
+      const nameString = String(name);
+      if (nameString === sceneName) {
+        return; // Idempotent no-op.
+      }
+      if (!Object.hasOwn(definition.scenes, nameString)) {
+        throw new GameSessionLifecycleError(`Unknown scene: ${nameString}`);
+      }
+      if (status === 'running') {
+        requestPendingTransition({ kind: 'setScene', name: nameString });
+        return;
+      }
+      commitTransition({ kind: 'setScene', name: nameString }, activeScene.state, undefined);
+      publishOrPause();
+    },
+    restartScene() {
+      assertLive();
+      if (updateInProgress) {
+        throw new GameSessionLifecycleError(
+          'External scene transitions cannot be requested during a scene update',
+        );
+      }
+      if (status === 'running') {
+        requestPendingTransition({ kind: 'restart' });
+        return;
+      }
+      commitTransition({ kind: 'restart' }, activeScene.state, undefined);
+      publishOrPause();
     },
     dispose() {
       if (status === 'disposed') {
@@ -282,9 +568,10 @@ export function createGameSessionWithDriver<
       generation += 1;
       previousTimestampMs = undefined;
       accumulatorMs = 0;
+      pendingTransition = undefined;
       inputBuffer.reset();
       listeners.clear();
-      scene.dispose?.(state);
+      activeScene.definition.dispose?.(activeScene.state);
     },
     getRenderFrame() {
       return renderFrame;

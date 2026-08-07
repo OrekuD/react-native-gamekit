@@ -1,11 +1,21 @@
 import type { GameDefinition, InputMap, SceneMap } from './types';
 
-type SceneActions<TScene> =
-  TScene extends { readonly __actionType?: infer TAction } ? TAction : never;
+type SceneActions<TScene> = TScene extends { readonly __actionType?: infer TAction }
+  ? Exclude<TAction, undefined>
+  : never;
+
+type SceneTransitions<TScene> = TScene extends { readonly __transitionType?: infer TTransition }
+  ? Exclude<TTransition, undefined>
+  : never;
 
 type UndeclaredSceneActions<TScenes extends SceneMap, TInput extends InputMap> = Exclude<
   SceneActions<TScenes[keyof TScenes]>,
   Extract<keyof TInput, string>
+>;
+
+type UndeclaredSceneTransitions<TScenes extends SceneMap> = Exclude<
+  SceneTransitions<TScenes[keyof TScenes]>,
+  keyof TScenes
 >;
 
 type ValidateSceneActions<TScenes extends SceneMap, TInput extends InputMap> =
@@ -13,13 +23,19 @@ type ValidateSceneActions<TScenes extends SceneMap, TInput extends InputMap> =
     ? unknown
     : { readonly __undeclaredSceneActions: UndeclaredSceneActions<TScenes, TInput> };
 
+type ValidateSceneTransitions<TScenes extends SceneMap> =
+  UndeclaredSceneTransitions<TScenes> extends never
+    ? unknown
+    : { readonly __undeclaredSceneTransitions: UndeclaredSceneTransitions<TScenes> };
+
 /**
  * Declare a game.
  *
  * `defineGame` is the entry point of the provisional GameKit API. It
  * validates the definition at the type level — scene names are inferred so
- * `initialScene` must be one of the keys of `scenes` — and preserves and
- * returns the supplied definition.
+ * `initialScene` must be one of the keys of `scenes`, every scene action must
+ * exist in the game input map, and every declared transition target must be a
+ * declared scene — and preserves and returns the supplied definition.
  *
  * This function creates no runtime state: it does not start a scheduler,
  * allocate a session, load assets, or register input. Pass the definition to
@@ -31,12 +47,23 @@ type ValidateSceneActions<TScenes extends SceneMap, TInput extends InputMap> =
  * const game = defineGame({
  *   viewport: {
  *     logicalSize: { width: 390, height: 844 },
- *     scale: 'fit',
- *     overflow: 'letterbox',
+ *     mode: 'fit',
  *   },
  *   assets: [],
- *   input: { boost: { type: 'button' } },
+ *   input: { primary: { type: 'pointer' } },
  *   scenes: {
+ *     ready: defineScene({
+ *       actions: ['primary'],
+ *       transitions: ['play'],
+ *       create: () => ({ ready: true }),
+ *       update: ({ state, input, transition }) => {
+ *         if (input.pointer('primary').pressed) {
+ *           transition.setScene('play');
+ *         }
+ *         return state;
+ *       },
+ *       snapshot: ({ state }) => state,
+ *     }),
  *     play: defineScene({
  *       actions: [],
  *       create: () => ({ x: 0 }),
@@ -44,7 +71,7 @@ type ValidateSceneActions<TScenes extends SceneMap, TInput extends InputMap> =
  *       snapshot: ({ state }) => ({ x: state.x }),
  *     }),
  *   },
- *   initialScene: 'play',
+ *   initialScene: 'ready',
  * });
  * ```
  */
@@ -54,7 +81,8 @@ export function defineGame<
   const TInitialScene extends keyof TScenes = keyof TScenes,
 >(
   definition: GameDefinition<TScenes, TInput, TInitialScene> &
-    ValidateSceneActions<TScenes, TInput>,
+    ValidateSceneActions<TScenes, TInput> &
+    ValidateSceneTransitions<TScenes>,
 ): GameDefinition<TScenes, TInput, TInitialScene> {
   return definition;
 }
