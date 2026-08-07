@@ -1,4 +1,4 @@
-import { createGameSession, defineGame, defineScene } from 'react-native-gamekit';
+import { createGameSession, defineGame, defineScene, type GameSession } from 'react-native-gamekit';
 
 const LOGICAL_WIDTH = 320;
 const LOGICAL_HEIGHT = 180;
@@ -46,8 +46,7 @@ const playScene = defineScene({
 export const bootstrapDefinition = defineGame({
   viewport: {
     logicalSize: { width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT },
-    scale: 'fit',
-    overflow: 'letterbox',
+    mode: 'fit',
   },
   assets: [],
   input: {
@@ -62,5 +61,15 @@ export const bootstrapDefinition = defineGame({
   initialScene: 'play',
 });
 
-/** Root-lifetime live session mounted by the playground GameView. */
-export const bootstrapGame = createGameSession(bootstrapDefinition);
+/**
+ * Create a fresh Bootstrap session owned by the calling screen.
+ *
+ * The playground screen owns exactly one session and disposes it on final
+ * unmount; the definition above remains static and shareable.
+ */
+export function createBootstrapGameSession(): GameSession<
+  typeof bootstrapDefinition['scenes'],
+  typeof bootstrapDefinition['input']
+> {
+  return createGameSession(bootstrapDefinition);
+}

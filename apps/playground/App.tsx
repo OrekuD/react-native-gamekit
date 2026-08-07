@@ -1,42 +1,20 @@
-import { DarkTheme, NavigationContainer } from '@react-navigation/native';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import type { PlaygroundStackParamList } from './src/navigation/types';
-import BootstrapGameScreen from './src/screens/BootstrapGameScreen';
-import HomeScreen from './src/screens/HomeScreen';
+import { PlaygroundShell } from './src/shell/PlaygroundShell';
 
-const Stack = createNativeStackNavigator<PlaygroundStackParamList>();
-
-const navigationTheme = {
-  ...DarkTheme,
-  colors: {
-    ...DarkTheme.colors,
-    background: '#080b12',
-    card: '#080b12',
-    primary: '#8b5cf6',
-  },
-};
-
-/** Playground shell that will grow into the example game catalog. */
+/**
+ * Global providers and the status bar only. The stack-free
+ * `PlaygroundShell` owns the catalog/game choice.
+ */
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <NavigationContainer theme={navigationTheme}>
-        <Stack.Navigator
-          initialRouteName="Home"
-          screenOptions={{
-            animation: 'slide_from_right',
-            contentStyle: { backgroundColor: '#080b12' },
-            headerShown: false,
-          }}
-        >
-          <Stack.Screen name="Home" component={HomeScreen} />
-          <Stack.Screen name="BootstrapGame" component={BootstrapGameScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
-      <StatusBar style="light" />
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <PlaygroundShell />
+        <StatusBar style="light" />
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

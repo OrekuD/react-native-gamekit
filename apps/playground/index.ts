@@ -1,5 +1,8 @@
 import { registerRootComponent } from 'expo';
 
+// Gesture Handler must initialize before any gesture component mounts.
+import 'react-native-gesture-handler';
+
 import App from './App';
 
 // registerRootComponent calls AppRegistry.registerComponent('main', () => App);

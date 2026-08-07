@@ -5,30 +5,15 @@ import {
   ScrollView as ExpoScrollView,
   Text as ExpoText,
 } from "@expo/ui";
-import type { NativeStackScreenProps } from "@react-navigation/native-stack";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
 import { StyleSheet } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-import type { PlaygroundStackParamList } from "../navigation/types";
+import { PLAYGROUND_GAMES } from "../catalog/games";
+import { usePlaygroundStore } from "../state/playgroundStore";
 
-const GAMES = [
-  {
-    id: "bootstrap",
-    route: "BootstrapGame" as const,
-    title: "First runtime slice",
-    description: "A moving Skia circle driven by a fixed-step GameSession.",
-    label: "Play",
-  },
-];
-
-type HomeScreenProps = NativeStackScreenProps<PlaygroundStackParamList, "Home">;
-
-/** Native-styled catalog surface for the playground examples. */
-export default function HomeScreen({ navigation }: HomeScreenProps) {
-  const insets = useSafeAreaInsets();
+/** Catalog surface for the playground examples. */
+export default function HomeScreen() {
+  const openGame = usePlaygroundStore((state) => state.openGame);
 
   return (
     <SafeAreaView edges={["bottom"]} style={styles.safeArea}>
@@ -59,10 +44,10 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
               Small games, built with the same runtime you can use in your app.
             </ExpoText>
           </Column>
-          {GAMES.map((game) => (
+          {PLAYGROUND_GAMES.map((game) => (
             <ListItem
               key={game.id}
-              onPress={() => navigation.navigate(game.route)}
+              onPress={() => openGame(game.id)}
               supportingText={game.description}
               testID={`game-row-${game.id}`}
               trailing={

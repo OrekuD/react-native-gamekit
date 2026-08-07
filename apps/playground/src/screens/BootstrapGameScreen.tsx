@@ -1,64 +1,72 @@
 import { Circle } from '@shopify/react-native-skia';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useDerivedValue } from 'react-native-reanimated';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GameView, type GameRendererProps } from 'react-native-gamekit/react';
-import type { PlaygroundStackParamList } from '../navigation/types';
-import {
-  bootstrapDefinition,
-  bootstrapGame,
-  type BootstrapSnapshot,
-} from '../games/bootstrapGame';
+import { bootstrapDefinition, createBootstrapGameSession } from '../games/bootstrapGame';
+import type { PlaygroundGameScreenProps } from '../shell/PlaygroundGameScreenProps';
 
-function BootstrapRenderer({
-  frame,
-  surfaceSize,
-}: GameRendererProps<BootstrapSnapshot>) {
-  const scale = useDerivedValue(() => {
-    const logical = bootstrapDefinition.viewport.logicalSize;
-    return Math.min(
-      surfaceSize.value.width / logical.width,
-      surfaceSize.value.height / logical.height,
-    );
-  });
+/**
+ * Renderer authoring only logical coordinates; the shared viewport supplies
+ * the scale and letterbox offset so drawing and hit testing agree.
+ */
+function BootstrapRenderer({ frame, viewport }: GameRendererProps<typeof bootstrapDefinition['scenes']>) {
   const x = useDerivedValue(() => {
-    const logical = bootstrapDefinition.viewport.logicalSize;
+    const surface = viewport.value;
     const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
     const worldX =
       value.previous.ball.x +
       (value.current.ball.x - value.previous.ball.x) * value.alpha;
-    return (surfaceSize.value.width - logical.width * scale.value) / 2 + worldX * scale.value;
+    return worldX * surface.scale + surface.offsetX;
   });
   const y = useDerivedValue(() => {
-    const logical = bootstrapDefinition.viewport.logicalSize;
-    return (
-      (surfaceSize.value.height - logical.height * scale.value) / 2 +
-      frame.value.current.ball.y * scale.value
-    );
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.ball.y * surface.scale + surface.offsetY;
   });
-  const radius = useDerivedValue(
-    () => frame.value.current.ball.radius * scale.value,
-  );
-  const color = useDerivedValue(() => frame.value.current.ball.color);
+  const radius = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    return surface === undefined || value.scene !== 'play'
+      ? 0
+      : value.current.ball.radius * surface.scale;
+  });
+  const color = useDerivedValue(() => {
+    const value = frame.value;
+    return value.scene === 'play' ? value.current.ball.color : '#000000';
+  });
 
   return <Circle cx={x} cy={y} r={radius} color={color} />;
 }
 
-type BootstrapGameScreenProps = NativeStackScreenProps<
-  PlaygroundStackParamList,
-  'BootstrapGame'
->;
-
-/** First end-to-end GameKit runtime and Skia playground. */
-export default function BootstrapGameScreen({ navigation }: BootstrapGameScreenProps) {
+/**
+ * First end-to-end GameKit runtime and Skia playground.
+ *
+ * The screen owns one session for its lifetime: created on mount and disposed
+ * exactly once on unmount.
+ */
+export default function BootstrapGameScreen({ onExit }: PlaygroundGameScreenProps) {
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
+  const [session] = useState(() => createBootstrapGameSession());
+  useEffect(
+    () => () => {
+      session.dispose();
+    },
+    [session],
+  );
 
   return (
-    <SafeAreaView edges={['bottom']} style={styles.safeArea}>
-      <GameView game={bootstrapGame} renderer={BootstrapRenderer} style={styles.game}>
+    <View style={styles.safeArea}>
+      <GameView game={session} renderer={BootstrapRenderer} style={styles.game}>
         <View
           pointerEvents="box-none"
           style={[styles.header, { paddingTop: insets.top + 44 }]}
@@ -67,7 +75,7 @@ export default function BootstrapGameScreen({ navigation }: BootstrapGameScreenP
             accessibilityLabel="Back to playground"
             accessibilityRole="button"
             hitSlop={12}
-            onPress={() => navigation.goBack()}
+            onPress={onExit}
             style={styles.backButton}
           >
             <Text style={styles.backLabel}>‹ Playground</Text>
@@ -79,20 +87,23 @@ export default function BootstrapGameScreen({ navigation }: BootstrapGameScreenP
           </Text>
         </View>
 
-        <View pointerEvents="box-none" style={styles.controls}>
+        <View
+          pointerEvents="box-none"
+          style={[styles.controls, { bottom: insets.bottom + 28 }]}
+        >
           <Pressable
             accessibilityHint="Makes the ball move faster while held"
             accessibilityLabel="Boost"
             accessibilityRole="button"
-            onPressIn={() => bootstrapGame.input.press('boost')}
-            onPressOut={() => bootstrapGame.input.release('boost')}
+            onPressIn={() => session.input.press('boost')}
+            onPressOut={() => session.input.release('boost')}
             style={({ pressed }) => [styles.boost, pressed && styles.boostPressed]}
           >
             <Text style={styles.boostLabel}>Hold to boost</Text>
           </Pressable>
         </View>
       </GameView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -140,7 +151,6 @@ const styles = StyleSheet.create({
   },
   controls: {
     alignItems: 'center',
-    bottom: 28,
     left: 0,
     position: 'absolute',
     right: 0,
