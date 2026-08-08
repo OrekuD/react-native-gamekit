@@ -17,18 +17,18 @@ type RendererProps = GameRendererProps<BrickBreakerDefinition['scenes']>;
  * shared frame and viewport; dead bricks render with zero size so the
  * component tree never changes and React never sees live gameplay positions.
  */
-export function BrickBreakerRenderer({ frame, viewport }: RendererProps) {
+export function BrickBreakerRenderer({ frame, alpha, viewport }: RendererProps) {
   return (
     <>
       <Fill color="#0f1420" />
-      <Paddle frame={frame} viewport={viewport} />
-      <Ball frame={frame} viewport={viewport} />
+      <Paddle frame={frame} alpha={alpha} viewport={viewport} />
+      <Ball frame={frame} alpha={alpha} viewport={viewport} />
       <Bricks frame={frame} viewport={viewport} />
     </>
   );
 }
 
-function Paddle({ frame, viewport }: Pick<RendererProps, 'frame' | 'viewport'>) {
+function Paddle({ frame, alpha, viewport }: Pick<RendererProps, 'frame' | 'alpha' | 'viewport'>) {
   const { paddle } = BRICK_BREAKER_CONFIG;
   const x = useDerivedValue(() => {
     const value = frame.value;
@@ -36,7 +36,7 @@ function Paddle({ frame, viewport }: Pick<RendererProps, 'frame' | 'viewport'>) 
     if (value.scene !== 'play' || surface === undefined) {
       return 0;
     }
-    const worldX = interpolatePaddle(value.previous.paddle, value.current.paddle, value.alpha);
+    const worldX = interpolatePaddle(value.previous.paddle, value.current.paddle, alpha.value);
     return (worldX - paddle.width / 2) * surface.scale + surface.offsetX;
   });
   const y = useDerivedValue(() => {
@@ -55,7 +55,7 @@ function Paddle({ frame, viewport }: Pick<RendererProps, 'frame' | 'viewport'>) 
   return <Rect x={x} y={y} width={width} height={height} color="#e2e8f0" />;
 }
 
-function Ball({ frame, viewport }: Pick<RendererProps, 'frame' | 'viewport'>) {
+function Ball({ frame, alpha, viewport }: Pick<RendererProps, 'frame' | 'alpha' | 'viewport'>) {
   const { ball } = BRICK_BREAKER_CONFIG;
   const x = useDerivedValue(() => {
     const value = frame.value;
@@ -63,7 +63,7 @@ function Ball({ frame, viewport }: Pick<RendererProps, 'frame' | 'viewport'>) {
     if (value.scene !== 'play' || surface === undefined) {
       return 0;
     }
-    return interpolateBall(value.previous.ball, value.current.ball, value.alpha).x * surface.scale + surface.offsetX;
+    return interpolateBall(value.previous.ball, value.current.ball, alpha.value).x * surface.scale + surface.offsetX;
   });
   const y = useDerivedValue(() => {
     const value = frame.value;
@@ -71,7 +71,7 @@ function Ball({ frame, viewport }: Pick<RendererProps, 'frame' | 'viewport'>) {
     if (value.scene !== 'play' || surface === undefined) {
       return 0;
     }
-    return interpolateBall(value.previous.ball, value.current.ball, value.alpha).y * surface.scale + surface.offsetY;
+    return interpolateBall(value.previous.ball, value.current.ball, alpha.value).y * surface.scale + surface.offsetY;
   });
   const radius = useDerivedValue(() => {
     const value = frame.value;

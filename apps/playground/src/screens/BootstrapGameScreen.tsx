@@ -12,7 +12,7 @@ import type { PlaygroundGameScreenProps } from '../shell/PlaygroundGameScreenPro
  * Renderer authoring only logical coordinates; the shared viewport supplies
  * the scale and letterbox offset so drawing and hit testing agree.
  */
-function BootstrapRenderer({ frame, viewport }: GameRendererProps<typeof bootstrapDefinition['scenes']>) {
+function BootstrapRenderer({ frame, alpha, viewport }: GameRendererProps<typeof bootstrapDefinition['scenes']>) {
   const x = useDerivedValue(() => {
     const surface = viewport.value;
     const value = frame.value;
@@ -21,7 +21,7 @@ function BootstrapRenderer({ frame, viewport }: GameRendererProps<typeof bootstr
     }
     const worldX =
       value.previous.ball.x +
-      (value.current.ball.x - value.previous.ball.x) * value.alpha;
+      (value.current.ball.x - value.previous.ball.x) * alpha.value;
     return worldX * surface.scale + surface.offsetX;
   });
   const y = useDerivedValue(() => {

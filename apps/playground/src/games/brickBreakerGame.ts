@@ -14,7 +14,7 @@ import {
   createGameSession,
   defineGame,
   defineScene,
-  type GameRenderFrame,
+  type CommitFrame,
   type GameSession,
   type SceneSnapshot,
 } from 'react-native-gamekit';
@@ -373,6 +373,6 @@ export function createBrickBreakerSession(): BrickBreakerSession {
 
 export type BrickBreakerDefinition = typeof brickBreakerDefinition;
 
-export type BrickBreakerRenderFrame = GameRenderFrame<BrickBreakerDefinition['scenes']>;
+export type BrickBreakerRenderFrame = CommitFrame<BrickBreakerDefinition['scenes']>;
 export type BrickBreakerSession = GameSession<BrickBreakerDefinition['scenes'], BrickBreakerDefinition['input']>;
 export type BrickBreakerSnapshot = SceneSnapshot<BrickBreakerDefinition['scenes'][keyof BrickBreakerDefinition['scenes']]>;

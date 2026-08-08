@@ -281,7 +281,7 @@ describe('GameSession fixed-step scheduling', () => {
   it('pauses instead of becoming a running session with no frame after a listener error', () => {
     const driver = new ManualFrameDriver();
     const session = createGameSessionWithDriver(createCounterGame(), { frameDriver: driver });
-    session.addRenderFrameListener(() => {
+    session.addCommitListener(() => {
       throw new Error('presentation failed');
     });
     session.start();
@@ -453,8 +453,8 @@ describe('GameSession input and snapshots', () => {
       fixedStepMs: 10,
     });
     const initial = session.getRenderFrame();
-    const presented: typeof initial[] = [];
-    const subscription = session.addRenderFrameListener((frame) => presented.push(frame));
+    const presented: Array<{ previous: { count: number }; current: { count: number } }> = [];
+    const subscription = session.addCommitListener((frame) => presented.push(frame as never));
 
     assert.equal(initial.previous, initial.current);
     assert.deepEqual(initial.current, { count: 0 });

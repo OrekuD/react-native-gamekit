@@ -65,7 +65,7 @@ export function runScenario(
   let lastEnqueueAt: number | undefined;
   const schedule = generateDragSchedule(options.durationMs, 16);
   if (scenario === 'drag') {
-    session.addRenderFrameListener(() => {
+    session.addCommitListener(() => {
       if (lastEnqueueAt !== undefined) {
         summary.record('input-to-commit-ms', Date.now() - lastEnqueueAt);
         lastEnqueueAt = undefined;

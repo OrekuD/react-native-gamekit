@@ -7,11 +7,11 @@ import {
   createGameSession,
   defineGame,
   defineScene,
+  type CommitFrame,
   type GameRenderFrame,
   type GameSession,
   type InputFrame,
   type PointerState,
-  type RenderFrame,
 } from '../src/index.ts';
 
 const viewport = {
@@ -94,7 +94,7 @@ session.input.begin('bogus', 1, { x: 0, y: 0 });
 
 // The render frame is a discriminated union: narrowing on `scene` narrows
 // both `previous` and `current` to the corresponding snapshot type.
-declare const frame: GameRenderFrame<typeof game.scenes>;
+declare const frame: CommitFrame<typeof game.scenes>;
 frame.scene satisfies 'ready' | 'play' | 'game-over';
 if (frame.scene === 'play') {
   frame.current.score satisfies number;
@@ -109,11 +109,12 @@ if (frame.scene === 'ready') {
   frame.current.score satisfies number;
 }
 
-// Public render frames are readonly.
-// @ts-expect-error render frames are readonly
-frame.alpha = 0;
-// @ts-expect-error render frames are readonly
+// Public commit frames are readonly.
+// @ts-expect-error commit frames are readonly
 frame.scene = 'ready';
+frame.revision satisfies number;
+frame.hardCut satisfies boolean;
+frame.stepMs satisfies number;
 // @ts-expect-error renderer snapshots are deeply readonly
 frame.current.position = { x: 1, y: 2 };
 
@@ -140,6 +141,16 @@ declare const inputFrame: InputFrame<'boost' | 'primary'>;
 inputFrame.button('boost').held satisfies boolean;
 inputFrame.pointer('primary').active satisfies boolean;
 
-// A generic RenderFrame remains available for snapshot-level helpers.
-declare const genericFrame: RenderFrame<{ readonly x: number }>;
-genericFrame.current.x satisfies number;
+// A generic CommitFrame remains available for snapshot-level helpers.
+declare const genericFrame: CommitFrame<typeof game.scenes>;
+genericFrame.current satisfies unknown;
+
+// Commit listeners receive envelopes without a presentation fraction; the
+// render-frame shape (with on-demand alpha) stays available for headless use.
+declare const renderFrame: GameRenderFrame<typeof game.scenes>;
+renderFrame.alpha satisfies number;
+declare function observe(frame: CommitFrame<typeof game.scenes>): void;
+declare const someSession: GameSession<typeof game.scenes, typeof game.input>;
+someSession.addCommitListener(observe);
+// @ts-expect-error the presentation-frame listener API was removed before v1
+game.addRenderFrameListener(observe);

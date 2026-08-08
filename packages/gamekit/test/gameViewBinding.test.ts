@@ -29,9 +29,9 @@ it('binds presentation imperatively and pauses without disposing on cleanup', ()
     frameDriver: driver,
     fixedStepMs: 10,
   });
-  const frames: Array<ReturnType<typeof game.getRenderFrame>> = [];
+  const frames: Array<{ scene: string; previous: { x: number }; current: { x: number } }> = [];
 
-  const cleanup = bindGameSession(game, (frame) => frames.push(frame));
+  const cleanup = bindGameSession(game, (frame) => frames.push(frame as never));
   assert.equal(game.status, 'running');
   assert.equal(frames.length, 1, 'the renderer receives the initial frame immediately');
 

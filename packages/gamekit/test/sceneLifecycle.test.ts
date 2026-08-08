@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { createGameSessionWithDriver } from '../src/core/session/createGameSession.ts';
-import { type GameSession, type RenderFrame } from '../src/core/session/types.ts';
+import { type GameSession } from '../src/core/session/types.ts';
 import { defineGame, defineScene, type GameDefinition } from '../src/index.ts';
 import type { SceneTransitionController } from '../src/scene/types.ts';
 import { ManualFrameDriver } from './helpers/ManualFrameDriver.ts';
@@ -167,7 +167,7 @@ describe('named scenes and session lifecycle', () => {
   it('transitions from inside a render-frame listener are deferred while running', () => {
     const log: SceneLifecycleLog = { name: 'x', events: [] };
     const { session, driver } = createTransitionGame(log);
-    session.addRenderFrameListener(() => {
+    session.addCommitListener(() => {
       session.setScene('play');
     });
     session.start();
@@ -369,14 +369,14 @@ describe('transition ordering and failure semantics', () => {
 
   it('publishes a hard cut with previous === current and alpha 0', () => {
     const log: SceneLifecycleLog = { name: 'x', events: [] };
-    const frames: Array<RenderFrame<{ readonly count: number }> & { readonly scene: string }> = [];
+    const frames: Array<{ previous: unknown; current: unknown; alpha: number; scene: string; hardCut: boolean }> = [];
     const { session } = createTransitionGame(log);
-    session.addRenderFrameListener((frame) => frames.push(frame as never));
+    session.addCommitListener((frame) => frames.push(frame as never));
     session.setScene('play');
     assert.equal(frames.at(-1)?.scene, 'play');
     const hardCut = frames.at(-1)!;
     assert.equal(hardCut.previous, hardCut.current);
-    assert.equal(hardCut.alpha, 0);
+    assert.equal(hardCut.hardCut, true, 'the hard cut is flagged on the envelope');
   });
 
   it('resets scene-local time and keeps global time monotonic across transitions', () => {
@@ -580,7 +580,7 @@ describe('transition ordering and failure semantics', () => {
   it('pauses without a successor when a transition hard-cut publish fails', () => {
     const log: SceneLifecycleLog = { name: 'x', events: [] };
     const { session, driver } = createTransitionGame(log);
-    session.addRenderFrameListener((frame) => {
+    session.addCommitListener((frame) => {
       if (frame.scene === 'play') {
         throw new Error('presentation failed');
       }
@@ -724,7 +724,7 @@ describe('feedback: transition publish and lifecycle hardening', () => {
     const log: SceneLifecycleLog = { name: 'x', events: [] };
     const { session, driver } = createTransitionGame(log);
     let publishes = 0;
-    session.addRenderFrameListener(() => {
+    session.addCommitListener(() => {
       publishes += 1;
     });
     session.start();

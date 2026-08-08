@@ -43,8 +43,19 @@ const _definition = defineGame({
 
 type Scenes = typeof _definition.scenes;
 
-// The renderer receives a scene-discriminated frame and the shared viewport.
-function MyRenderer(_props: GameRendererProps<Scenes>) {
+// The renderer receives a scene-discriminated commit envelope, the UI-owned
+// alpha clock, and the shared viewport (T5).
+function MyRenderer(props: GameRendererProps<Scenes>) {
+  props.frame.value.scene satisfies 'ready' | 'play';
+  props.alpha.value satisfies number;
+  props.viewport.value satisfies unknown;
+  return null;
+}
+
+// T5: the envelope carries no presentation fraction; alpha is a UI clock.
+function _AlphaClockRenderer(props: GameRendererProps<Scenes>) {
+  // @ts-expect-error alpha moved out of the commit frame (T5)
+  void props.frame.value.alpha;
   return null;
 }
 

@@ -13,19 +13,25 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 
 import type { InputMap, SceneMap } from '../definition/types';
-import type { GameRenderFrame, GameSession } from '../core/session/types';
+import type { CommitFrame, GameSession } from '../core/session/types';
 import type { ResolvedViewport2D } from '../viewport2d';
+import { advanceAlpha } from './alphaClock';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
 import { ViewportBinding } from './viewportBinding';
 
 /** Stable imperative values supplied to a Skia renderer component. */
 export interface GameRendererProps<TScenes extends SceneMap> {
-  /** Latest session frame, updated without React state. */
-  readonly frame: SharedValue<GameRenderFrame<TScenes>>;
+  /** Latest simulation commit, updated at commit frequency only. */
+  readonly frame: SharedValue<CommitFrame<TScenes>>;
+  /**
+   * UI-owned presentation fraction: advances on the UI runtime and resets
+   * to zero on every new commit. Never extrapolates past 1.
+   */
+  readonly alpha: SharedValue<number>;
   /** Latest resolved viewport shared with the input adapter. */
   readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
 }
@@ -53,11 +59,15 @@ export const GameViewportContext = createContext<ViewportBinding | null>(null);
 /**
  * Mount a headless GameSession into a Skia canvas.
  *
- * Presentation frames update Reanimated shared values directly and the
- * resolved viewport updates only on layout changes. React owns the surface
- * and static overlay tree; it is never the frame store. The session is
- * started while mounted, paused on cleanup and app backgrounding, and is
- * never disposed by this component — the creator owns disposal.
+ * Simulation commits update the frame shared value at commit frequency (one
+ * per fixed step, never per display frame); the presentation fraction lives
+ * on the UI runtime and is advanced by a frame callback that resets on every
+ * new commit, clamps at 1, and never extrapolates. The clock is gated by a
+ * `running` shared value so pause, background, unmount, and dispose hold the
+ * presentation. React owns the surface and static overlay tree; it is never
+ * the frame store. The session is started while mounted, paused on cleanup
+ * and app backgrounding, and is never disposed by this component — the
+ * creator owns disposal.
  */
 export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   game,
@@ -65,7 +75,14 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   children,
   style,
 }: GameViewProps<TScenes, TInput>) {
-  const frame = useSharedValue<GameRenderFrame<TScenes>>(() => game.getRenderFrame());
+  const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
+  const alpha = useSharedValue(0);
+  const running = useSharedValue(true);
+  // Binding epoch: bumped per (re)subscription so a replacement session whose
+  // revision restarts at zero is still accepted by the UI clock.
+  const epoch = useSharedValue(0);
+  const clockEpoch = useSharedValue(0);
+  const clockRevision = useSharedValue(-1);
   const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
 
   const bindingRef = useRef<ViewportBinding | null>(null);
@@ -75,12 +92,14 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   const binding = bindingRef.current;
 
   useEffect(() => {
+    epoch.value += 1;
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
     });
     const cleanupLifecycle = bindAppLifecycle(AppState, {
       getStatus: () => game.status,
       pause: () => {
+        running.value = false;
         if (game.status !== 'disposed') {
           game.pause();
         }
@@ -88,6 +107,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
       resume: () => {
         if (game.status !== 'disposed') {
           game.start();
+          running.value = true;
         }
       },
     });
@@ -96,7 +116,34 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
       cleanupBinding();
       binding.dispose();
     };
-  }, [binding, frame, game]);
+  }, [binding, epoch, frame, game, running]);
+
+  // UI-owned alpha clock: advances only while the session is running,
+  // resets on every new commit, clamps at 1 and holds (no extrapolation).
+  useFrameCallback((frameInfo) => {
+    'worklet';
+    if (!running.value) {
+      return;
+    }
+    const envelope = frame.value;
+    const previousState = {
+      epoch: clockEpoch.value,
+      revision: clockRevision.value,
+      alpha: alpha.value,
+    };
+    const nextState = advanceAlpha(
+      previousState,
+      {
+        epoch: epoch.value,
+        revision: envelope.revision,
+        stepMs: envelope.stepMs,
+      },
+      frameInfo.timeSincePreviousFrame ?? 1000 / 60,
+    );
+    clockEpoch.value = nextState.epoch;
+    clockRevision.value = nextState.revision;
+    alpha.value = nextState.alpha;
+  });
 
   return (
     <GameViewportContext.Provider value={binding}>
@@ -109,7 +156,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
         }}
       >
         <Canvas style={StyleSheet.absoluteFill}>
-          <Renderer frame={frame} viewport={viewportValue} />
+          <Renderer frame={frame} alpha={alpha} viewport={viewportValue} />
         </Canvas>
         {children === undefined ? null : (
           <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>

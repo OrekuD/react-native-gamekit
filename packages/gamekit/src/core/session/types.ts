@@ -15,33 +15,43 @@ export type DeepReadonly<T> = T extends (...arguments_: never[]) => unknown
 /** Lifecycle states of a headless game session. */
 export type GameSessionStatus = 'idle' | 'running' | 'paused' | 'disposed';
 
-/** One renderer-neutral presentation produced by a game session. */
-export interface RenderFrame<TSnapshot> {
+/** One renderer-neutral simulation commit produced by a game session. */
+export interface CommitFrameBase<TSnapshot> {
   /** Snapshot immediately before the latest simulation update. */
   readonly previous: DeepReadonly<TSnapshot>;
   /** Snapshot produced by the latest simulation update. */
   readonly current: DeepReadonly<TSnapshot>;
-  /** Remaining fixed-step fraction used for presentation interpolation. */
-  readonly alpha: number;
   /** Number of completed global simulation updates. */
   readonly tick: number;
   /** Deterministic elapsed global simulation time in seconds. */
   readonly elapsedSeconds: number;
+  /** Monotonic commit counter; increments on every simulation commit. */
+  readonly revision: number;
+  /** True when this commit is a transition hard cut (previous === current). */
+  readonly hardCut: boolean;
+  /** Fixed simulation step duration in milliseconds (UI alpha clock input). */
+  readonly stepMs: number;
 }
 
 /**
- * A render frame discriminated by its scene name.
+ * A simulation commit discriminated by its scene name.
  *
  * Narrowing on `frame.scene` narrows both `previous` and `current` to the
- * snapshot type of that scene. A transition publishes a hard cut where both
+ * snapshot type of that scene. A transition commits a hard cut where both
  * snapshots come from the new scene; frames never interpolate between two
  * scene types.
  */
-export type GameRenderFrame<TScenes extends SceneMap> = {
-  [TName in keyof TScenes]: RenderFrame<SceneSnapshot<TScenes[TName]>> & {
+export type CommitFrame<TScenes extends SceneMap> = {
+  [TName in keyof TScenes]: CommitFrameBase<SceneSnapshot<TScenes[TName]>> & {
     readonly scene: TName;
   };
 }[keyof TScenes];
+
+/** A commit frame plus a presentation fraction computed on demand. */
+export type GameRenderFrame<TScenes extends SceneMap> = CommitFrame<TScenes> & {
+  /** Live fixed-step fraction at call time; renderers use the UI clock. */
+  readonly alpha: number;
+};
 
 /** An idempotently removable render-frame subscription. */
 export interface GameSubscription {
@@ -75,12 +85,18 @@ export interface GameSession<TScenes extends SceneMap = SceneMap, TInput extends
   restartScene(): void;
   /** Permanently stop the session and release the active scene. */
   dispose(): void;
-  /** Read the latest immutable presentation envelope. */
+  /**
+   * Read the latest immutable simulation commit with a live presentation
+   * fraction.
+   *
+   * Freshness contract: `alpha` is computed on demand from the session's
+   * accumulated timing fraction at call time and is only meaningful for
+   * headless inspection. Rendering uses the UI-owned alpha clock; the
+   * envelope fields never change between commits.
+   */
   getRenderFrame(): GameRenderFrame<TScenes>;
-  /** Observe presentation frames without involving React state. */
-  addRenderFrameListener(
-    listener: (frame: GameRenderFrame<TScenes>) => void,
-  ): GameSubscription;
+  /** Observe simulation commits at commit frequency (never per display frame). */
+  addCommitListener(listener: (frame: CommitFrame<TScenes>) => void): GameSubscription;
 }
 
 /** Error thrown when live work is requested from a disposed session. */

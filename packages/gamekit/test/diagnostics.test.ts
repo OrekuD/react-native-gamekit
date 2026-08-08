@@ -85,7 +85,7 @@ describe('session diagnostics sink (T1)', () => {
       fixedStepMs: 10,
       diagnostics: sink,
     });
-    session.addRenderFrameListener(() => {});
+    session.addCommitListener(() => {});
     session.start();
     driver.fireNext(0);
     driver.fireNext(10);

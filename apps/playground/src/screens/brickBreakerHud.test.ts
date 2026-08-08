@@ -27,9 +27,11 @@ function makePlayFrame(score: number): Parameters<typeof selectHud>[0] {
     scene: 'play',
     previous: frame.previous,
     current: { ...frame.current, score },
-    alpha: frame.alpha,
     tick: frame.tick,
     elapsedSeconds: frame.elapsedSeconds,
+    revision: frame.revision,
+    hardCut: frame.hardCut,
+    stepMs: frame.stepMs,
   };
 }
 

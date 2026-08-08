@@ -24,7 +24,7 @@ function useHudValue<T>(
   const [value, setValue] = useState<T>(() => select(session.getRenderFrame()));
   useEffect(
     () =>
-      session.addRenderFrameListener((frame) => {
+      session.addCommitListener((frame) => {
         setValue((previous) => {
           const next = select(frame);
           return equals(previous, next) ? previous : next;

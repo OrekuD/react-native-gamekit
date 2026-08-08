@@ -73,10 +73,12 @@ enter React state.
 ## Interpolation
 
 The renderer blends same-scene `previous`/`current` paddle and ball values
-with the frame's `alpha` (`src/renderers/interpolation.ts`), so a 120 Hz
-presentation is visually smoother than the 60 Hz simulation. Scene-transition
-hard cuts publish `previous === current`, making the interpolation a no-op —
-frames never blend two scenes.
+with the UI-owned alpha clock (`src/renderers/interpolation.ts`), so a 120 Hz
+presentation is visually smoother than the 60 Hz simulation. Commits arrive
+at simulation frequency; the alpha clock advances the presentation fraction
+on the UI runtime between commits. Scene-transition hard cuts commit
+`previous === current`, making the interpolation a no-op — frames never blend
+two scenes.
 
 ## Headless tests
 

@@ -8,11 +8,11 @@ export type {
 } from './core/input/types';
 export type {
   DeepReadonly,
+  CommitFrame,
   GameRenderFrame,
   GameSession,
   GameSessionStatus,
   GameSubscription,
-  RenderFrame,
 } from './core/session/types';
 export { defineGame } from './definition/defineGame';
 export type {

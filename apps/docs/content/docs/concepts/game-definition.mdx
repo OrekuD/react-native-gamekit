@@ -82,10 +82,15 @@ Each update receives:
 - deterministic global `tick` / `elapsedSeconds` and scene-local
   `sceneTick` / `sceneElapsedSeconds`.
 
-Each presentation frame is a discriminated union: narrowing on `frame.scene`
-narrows `previous` and `current` to that scene's snapshot type, plus an
-interpolation `alpha`. The snapshot payload belongs to the renderer; the core
-does not define a universal transform, camera, or material model.
+Each simulation commit is a discriminated union: narrowing on `frame.scene`
+narrows `previous` and `current` to that scene's snapshot type, plus a
+monotonic `revision`, the `hardCut` flag, and the fixed `stepMs`. Commits are
+published at **simulation frequency only** — never once per display frame.
+The presentation fraction (`alpha`) is not part of the commit: the renderer
+receives it from the UI-owned alpha clock, which resets on every new commit
+and never extrapolates past the latest snapshot. The snapshot payload belongs
+to the renderer; the core does not define a universal transform, camera, or
+material model.
 
 ## Skia GameView
 

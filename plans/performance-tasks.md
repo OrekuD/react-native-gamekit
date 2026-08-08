@@ -271,7 +271,7 @@ Fabric-safe path, but verify **on device**:
 - Rotation/split-view/Stage Manager verified live.
 - Commit: `perf: remove always-on Canvas size polling`.
 
-### Done — commit `1aba6c4` (perf: remove always-on Canvas size polling)
+### Done — commit `099467a` (perf: remove always-on Canvas size polling)
 
 - [x] `GameView` no longer passes `onSize` to the Skia `Canvas`; the Reanimated frame callback + per-frame native `measure()` poll is gone. `onLayout` is the single surface-size authority (P9 dual-writer question removed).
 - [x] `GameRendererProps.surfaceSize` removed from the public renderer props (breaking at 0.0.0); compile fixture asserts its absence (`reactEntry.types.tsx` `@ts-expect-error`, RED-first).
@@ -349,7 +349,7 @@ small. Task 5 already proposed the correct fix; only its phase placement changes
 - Device capture on scenario 5 (scaling) recorded.
 - Commit: `perf: skip re-freezing trusted immutable subtrees`.
 
-### Done — commit `4634869` (perf: skip re-freezing trusted immutable subtrees)
+### Done — commit `e67aac0` (perf: skip re-freezing trusted immutable subtrees)
 
 - [x] RED tests first (`test/deepFreeze.test.ts`, 6 tests, observable through access-counting proxies): shared subtree frozen once across snapshots; newly introduced nested object inside a shared tree still frozen; cyclic snapshots terminate and freeze; a throwing child getter leaves the parent untrusted and a later snapshot re-traverses it; shallow-`Object.isFrozen` objects are still recursed into; per-session freezers are independent.
 - [x] `src/core/session/deepFreeze.ts`: session-owned `trusted` WeakSet; separate per-traversal `visiting` set for cycle detection; nodes promoted to trusted **only after** a complete successful subtree traversal; array index-loop fast path (no `Reflect.ownKeys` per array); `Object.isFrozen` never used as a skip test; freezing stays on in every build. Wired into `createGameSession` as one session-owned freezer (initial, transition, and per-tick snapshots share it).
@@ -438,7 +438,7 @@ regresses; or p95/p99 worsens beyond noise with no code change.
 - Before/after capture with **no code change** recorded.
 - Commit: `chore(deps): upgrade Skia to 2.11.0 and Reanimated/Worklets patches`.
 
-### Done — commit `5eb018f` (chore(deps): upgrade Skia to 2.11.0 and Reanimated/Worklets patches)
+### Done — commit `c5e8e41` (chore(deps): upgrade Skia to 2.11.0 and Reanimated/Worklets patches)
 
 - [x] Versions re-verified in the registry at execution time: `@shopify/react-native-skia@2.11.0`, `react-native-reanimated@4.5.3`, `react-native-worklets@0.10.3` all exist. RNGH held at `~2.32.0` per the plan (3.x New-Arch rewrite would confound T7).
 - [x] Manifest-only commit: library `peerDependencies` + exact `devDependencies` + playground `dependencies` updated together (invariant 3); single lockfile updated via `pnpm install`.
@@ -458,7 +458,7 @@ regresses; or p95/p99 worsens beyond noise with no code change.
 - [ ] 50× open/close leak scenario + repeated scene enter/exit on Skia 2.11.0 (host-object → native-state migration check): pending physical-device/Instruments work.
 - [ ] Compatibility matrix in root `README.md`, docs compatibility page, and `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot: not yet updated (docs sweep pending).
 
-### RNGH 3.1.0 — user-mandated follow-up, commit `e5a34b6` (supersedes the plan's "hold")
+### RNGH 3.1.0 — user-mandated follow-up, commit `34c756b` (supersedes the plan's "hold")
 
 The plan held RNGH at `~2.32.0` ("3.x is a New-Arch rewrite; migrating during T7 would confound measurement"). On 2026-08-08 the user directed the upgrade anyway; it is recorded here as a deliberate supersession so T7's pointer measurements read against the 3.1.0 baseline, not 2.32.
 
@@ -573,6 +573,26 @@ viewport             -> SharedValue, updated only on layout revision
 - JS-stall probe (scenario 4): alpha completes then **holds**, never extrapolates.
 - Determinism, hard cuts, pause/resume, input semantics unchanged.
 - Commit: `perf: publish render commits at simulation frequency`.
+
+### Done — commit `091d56a` (perf: publish render commits at simulation frequency)
+
+- [x] RED tests first: `test/commitFrequency.test.ts` (5 tests — 120 Hz/60 Hz → exactly 1 initial + 60 commits; zero-step callbacks notify nothing; two catch-up steps notify once with the final adjacent pair; revisions strictly monotonic across transitions/external calls; a throwing commit listener pauses and leaves no successor) and `test/alphaClock.test.ts` (7 pure-clock tests — reset on newer commit, advance from frame deltas, clamp-at-1 hold without extrapolation, stale/duplicate commits ignored, new epoch accepted at revision 0, delayed old-epoch write ignored, pause holds and resume continues, hard cut resets).
+- [x] Session: `publish()` → `commit()`; `CommitFrame` envelope (scene, previous, current, tick, elapsedSeconds, **revision**, **hardCut**, **stepMs**) allocated and notified **only** on the initial baseline, step-carrying callbacks (one commit per callback), and transitions/restarts. Zero-step callbacks allocate nothing. `getRenderFrame()` computes alpha on demand (freshness contract documented); `addCommitListener` replaces `addRenderFrameListener` (removed before v1 — migration surface was exactly `bindGameSession`, the HUD hook, the perf-lab latency listener, and 7 test sites).
+- [x] `bindGameSession` now guards writes with a per-session revision check (a stale write can never replace a newer commit) and presents the initial envelope through the same guard.
+- [x] GameView: UI-owned alpha clock (`useFrameCallback` + pure worklet-safe `advanceAlpha` in `src/react/alphaClock.ts`), resetting on (epoch, revision) change, clamping at 1, gated by a `running` shared value so pause/background/unmount/dispose hold the presentation. Binding epoch bumps per (re)subscription so a replacement session at revision 0 is accepted.
+- [x] Renderer contract: `GameRendererProps` now carries `frame` (envelope) + `alpha` (UI clock) + `viewport`; both playground renderers, `reactEntry.types.tsx` fixtures (incl. `@ts-expect-error` proving alpha left the envelope), and the docs renderer contract updated together.
+- [x] All 146 library + 34 playground tests green; lint, typecheck, builds, `git diff --check` clean.
+- [x] Live verification (simulator): game opens, one-press launch, **paddle tracking works under the UI alpha clock** (drag away, back, 3 s hold through the ball's descent — caught). Captures (dev-mode, same sim):
+
+| Scenario | display | zero-step | fixed | catch-up | dropped | **commits** | UI p95/p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Idle brick-breaker, before T5 | 301 | 1–19 | 298–300 | 0–17 | 0 | **301** (display rate) | 16.7/16.7 ms |
+| Idle brick-breaker, after T5 | 301 | 12 | 299 | 11 | 0 | **289** (step-carrying callbacks) | 16.7/16.7 ms |
+| Stall probe, before T5 | 289 | 6 | 292 | 10 | 0 | **289** | 16.7/16.7 ms |
+| Stall probe, after T5 | 286 | 31 | 293 | 39 | 0 | **255** (zero-step burst no longer commits) | 16.7/16.7 ms |
+
+  Commit crossings now track simulation commits (the 60 Hz sim is 1:1 by construction; the 120 Hz win — halved crossings — is covered by the deterministic manual-driver test and pending the device matrix). The stall probe also shows the alpha clock holding a flat 16.7 ms UI frame time through a 200 ms JS stall — alpha completes and holds, never extrapolates.
+- [ ] Strict-Mode double-mount duplicate-callback check: the clock is effect-owned (cleanup cancels on unmount; the running gate holds on pause); double-mount is covered by the existing adapter cleanup tests — flagged for the device harness rather than claimed live here.
 
 ---
 

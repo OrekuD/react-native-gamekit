@@ -6,6 +6,7 @@ import type { InputFrame } from '../input/types';
 import {
   GameSessionDisposedError,
   GameSessionLifecycleError,
+  type CommitFrame,
   type DeepReadonly,
   type GameRenderFrame,
   type GameSession,
@@ -167,15 +168,18 @@ export function createGameSessionWithDriver<
   let hardCutPending = false;
   let publishedThisCallback = false;
   let updateInProgress = false;
-  let renderFrame: GameRenderFrame<TScenes> = Object.freeze({
+  let revision = 0;
+  let commitFrame: CommitFrame<TScenes> = Object.freeze({
     scene: sceneName,
     previous: previousSnapshot,
     current: currentSnapshot,
-    alpha: 0,
     tick: 0,
     elapsedSeconds: 0,
-  }) as unknown as GameRenderFrame<TScenes>;
-  const listeners = new Set<(frame: GameRenderFrame<TScenes>) => void>();
+    revision: 0,
+    hardCut: false,
+    stepMs: fixedStepMs,
+  }) as unknown as CommitFrame<TScenes>;
+  const listeners = new Set<(frame: CommitFrame<TScenes>) => void>();
 
   const assertLive = () => {
     if (status === 'disposed') {
@@ -185,12 +189,13 @@ export function createGameSessionWithDriver<
   const isDisposed = () => status === 'disposed';
   const inputBuffer = createInputBuffer(definition.input, assertLive);
 
-  const publish = () => {
-    // A committed transition publishes a hard cut with `previous === current`
-    // and `alpha === 0`, regardless of the retained timing fraction.
-    const alpha = hardCutPending
-      ? 0
-      : Math.max(0, Math.min(accumulatorMs / fixedStepMs, 1 - Number.EPSILON));
+  // Simulation commits are the only presentation updates (T5): a commit
+  // happens on the initial baseline, after every presentation callback that
+  // ran at least one fixed step (one commit per callback, carrying the final
+  // adjacent snapshot pair), and on every transition/restart. Zero-step
+  // callbacks allocate nothing beyond scheduling their successor.
+  const commit = () => {
+    const hardCut = hardCutPending;
     hardCutPending = false;
     publishedThisCallback = true;
     const publishStart = now();
@@ -198,11 +203,13 @@ export function createGameSessionWithDriver<
       scene: sceneName,
       previous: previousSnapshot,
       current: currentSnapshot,
-      alpha,
       tick,
       elapsedSeconds: (tick * fixedStepMs) / 1000,
-    }) as unknown as GameRenderFrame<TScenes>;
-    renderFrame = frame;
+      revision: ++revision,
+      hardCut,
+      stepMs: fixedStepMs,
+    }) as unknown as CommitFrame<TScenes>;
+    commitFrame = frame;
     for (const listener of [...listeners]) {
       listener(frame);
     }
@@ -226,9 +233,9 @@ export function createGameSessionWithDriver<
     inputBuffer.reset();
   };
 
-  const publishOrPause = () => {
+  const commitOrPause = () => {
     try {
-      publish();
+      commit();
     } catch (error) {
       pauseInternal();
       throw error;
@@ -381,7 +388,7 @@ export function createGameSessionWithDriver<
           pauseInternal();
           throw error;
         }
-        publishOrPause();
+        commitOrPause();
         if (status !== 'running' || generation !== activeGeneration) {
           return;
         }
@@ -390,7 +397,7 @@ export function createGameSessionWithDriver<
       if (previousTimestampMs === undefined) {
         previousTimestampMs = timestampMs;
         if (!publishedThisCallback) {
-          publishOrPause();
+          commitOrPause();
         }
         if (status === 'running' && generation === activeGeneration) {
           schedule(activeGeneration);
@@ -403,6 +410,7 @@ export function createGameSessionWithDriver<
       accumulatorMs += Math.min(wallDeltaMs, maxFrameDeltaMs);
       const tolerance = fixedStepMs * 1e-9;
       let catchUpSteps = 0;
+      let stepsRan = false;
 
       try {
         while (
@@ -411,6 +419,7 @@ export function createGameSessionWithDriver<
           status === 'running' &&
           generation === activeGeneration
         ) {
+          stepsRan = true;
           const nextTick = tick + 1;
           const nextSceneTick = activeScene.sceneTick + 1;
           const sampleStart = now();
@@ -485,8 +494,12 @@ export function createGameSessionWithDriver<
         diagnostics.onZeroStepCallback();
       }
 
-      if (!publishedThisCallback) {
-        publishOrPause();
+      if (stepsRan && !publishedThisCallback) {
+        // One commit per presentation callback, with the final adjacent pair:
+        // `previous`/`current` already hold the last two committed snapshots.
+        // A transition inside the loop also counts as a run step: its hard
+        // cut commits here (zero-step callbacks never reach this branch).
+        commitOrPause();
       }
       if (status === 'running' && generation === activeGeneration) {
         schedule(activeGeneration);
@@ -521,7 +534,7 @@ export function createGameSessionWithDriver<
         const pending = pendingTransition;
         pendingTransition = undefined;
         commitTransition(pending, activeScene.state, undefined);
-        publishOrPause();
+        commitOrPause();
       }
     },
     setScene(name: keyof TScenes) {
@@ -543,7 +556,7 @@ export function createGameSessionWithDriver<
         return;
       }
       commitTransition({ kind: 'setScene', name: nameString }, activeScene.state, undefined);
-      publishOrPause();
+      commitOrPause();
     },
     restartScene() {
       assertLive();
@@ -557,7 +570,7 @@ export function createGameSessionWithDriver<
         return;
       }
       commitTransition({ kind: 'restart' }, activeScene.state, undefined);
-      publishOrPause();
+      commitOrPause();
     },
     dispose() {
       if (status === 'disposed') {
@@ -577,9 +590,12 @@ export function createGameSessionWithDriver<
       activeScene.definition.dispose?.(activeScene.state);
     },
     getRenderFrame() {
-      return renderFrame;
+      const alpha = commitFrame.hardCut
+        ? 0
+        : Math.max(0, Math.min(accumulatorMs / fixedStepMs, 1 - Number.EPSILON));
+      return Object.freeze({ ...commitFrame, alpha }) as unknown as GameRenderFrame<TScenes>;
     },
-    addRenderFrameListener(listener) {
+    addCommitListener(listener) {
       assertLive();
       listeners.add(listener);
       let removed = false;

@@ -77,7 +77,7 @@ A transition requested during a successful update commits in this exact order:
 6. dispose the outgoing scene exactly once using its candidate final state;
 7. install the new scene with `sceneTick: 0` and `sceneElapsedSeconds: 0`;
 8. clear pending and held input;
-9. publish one hard-cut frame with `previous === current` and `alpha === 0`.
+9. commit one hard-cut envelope with `previous === current` and `hardCut === true` (the UI alpha clock resets to zero).
 
 The next simulation update receives `sceneTick: 1`. Global `tick` and
 `elapsedSeconds` continue monotonically from the session, so scene-local time
