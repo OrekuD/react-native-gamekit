@@ -1,6 +1,6 @@
-import { useCallback, useContext, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useContext, useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { GestureDetector, GestureStateManager, useManualGesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
 
 import type { InputMap, PointerInputAction, SceneMap } from '../definition/types';
@@ -91,37 +91,37 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     binding.handleTouchesCancelled();
   }, [binding]);
 
-  const gesture = useMemo(
-    () =>
-      Gesture.Manual()
-        .onTouchesDown((event, stateManager) => {
-          'worklet';
-          stateManager.activate();
-          for (const touch of event.changedTouches) {
-            runOnJS(beginOnJS)(touch.id, touch.x, touch.y);
-          }
-        })
-        .onTouchesMove((event) => {
-          'worklet';
-          for (const touch of event.changedTouches) {
-            runOnJS(moveOnJS)(touch.id, touch.x, touch.y);
-          }
-        })
-        .onTouchesUp((event, stateManager) => {
-          'worklet';
-          for (const touch of event.changedTouches) {
-            runOnJS(upOnJS)(touch.id, touch.x, touch.y);
-          }
-          if (event.numberOfTouches === 0) {
-            stateManager.end();
-          }
-        })
-        .onTouchesCancelled(() => {
-          'worklet';
-          runOnJS(cancelOnJS)();
-        }),
-    [beginOnJS, cancelOnJS, moveOnJS, upOnJS],
-  );
+  // RNGH 3 hook API: the config object is rebuilt per render (the hooks diff
+  // it internally); the wrapped JS-thread callbacks keep explicit 'worklet'
+  // directives because useCallback wrapping defeats auto-workletization.
+  const gesture = useManualGesture({
+    onTouchesDown: (event) => {
+      'worklet';
+      GestureStateManager.activate(event.handlerTag);
+      for (const touch of event.changedTouches) {
+        runOnJS(beginOnJS)(touch.id, touch.x, touch.y);
+      }
+    },
+    onTouchesMove: (event) => {
+      'worklet';
+      for (const touch of event.changedTouches) {
+        runOnJS(moveOnJS)(touch.id, touch.x, touch.y);
+      }
+    },
+    onTouchesUp: (event) => {
+      'worklet';
+      for (const touch of event.changedTouches) {
+        runOnJS(upOnJS)(touch.id, touch.x, touch.y);
+      }
+      if (event.numberOfTouches === 0) {
+        GestureStateManager.deactivate(event.handlerTag);
+      }
+    },
+    onTouchesCancel: () => {
+      'worklet';
+      runOnJS(cancelOnJS)();
+    },
+  });
 
   useEffect(() => {
     const unsubscribeLayout = viewportContext.subscribe(() => {

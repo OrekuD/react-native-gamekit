@@ -15,11 +15,11 @@ Before proposing APIs or editing code:
 
 1. Inspect the app and library `package.json` files plus the lockfile.
 2. Record the installed React Native, Expo, Skia, Reanimated, Worklets, and Gesture Handler versions.
-3. Match examples to those versions. Never silently mix RNGH 3 hook APIs with an RNGH 2 project.
+3. Match examples to those versions. Never silently mix RNGH 2 builder APIs with an RNGH 3 project.
 4. Check official compatibility pages before upgrading any native dependency.
 5. Assume an Expo development build with prebuild is allowed. Do not constrain GameKit to Expo Go.
 
-The repository baseline captured on 2026-08-07 is RN 0.86.2, Expo 57.0.10, Skia 2.6.2, Reanimated 4.5.1, Worklets 0.10.1, and RNGH 2.32.0. Re-check rather than trusting this snapshot.
+The repository baseline captured on 2026-08-08 is RN 0.86.2, Expo 57.0.10, Skia 2.11.0, Reanimated 4.5.3, Worklets 0.10.3, and RNGH 3.1.0 (upgraded from 2.32.0; `expo install --check` deliberately flags the Skia/Reanimated/Worklets/RNGH divergence from the SDK 57 matrix). Re-check rather than trusting this snapshot.
 
 Read `references/sources.md` when facts may have changed.
 
@@ -81,7 +81,7 @@ Read `references/reanimated-runtime.md` before adding a new clock, reaction, or 
 ## Implement game input as state, not navigation
 
 - Wrap the native app close to its root with `GestureHandlerRootView`.
-- In this repository, use the RNGH 2 `Gesture.*()` builder API and `GestureDetector`.
+- In this repository, use the RNGH 3 hook API (`useManualGesture` + `GestureDetector`) and the global `GestureStateManager`; the RNGH 2 `Gesture.*()` builder API is legacy in 3.x (types are `Legacy*`-prefixed).
 - Sample high-frequency gesture data on the UI runtime and reduce it to compact commands or values.
 - Track touches by pointer ID; array order is not stable.
 - Use absolute coordinates when the target view itself transforms, then map once into logical game coordinates.
@@ -135,7 +135,7 @@ Prefer a simple measured solution over a speculative abstraction. Keep renderer 
 - Skia render modes and GPU cost: `references/skia-rendering.md`
 - Reanimated animation and frame callbacks: `references/reanimated-runtime.md`
 - Worklet runtimes and memory transfer: `references/worklets-threading.md`
-- RNGH 2 game input and RNGH 3 migration warning: `references/gesture-input.md`
+- RNGH 3 game input (hook API, GestureStateManager, renamed callbacks): `references/gesture-input.md`
 - Performance audit and benchmark gates: `references/performance-review.md`
 - Official pages, pinned revisions, and version caveats: `references/sources.md`
 - Refresh official source snapshots: `scripts/sync_official_sources.py`

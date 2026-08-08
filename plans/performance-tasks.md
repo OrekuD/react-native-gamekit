@@ -458,6 +458,30 @@ regresses; or p95/p99 worsens beyond noise with no code change.
 - [ ] 50× open/close leak scenario + repeated scene enter/exit on Skia 2.11.0 (host-object → native-state migration check): pending physical-device/Instruments work.
 - [ ] Compatibility matrix in root `README.md`, docs compatibility page, and `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot: not yet updated (docs sweep pending).
 
+### RNGH 3.1.0 — user-mandated follow-up, commit `e5a34b6` (supersedes the plan's "hold")
+
+The plan held RNGH at `~2.32.0` ("3.x is a New-Arch rewrite; migrating during T7 would confound measurement"). On 2026-08-08 the user directed the upgrade anyway; it is recorded here as a deliberate supersession so T7's pointer measurements read against the 3.1.0 baseline, not 2.32.
+
+- [x] `react-native-gesture-handler` 2.32.0 → **3.1.0** (registry-verified latest stable at execution time; `~3.1.0` peer/deps, exact `3.1.0` library devDep), isolated in its own commit.
+- [x] **API migration** (`GamePointerInput.tsx`, compiler-verified against the installed 3.1.0 types):
+  - `Gesture.Manual()` builder → **`useManualGesture({ onTouchesDown/Move/Up/Cancel })`** hook (config-object API).
+  - `stateManager` argument → **global `GestureStateManager`** (`activate(handlerTag)` / `deactivate(handlerTag)`; `end()` is now `deactivate()`).
+  - `onTouchesCancelled` → **`onTouchesCancel`**.
+  - Explicit `'worklet';` directives retained — useCallback-wrapped handlers defeat the 3.x auto-workletizer.
+  - `GestureDetector` unchanged; no `Gesture.Root()` needed (single detector per surface).
+- [x] Native: prebuild clean → exactly one `RNGestureHandler 3.1.0` pod; iOS debug build green; workspace tests (134 + 34), lint, typecheck green.
+- [x] **Before/after captures, scripted drag (same simulator, dev-mode):**
+
+| Capture | display | zero-step | fixed | commits | input→commit p50/p95/p99 | update p95 | deep-freeze p95 | publish p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Before (RNGH 2.32.0) | 301 | 16 | 298 | 301 | 17.00 / 17.00 / 17.00 ms (294) | 0.02 ms | 0.04 ms | 0.01 ms |
+| After (RNGH 3.1.0) | 301 | 19 | 298 | 301 | 17.00 / 17.00 / 17.00 ms (296) | 0.02 ms | 0.06 ms | 0.01 ms |
+
+  Within run-to-run noise; the 3.x New-Arch rewrite shows no pointer-path regression on the simulator.
+- [x] Live verification (RNGH 3.1.0): app boots; tap-to-play transition works; **paddle tracking verified end-to-end** — drag away 50%→80%, drag back to 50%, hold 3 s through the ball's full descent; the ball is caught (a non-tracking paddle would have lost it at x=160). One redbox incident was traced to a stale Metro graph serving RNGH 2.x JS against 3.1.0 native (`install()` vs `installUIRuntimeBindings()`); cleared by `expo start --clear` — not an upgrade defect.
+- [x] Skill updated for 3.x: `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot + input guidance, and `references/gesture-input.md` rewritten with the hook API, `GestureStateManager`, renamed callbacks, composition relations, SVG detectors, `Touchable`, and a 2→3 quick-reference table.
+- [ ] Android debug + release builds still pending disk space (same environmental block as T4).
+
 ---
 
 ## T5 — Split simulation commits from UI presentation
