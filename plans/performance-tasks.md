@@ -659,6 +659,17 @@ allocations per ball per displayed frame, each discarding a field.
 - No React render from live ball/paddle/brick values.
 - Commit: `perf: drive Skia props from grouped shared values`.
 
+### Done — commit `??` (perf: drive Skia props from grouped shared values)
+
+- [x] Geometry assertions first (RED): `apps/playground/src/renderers/viewportTransform.test.ts` + `viewportTransform.ts` pin the parent-Group mapping (`translate(offsetX, offsetY)` then `scale(scale)`) for `fit`/`fill`/`extend-world` at portrait/landscape surfaces, with letterbox and world-origin edge checks — a transform-order mistake now fails loudly.
+- [x] The resolved viewport is applied **once** to a parent `Group` via a `transform` shared value (layout-only updates; `Fill` background from T2).
+- [x] `select()` (Skia 2.11.0, verified in the installed sources: `materializeCommand` resolves `{__sv, __key}` selectors for every animated prop) drives one **grouped shared value per moving entity** — paddle `{x,y,w,h}` and ball `{x,y,r}` — with scalar lerp computed once on the UI runtime (composing T5's commit envelope + UI alpha clock; no per-prop mappers, no object-returning double interpolation).
+- [x] Brick geometry is now **static** (fixed grid constants); one commit-frequency liveness record drives all 32 `opacity` props via `select(liveness, index)`.
+- [x] Derived-value count: **138 → 4** (surfaceTransform, paddle, ball, liveness) = **97% drop** (gate: ≥75%). Plain retained `Rect` nodes kept — no Atlas (scenario 6 deferred to the shared-texture scene).
+- [x] No per-frame GPU-resource creation (static props + plain-object group values only; no images/fonts/paths/paints/shaders per frame); no React render from live values.
+- [x] Live verification (simulator): one-press launch, ball breaks bricks, **paddle tracking through the grouped values** (drag away/back + 3 s hold — ball caught), portrait↔landscape rotation with the transform Group re-resolving; idle capture profile unchanged within jitter (display 301 / fixed 299 / commits 291 vs 289–301 pre-T6; JS stages identical — the collapse is a UI-thread/registration win, invisible to the JS counters by design).
+- [ ] 120 Hz visual check, split view, and **GPU/compositor cost separated from mapper count** (fill-rate vs. registration) — pending the physical-device/Instruments matrix; the mapper math above is the registration-side evidence, not a fill-rate claim.
+
 ---
 
 ## T7 — Coalesce pointer movement on the UI runtime
