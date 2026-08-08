@@ -119,9 +119,9 @@ function Bricks({ frame }: { readonly frame: CommitValue }) {
       return EMPTY_LIVENESS;
     }
     const result: Record<string, number> = {};
-    const bricks = commit.current.bricks;
-    for (let index = 0; index < bricks.length; index += 1) {
-      result[index] = bricks[index]!.alive ? 1 : 0;
+    const liveness = commit.current.bricks;
+    for (let index = 0; index < liveness.length; index += 1) {
+      result[index] = liveness[index] === true ? 1 : 0;
     }
     return result;
   });

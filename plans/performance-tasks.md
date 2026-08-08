@@ -797,6 +797,15 @@ This is the reference game; whatever it does teaches every user.
 - Gameplay, scoring, win/loss, and 30/60/120 Hz checkpoints **identical**.
 - Commit: `perf: structurally share Brick Breaker state and snapshots`.
 
+### Done — commit `??` (perf: structurally share Brick Breaker state and snapshots)
+
+- [x] Tests updated first (RED): the collision test asserts liveness semantics; **new no-hit identity test** — `collideBallWithBricks` returns the same array identity when nothing is hit (precisely what lets T3's trusted cache short-circuit the subtree); **new no-recreation test** — snapshots carry only booleans, geometry lives in the frozen module-scope `BRICK_GRID` with stable identity.
+- [x] Geometry hoisted into a deeply immutable module-scope static grid (`BRICK_GRID`, frozen entries); `INITIAL_LIVENESS` is a shared frozen boolean collection; sessions start from it and copy **lazily on first hit** (`bricks.slice()` once, then mutate the copy).
+- [x] Snapshot emits moving values + score + prompt + the liveness collection **by reference**; static geometry is out of the snapshot entirely. Per-tick brick geometry allocations eliminated (was 32 mapped objects per tick).
+- [x] Chose the readonly boolean collection over a numeric bit mask (clearer; the plan's benchmark allowance) — the trusted-cache interaction is identical (identity-based).
+- [x] T3 bench gate re-run: 1,000-entity speedup improved 17.5× → **18.9×** (identity-preserving arrays cache better). Gameplay, scoring, win/loss, and the 30/60/120 Hz determinism checkpoints are identical (41 playground tests green); live smoke: score increments through the new liveness path, paddle tracking intact.
+- [x] All 146 library + 41 playground tests green; lint, typecheck, builds, `git diff --check` clean.
+
 ---
 
 ## T9 — HUD and semantic events at commit frequency

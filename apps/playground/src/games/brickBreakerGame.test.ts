@@ -3,14 +3,14 @@ import { describe, it } from 'node:test';
 
 import { createGameSessionWithDriver, ManualFrameDriver } from 'react-native-gamekit/testing';
 import {
+  BRICK_GRID,
   ballLost,
   bounceBallOffPaddle,
   bounceBallOffWalls,
   brickBreakerDefinition,
   clampPaddle,
   collideBallWithBricks,
-  createBricks,
-  TOTAL_BRICKS,
+  initialBrickLiveness,
   type BrickBreakerSession,
 } from './brickBreakerGame.ts';
 
@@ -150,12 +150,41 @@ describe('Brick Breaker headless gameplay', () => {
   });
 
   it('removes bricks and increases the score when the ball crosses the brick row', () => {
-    const bricks = createBricks();
+    const bricks = initialBrickLiveness();
     const ball = { x: 20, y: 24, vx: 0, vy: 40, radius: 4 };
     const result = collideBallWithBricks(ball, bricks);
     assert.equal(result.removed, 1);
-    assert.equal(result.bricks.filter((brick) => brick.alive).length, TOTAL_BRICKS - 1);
+    assert.equal(result.bricks.filter((alive) => alive === false).length, 1);
     assert.ok(result.ball.vy < 0, 'ball reflects after a brick hit');
+  });
+
+  it('preserves brick collection identity when nothing is hit (T3 cache short-circuit)', () => {
+    const bricks = initialBrickLiveness();
+    const ball = { x: 20, y: 160, vx: 0, vy: 40, radius: 4 };
+    const result = collideBallWithBricks(ball, bricks);
+    assert.equal(result.removed, 0);
+    assert.equal(result.bricks, bricks, 'a no-hit tick must return the same array identity');
+  });
+
+  it('keeps static brick geometry out of snapshots and never recreates it', () => {
+    const { session, driver } = createSession();
+    session.start();
+    driver.fireNext(0);
+    if (session.scene === 'ready') {
+      session.input.begin('primary', 1, { x: 160, y: 90 });
+    }
+    driver.fireNext(10);
+    const frame = session.getRenderFrame();
+    if (frame.scene !== 'play') {
+      throw new Error(`expected play, got ${String(frame.scene)}`);
+    }
+    assert.ok(
+      frame.current.bricks.every((alive) => typeof alive === 'boolean'),
+      'snapshots carry only liveness, never geometry objects',
+    );
+    // Geometry lives in the frozen module-scope grid with stable identity.
+    assert.equal(BRICK_GRID[0], BRICK_GRID[0]);
+    assert.equal(Object.isFrozen(BRICK_GRID[0]), true);
   });
 
   it('loses the ball when it passes the bottom edge and reaches game-over', () => {

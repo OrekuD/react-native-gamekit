@@ -49,13 +49,49 @@ export const BRICK_BREAKER_CONFIG = {
 
 export const TOTAL_BRICKS = BRICK_BREAKER_CONFIG.bricks.columns * BRICK_BREAKER_CONFIG.bricks.rows;
 
-/** A brick in its fixed grid position with an alive flag. */
-export interface Brick {
+/** Immutable brick geometry in its fixed grid position. */
+export interface BrickGeometry {
   readonly x: number;
   readonly y: number;
   readonly width: number;
   readonly height: number;
-  readonly alive: boolean;
+}
+
+/**
+ * Deeply immutable static brick grid, created once at module scope (T8).
+ * Geometry never lives in live state or snapshots; only liveness does.
+ */
+export const BRICK_GRID: readonly BrickGeometry[] = Object.freeze(
+  (() => {
+    const { columns, rows, width, height, gapX, gapY, top } = BRICK_BREAKER_CONFIG.bricks;
+    const grid: BrickGeometry[] = [];
+    for (let row = 0; row < rows; row += 1) {
+      for (let column = 0; column < columns; column += 1) {
+        grid.push(
+          Object.freeze({
+            x: column * (width + gapX),
+            y: top + row * (height + gapY),
+            width,
+            height,
+          }),
+        );
+      }
+    }
+    return grid;
+  })(),
+);
+
+/** Per-brick liveness; the only brick data that changes during play. */
+export type BrickLiveness = readonly boolean[];
+
+/** Shared frozen all-alive liveness; sessions copy lazily on first hit. */
+export const INITIAL_LIVENESS: BrickLiveness = Object.freeze(
+  Array.from({ length: TOTAL_BRICKS }, () => true),
+);
+
+/** The liveness collection a fresh play scene starts from. */
+export function initialBrickLiveness(): BrickLiveness {
+  return INITIAL_LIVENESS;
 }
 
 /** A ball body with position, velocity, and radius. */
@@ -67,22 +103,7 @@ export interface BallBody {
   readonly radius: number;
 }
 
-export function createBricks(): Brick[] {
-  const { columns, rows, width, height, gapX, gapY, top } = BRICK_BREAKER_CONFIG.bricks;
-  const bricks: Brick[] = [];
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      bricks.push({
-        x: column * (width + gapX),
-        y: top + row * (height + gapY),
-        width,
-        height,
-        alive: true,
-      });
-    }
-  }
-  return bricks;
-}
+
 
 /** Reflect the ball off the left, right, and top walls of the world. */
 export function bounceBallOffWalls(ball: BallBody, worldWidth: number, worldHeight: number): BallBody {
@@ -153,21 +174,33 @@ function circleRectOverlap(ball: BallBody, rect: { readonly x: number; readonly 
 /**
  * Resolve the ball against all alive bricks: remove every overlapped brick
  * and reflect once on the axis of greatest penetration. Returns the next ball
- * body, the next brick list, and the number of bricks removed this tick.
+ * body, the next liveness collection, and the number of bricks removed.
+ *
+ * Liveness is copied lazily on the first hit and the **original collection
+ * identity is preserved when nothing is hit** — which is exactly what lets
+ * the session's trusted deep-freeze cache short-circuit the subtree (T8).
  */
 export function collideBallWithBricks(
   ball: BallBody,
-  bricks: readonly Brick[],
-): { readonly ball: BallBody; readonly bricks: Brick[]; readonly removed: number } {
+  bricks: BrickLiveness,
+): { readonly ball: BallBody; readonly bricks: BrickLiveness; readonly removed: number } {
   let nextBall = ball;
-  const nextBricks = bricks.map((brick) => brick);
+  let nextBricks: BrickLiveness = bricks;
+  let mutableBricks: boolean[] | undefined;
   let removed = 0;
-  for (let index = 0; index < nextBricks.length; index += 1) {
-    const brick = nextBricks[index];
-    if (!brick.alive || !circleRectOverlap(nextBall, brick)) {
+  for (let index = 0; index < bricks.length; index += 1) {
+    if (!bricks[index]) {
       continue;
     }
-    nextBricks[index] = { ...brick, alive: false };
+    const brick = BRICK_GRID[index]!;
+    if (!circleRectOverlap(nextBall, brick)) {
+      continue;
+    }
+    if (mutableBricks === undefined) {
+      mutableBricks = bricks.slice(); // Lazy copy on first hit.
+      nextBricks = mutableBricks;
+    }
+    mutableBricks[index] = false;
     removed += 1;
     const overlapLeft = nextBall.x + nextBall.radius - brick.x;
     const overlapRight = brick.x + brick.width - (nextBall.x - nextBall.radius);
@@ -206,7 +239,7 @@ export interface ReadyState {
 export interface PlayState {
   readonly paddleX: number;
   readonly ball: BallBody;
-  readonly bricks: readonly Brick[];
+  readonly bricks: BrickLiveness;
   readonly score: number;
   /** Present when the game is won; the result flow stays inside this scene. */
   readonly over?: { readonly won: boolean; readonly score: number };
@@ -223,14 +256,8 @@ export interface ReadySnapshot {
 export interface PlaySnapshot {
   readonly paddle: { readonly x: number };
   readonly ball: { readonly x: number; readonly y: number };
-  /** All bricks with stable indices; dead bricks report `alive: false`. */
-  readonly bricks: readonly {
-    readonly x: number;
-    readonly y: number;
-    readonly width: number;
-    readonly height: number;
-    readonly alive: boolean;
-  }[];
+  /** Compact per-brick liveness; static geometry lives in `BRICK_GRID`. */
+  readonly bricks: BrickLiveness;
   readonly score: number;
   /** Short HUD prompt for the current play state. */
   readonly prompt: string;
@@ -256,7 +283,7 @@ const createPlayState = (): PlayState => {
       vy: launch.vy,
       radius: ball.radius,
     },
-    bricks: createBricks(),
+    bricks: INITIAL_LIVENESS,
     score: 0,
   };
 };
@@ -317,7 +344,7 @@ const playScene = defineScene({
   snapshot: ({ state }): PlaySnapshot => ({
     paddle: { x: state.paddleX },
     ball: { x: state.ball.x, y: state.ball.y },
-    bricks: state.bricks.map(({ x, y, width, height, alive }) => ({ x, y, width, height, alive })),
+    bricks: state.bricks,
     score: state.score,
     prompt: state.over ? 'You win! Tap to play again' : 'Drag to move the paddle',
     ...(state.over ? { over: state.over } : {}),
