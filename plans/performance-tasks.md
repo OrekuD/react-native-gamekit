@@ -349,6 +349,24 @@ small. Task 5 already proposed the correct fix; only its phase placement changes
 - Device capture on scenario 5 (scaling) recorded.
 - Commit: `perf: skip re-freezing trusted immutable subtrees`.
 
+### Done — commit `4634869` (perf: skip re-freezing trusted immutable subtrees)
+
+- [x] RED tests first (`test/deepFreeze.test.ts`, 6 tests, observable through access-counting proxies): shared subtree frozen once across snapshots; newly introduced nested object inside a shared tree still frozen; cyclic snapshots terminate and freeze; a throwing child getter leaves the parent untrusted and a later snapshot re-traverses it; shallow-`Object.isFrozen` objects are still recursed into; per-session freezers are independent.
+- [x] `src/core/session/deepFreeze.ts`: session-owned `trusted` WeakSet; separate per-traversal `visiting` set for cycle detection; nodes promoted to trusted **only after** a complete successful subtree traversal; array index-loop fast path (no `Reflect.ownKeys` per array); `Object.isFrozen` never used as a skip test; freezing stays on in every build. Wired into `createGameSession` as one session-owned freezer (initial, transition, and per-tick snapshots share it).
+- [x] Microbenchmark `bench/deepFreeze.bench.ts` (regression gate, `pnpm bench:deepfreeze`, median of 7 runs, realistic steady-state tick pattern: new frame + new array + one fresh brick, rest shared by reference):
+
+| entities | legacy (WeakSet/call) | trusted cache | speedup |
+| --- | --- | --- | --- |
+| 32 | 0.020 ms | 0.004 ms | 5.1–6.3× |
+| 100 | 0.046 ms | 0.004 ms | 10.9× |
+| 500 | 0.104 ms | 0.015 ms | 7.2× |
+| 1,000 | 0.216 ms | 0.014 ms | 15.4–17.5× |
+| 2,000 | 0.400 ms | 0.023 ms | 17.4× |
+
+  Gate: ≥5× at 32 and ≥10× at 1,000 — passing with margin. Honest framing per the plan: this is the strongest measured JS scaling candidate; the simulator cannot show it (JS stages are already 0.01 ms p95 at this scene size) — the win is at 500+ entity scenes and on Hermes, pending scenario-5 device captures.
+- [x] All library + playground tests green (134 + 34), lint and typecheck clean, `git diff --check` clean.
+- [ ] Scenario-5 device capture (renderer scaling 32/100/500/1,000/2,000) — pending physical devices; the microbenchmark stands in for the gate meanwhile.
+
 ---
 
 ## T4 — Dependency upgrade as an isolated experiment

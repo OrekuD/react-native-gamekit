@@ -12,6 +12,7 @@ import {
   type GameSessionStatus,
 } from './types';
 import { NOOP_DIAGNOSTICS, type SessionDiagnostics } from './diagnostics';
+import { createDeepFreeze, type DeepFreezer } from './deepFreeze';
 
 const DEFAULT_FIXED_STEP_MS = 1000 / 60;
 const DEFAULT_MAX_CATCH_UP_STEPS = 5;
@@ -66,20 +67,6 @@ function freezeObject<T>(value: T): T {
   return typeof value === 'object' && value !== null ? Object.freeze(value) : value;
 }
 
-function deepFreeze<T>(value: T, seen = new WeakSet<object>()): DeepReadonly<T> {
-  if (typeof value !== 'object' || value === null) {
-    return value as DeepReadonly<T>;
-  }
-  if (seen.has(value)) {
-    return value as DeepReadonly<T>;
-  }
-  seen.add(value);
-  for (const key of Reflect.ownKeys(value)) {
-    deepFreeze((value as Record<PropertyKey, unknown>)[key], seen);
-  }
-  return Object.freeze(value) as DeepReadonly<T>;
-}
-
 function describeIntent(intent: TransitionIntent): string {
   return intent.kind === 'restart' ? 'restartScene()' : `setScene("${intent.name}")`;
 }
@@ -117,6 +104,7 @@ export function createGameSessionWithDriver<
   const maxCatchUpSteps = options.maxCatchUpSteps ?? DEFAULT_MAX_CATCH_UP_STEPS;
   const maxFrameDeltaMs = options.maxFrameDeltaMs ?? fixedStepMs * DEFAULT_MAX_CATCH_UP_STEPS;
   const diagnostics = options.diagnostics ?? NOOP_DIAGNOSTICS;
+  const deepFreeze: DeepFreezer = createDeepFreeze();
 
   if (!(fixedStepMs > 0) || !Number.isFinite(fixedStepMs)) {
     throw new RangeError('fixedStepMs must be a finite positive number');

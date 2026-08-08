@@ -35,7 +35,8 @@
     "test": "node --import tsx --test test/*.test.ts",
     "test:coverage": "node --import tsx --experimental-test-coverage --test test/*.test.ts",
     "prepack": "bob build",
-    "pack:inspect": "pnpm pack --dry-run"
+    "pack:inspect": "pnpm pack --dry-run",
+    "bench:deepfreeze": "node --import tsx bench/deepFreeze.bench.ts"
   },
   "peerDependencies": {
     "@shopify/react-native-skia": "2.6.2",
