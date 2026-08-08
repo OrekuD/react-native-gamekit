@@ -742,7 +742,7 @@ does not fix frequency.
 - Verified on 60 and 120 Hz phones **and** iPad split view.
 - Commit: `perf: coalesce pointer movement across runtimes`.
 
-### Done — commit `??` (perf: coalesce pointer movement across runtimes)
+### Done — commit `1088c56` (perf: coalesce pointer movement across runtimes)
 
 - [x] RED-first: `test/pointerCoalescer.test.ts` (9 tests — only-final-move per interval; one forward per interval across intervals; ordering (begin precedes movement); down+up preserves both edges with the final up coordinate on the end event; cancel neutralises exactly once; secondary pointer cannot steal; end→begin starts fresh with the old terminal edge preserved; reset drops queued movement) + `test/pointerContainment.test.ts`-style mirror assertions inside the same file (fit letterbox rejected/inside accepted, no layout rejects, fill has no letterbox).
 - [x] Pure UI-side coalescer (`src/react/pointerCoalescer.ts`): at most one move crossing per configured interval (default = one fixed step), latest dirty position only; edges never throttled or dropped; begin forwarded immediately; `up` sends the final point + terminal edge together. **Worklet-safe state**: captured objects are shared across calls on the UI runtime but captured variables cannot be rebound — the active pointer lives as a property of a captured state object. (First live run crashed with `Compiling JS failed: invalid assignment left-hand side` — a closure rebinding `active = …` inside a worklet; fixed by the object-property state, verified live.)
