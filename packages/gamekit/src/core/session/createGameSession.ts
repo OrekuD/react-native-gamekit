@@ -11,6 +11,7 @@ import {
   type GameSession,
   type GameSessionStatus,
 } from './types';
+import { NOOP_DIAGNOSTICS, type SessionDiagnostics } from './diagnostics';
 
 const DEFAULT_FIXED_STEP_MS = 1000 / 60;
 const DEFAULT_MAX_CATCH_UP_STEPS = 5;
@@ -20,6 +21,8 @@ interface SessionOptions {
   readonly fixedStepMs?: number;
   readonly maxCatchUpSteps?: number;
   readonly maxFrameDeltaMs?: number;
+  /** @internal Performance instrumentation for the playground Performance Lab. */
+  readonly diagnostics?: SessionDiagnostics;
 }
 
 interface ErasedScene {
@@ -53,6 +56,10 @@ type TransitionIntent =
 
 interface UpdateScope {
   intent?: TransitionIntent;
+}
+
+function now(): number {
+  return typeof performance !== 'undefined' ? performance.now() : 0;
 }
 
 function freezeObject<T>(value: T): T {
@@ -109,6 +116,7 @@ export function createGameSessionWithDriver<
   const fixedStepMs = options.fixedStepMs ?? DEFAULT_FIXED_STEP_MS;
   const maxCatchUpSteps = options.maxCatchUpSteps ?? DEFAULT_MAX_CATCH_UP_STEPS;
   const maxFrameDeltaMs = options.maxFrameDeltaMs ?? fixedStepMs * DEFAULT_MAX_CATCH_UP_STEPS;
+  const diagnostics = options.diagnostics ?? NOOP_DIAGNOSTICS;
 
   if (!(fixedStepMs > 0) || !Number.isFinite(fixedStepMs)) {
     throw new RangeError('fixedStepMs must be a finite positive number');
@@ -197,6 +205,7 @@ export function createGameSessionWithDriver<
       : Math.max(0, Math.min(accumulatorMs / fixedStepMs, 1 - Number.EPSILON));
     hardCutPending = false;
     publishedThisCallback = true;
+    const publishStart = now();
     const frame = Object.freeze({
       scene: sceneName,
       previous: previousSnapshot,
@@ -209,6 +218,9 @@ export function createGameSessionWithDriver<
     for (const listener of [...listeners]) {
       listener(frame);
     }
+    diagnostics.onPublish(now() - publishStart);
+    diagnostics.onCommitNotification();
+    diagnostics.onListenerCount(listeners.size);
   };
 
   const pauseInternal = () => {
@@ -368,6 +380,7 @@ export function createGameSessionWithDriver<
       }
       frameHandle = undefined;
       publishedThisCallback = false;
+      diagnostics.onDisplayCallback();
 
       // A pending external transition commits at the next fixed-step boundary
       // without advancing simulation tick/time.
@@ -412,10 +425,13 @@ export function createGameSessionWithDriver<
         ) {
           const nextTick = tick + 1;
           const nextSceneTick = activeScene.sceneTick + 1;
+          const sampleStart = now();
           const input = inputBuffer.sample();
+          diagnostics.onInputSample(now() - sampleStart);
           const scope: UpdateScope = {};
           activeUpdateScope = scope;
           updateInProgress = true;
+          const updateStart = now();
           const nextState = freezeObject(
             activeScene.definition.update({
               state: activeScene.state,
@@ -430,6 +446,7 @@ export function createGameSessionWithDriver<
           );
           activeUpdateScope = undefined;
           updateInProgress = false;
+          diagnostics.onUpdate(now() - updateStart);
           const intent = scope.intent;
           if (isDisposed()) {
             return;
@@ -442,7 +459,12 @@ export function createGameSessionWithDriver<
             accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
             break;
           }
-          const nextSnapshot = deepFreeze(activeScene.definition.snapshot({ state: nextState }));
+          const snapshotStart = now();
+          const rawSnapshot = activeScene.definition.snapshot({ state: nextState });
+          diagnostics.onSnapshot(now() - snapshotStart);
+          const freezeStart = now();
+          const nextSnapshot = deepFreeze(rawSnapshot);
+          diagnostics.onDeepFreeze(now() - freezeStart);
           if (isDisposed()) {
             return;
           }
@@ -453,6 +475,10 @@ export function createGameSessionWithDriver<
           tick = nextTick;
           accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
           catchUpSteps += 1;
+          diagnostics.onFixedStep();
+          if (catchUpSteps > 1) {
+            diagnostics.onCatchUpStep();
+          }
         }
       } catch (error) {
         activeUpdateScope = undefined;
@@ -462,7 +488,13 @@ export function createGameSessionWithDriver<
       }
 
       if (catchUpSteps === maxCatchUpSteps && accumulatorMs >= fixedStepMs) {
+        const droppedSteps = Math.floor(accumulatorMs / fixedStepMs);
         accumulatorMs %= fixedStepMs;
+        diagnostics.onDroppedDebt(droppedSteps);
+      }
+
+      if (catchUpSteps === 0) {
+        diagnostics.onZeroStepCallback();
       }
 
       if (!publishedThisCallback) {
