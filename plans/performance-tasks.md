@@ -659,7 +659,7 @@ allocations per ball per displayed frame, each discarding a field.
 - No React render from live ball/paddle/brick values.
 - Commit: `perf: drive Skia props from grouped shared values`.
 
-### Done — commit `??` (perf: drive Skia props from grouped shared values)
+### Done — commit `ec329e2` (perf: drive Skia props from grouped shared values)
 
 - [x] Geometry assertions first (RED): `apps/playground/src/renderers/viewportTransform.test.ts` + `viewportTransform.ts` pin the parent-Group mapping (`translate(offsetX, offsetY)` then `scale(scale)`) for `fit`/`fill`/`extend-world` at portrait/landscape surfaces, with letterbox and world-origin edge checks — a transform-order mistake now fails loudly.
 - [x] The resolved viewport is applied **once** to a parent `Group` via a `transform` shared value (layout-only updates; `Fill` background from T2).
