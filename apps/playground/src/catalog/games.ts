@@ -25,6 +25,12 @@ export const PLAYGROUND_GAMES = [
     description: 'A moving Skia circle driven by a fixed-step GameSession.',
     label: 'Play',
   },
+  {
+    id: 'perf-lab',
+    title: 'Performance Lab',
+    description: 'Deterministic diagnostics: counters, frame deltas, stall probe.',
+    label: 'Run',
+  },
 ] as const;
 
 /** Every canonical game id, used for runtime validation at the untyped boundary. */

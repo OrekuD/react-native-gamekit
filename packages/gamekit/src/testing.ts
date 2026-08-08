@@ -1,8 +1,10 @@
 import { createGameSessionWithDriver } from './core/session/createGameSession';
+import { createAnimationFrameDriver } from './core/frameDriver';
 import type { FrameDriver, FrameHandle } from './core/frameDriver';
+import type { SessionDiagnostics } from './core/session/diagnostics';
 
-export { createGameSessionWithDriver };
-export type { FrameDriver, FrameHandle };
+export { createAnimationFrameDriver, createGameSessionWithDriver };
+export type { FrameDriver, FrameHandle, SessionDiagnostics };
 
 /**
  * Deterministic animation-frame driver for headless tests.

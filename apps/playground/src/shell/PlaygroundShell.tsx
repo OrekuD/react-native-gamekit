@@ -7,6 +7,7 @@ import { usePlaygroundStore } from '../state/playgroundStore';
 import HomeScreen from '../screens/HomeScreen';
 import BootstrapGameScreen from '../screens/BootstrapGameScreen';
 import BrickBreakerGameScreen from '../screens/BrickBreakerGameScreen';
+import PerformanceLabScreen from '../perf/PerformanceLabScreen';
 import type { PlaygroundGameScreenProps } from './PlaygroundGameScreenProps';
 
 /** Duration of the opacity-only game fade, in milliseconds. */
@@ -19,6 +20,7 @@ const FADE_DURATION_MS = 180;
 const GAME_SCREENS: Record<PlaygroundGameId, ComponentType<PlaygroundGameScreenProps>> = {
   'brick-breaker': BrickBreakerGameScreen,
   bootstrap: BootstrapGameScreen,
+  'perf-lab': PerformanceLabScreen,
 };
 
 /**
