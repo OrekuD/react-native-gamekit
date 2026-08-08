@@ -80,6 +80,16 @@ on the UI runtime between commits. Scene-transition hard cuts commit
 `previous === current`, making the interpolation a no-op — frames never blend
 two scenes.
 
+## Semantic events (audio and haptics)
+
+The HUD consumes commits through a selector; it never receives live gameplay
+positions. Future `react-native-audio-api` or haptic integration must follow
+the same discipline: **preload** assets and **trigger discrete commands**
+(brick hit, score change, game over, button press) from commit selectors —
+never emit continuous audio or haptics from interpolation or raw pointer
+callbacks. This keeps every effect at commit frequency and testable
+headlessly.
+
 ## Headless tests
 
 `brickBreakerGame.test.ts` drives the real game with the

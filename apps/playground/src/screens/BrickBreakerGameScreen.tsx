@@ -10,11 +10,14 @@ import {
 } from '../games/brickBreakerGame';
 import { BrickBreakerRenderer } from '../renderers/BrickBreakerRenderer';
 import { hudEqual, selectHud } from './brickBreakerHud';
+import { createHudObserver } from './hudObserver';
 
 /**
- * Low-frequency HUD selector: React state updates only when the selected HUD
- * value changes (compared with `hudEqual`), so live gameplay positions never
- * flow through React and unchanged frames never trigger another render.
+ * Commit-frequency HUD hook (T9): the observer runs the selector on every
+ * commit (to detect changes) but requests a React state update only when the
+ * selected HUD value actually changed — unchanged commits enqueue nothing,
+ * so HUD React renders equal actual HUD value changes and live gameplay
+ * positions never flow through React.
  */
 function useHudValue<T>(
   session: BrickBreakerSession,
@@ -22,16 +25,14 @@ function useHudValue<T>(
   equals: (a: T, b: T) => boolean,
 ): T {
   const [value, setValue] = useState<T>(() => select(session.getRenderFrame()));
-  useEffect(
-    () =>
-      session.addCommitListener((frame) => {
-        setValue((previous) => {
-          const next = select(frame);
-          return equals(previous, next) ? previous : next;
-        });
-      }).remove,
-    [equals, select, session],
-  );
+  useEffect(() => {
+    const observer = createHudObserver(select, equals, select(session.getRenderFrame()));
+    return session.addCommitListener((frame) => {
+      if (observer.observe(frame)) {
+        setValue(observer.value);
+      }
+    }).remove;
+  }, [equals, select, session]);
   return value;
 }
 

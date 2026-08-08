@@ -841,6 +841,16 @@ check all still run 60–120×/s.
 - No live gameplay position reaches React or Zustand.
 - Commit: `perf: move HUD and semantic effects to commit frequency`.
 
+### Done — commit `??` (perf: move HUD and semantic effects to commit frequency)
+
+- [x] `useHudValue` already consumed `addCommitListener` (T5); it now holds the last selection in a **pure observer** (`src/screens/hudObserver.ts`): the selector runs per commit to detect changes, but a React state update is requested **only after inequality is confirmed** — unchanged commits enqueue nothing, so HUD React renders equal actual HUD value changes.
+- [x] RED-first Node tests (`hudObserver.test.ts`, 3 tests) counting **selector calls** (10 per 10 unchanged commits) and **state-update requests** (zero for unchanged, exactly one per changed score/prompt/scene).
+- [x] HUD work absent from zero-step callbacks by construction (commit-frequency listener; zero-step callbacks allocate nothing since T5).
+- [x] No live gameplay position reaches React or Zustand (unchanged: the HUD carries scene/score/prompt only).
+- [x] Discrete event seam: **decision recorded — not built.** No score/audio/haptic consumer exists yet; commit selectors cover the HUD. The plan's condition ("only if consumers need more than commit selectors") is unmet, so a public event API would be speculative.
+- [x] Audio/haptic discipline documented: `apps/docs/content/docs/reference/brick-breaker.mdx` — future `react-native-audio-api` integration must preload and trigger **discrete commands** from commit selectors; never emit continuous audio/haptics from interpolation or raw pointer callbacks.
+- [x] Live: play → score increments through the observer path, back navigation; 146 library + 44 playground tests green; lint, typecheck, builds clean.
+
 ---
 
 ## T10 — Startup-fade A/B
