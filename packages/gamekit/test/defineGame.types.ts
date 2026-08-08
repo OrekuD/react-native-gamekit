@@ -153,3 +153,11 @@ defineGame({
   },
   initialScene: 'menu',
 });
+
+// T0: `assets` is optional until asset loading exists.
+defineGame({
+  viewport,
+  input: {},
+  scenes: { menu: emptyScene },
+  initialScene: 'menu',
+});

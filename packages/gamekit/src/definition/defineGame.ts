@@ -84,5 +84,9 @@ export function defineGame<
     ValidateSceneActions<TScenes, TInput> &
     ValidateSceneTransitions<TScenes>,
 ): GameDefinition<TScenes, TInput, TInitialScene> {
+  // The viewport config is part of the public session surface; freeze it so a
+  // caller cannot mutate a live game's coordinate authority.
+  Object.freeze(definition.viewport.logicalSize);
+  Object.freeze(definition.viewport);
   return definition;
 }

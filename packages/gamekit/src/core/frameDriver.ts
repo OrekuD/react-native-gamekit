@@ -17,13 +17,15 @@ interface AnimationFrameHost {
 /** Create the platform animation-frame driver used by live sessions. */
 export function createAnimationFrameDriver(): FrameDriver {
   const host = globalThis as unknown as Partial<AnimationFrameHost>;
+  const requestAnimationFrame = host.requestAnimationFrame;
+  const cancelAnimationFrame = host.cancelAnimationFrame;
 
-  if (!host.requestAnimationFrame || !host.cancelAnimationFrame) {
+  if (!requestAnimationFrame || !cancelAnimationFrame) {
     throw new Error('GameSession requires requestAnimationFrame on this platform');
   }
 
   return {
-    requestFrame: (callback) => host.requestAnimationFrame!(callback),
-    cancelFrame: (handle) => host.cancelAnimationFrame!(handle),
+    requestFrame: (callback) => requestAnimationFrame(callback),
+    cancelFrame: (handle) => cancelAnimationFrame(handle),
   };
 }

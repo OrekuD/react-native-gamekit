@@ -58,7 +58,8 @@ export function createPointerBinding<TName extends string>(
  * the full adapter behavior is testable without mounting native gesture
  * views. Ownership and neutralization live in the input buffer.
  */
-export class PointerBinding<TActionName extends string> {  readonly #action: TActionName;
+export class PointerBinding<TActionName extends string> {
+  readonly #action: TActionName;
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
   #disposed = false;

@@ -45,7 +45,6 @@ interface ActiveScene {
   readonly definition: ErasedScene;
   state: unknown;
   sceneTick: number;
-  sceneElapsedSeconds: number;
 }
 
 type TransitionIntent =
@@ -143,21 +142,12 @@ export function createGameSessionWithDriver<
   if (initialDefinition === undefined) {
     throw new Error(`Unknown initial scene: ${initialSceneName}`);
   }
-  let initialState: unknown;
-  let initialCreated = false;
-  try {
-    initialState = freezeObject(initialDefinition.create());
-    initialCreated = true;
-  } catch (error) {
-    throw error;
-  }
+  const initialState = freezeObject(initialDefinition.create());
   let initialSnapshot: DeepReadonly<unknown>;
   try {
     initialSnapshot = deepFreeze(initialDefinition.snapshot({ state: initialState }));
   } catch (error) {
-    if (initialCreated) {
-      initialDefinition.dispose?.(initialState);
-    }
+    initialDefinition.dispose?.(initialState);
     throw error;
   }
 
@@ -166,7 +156,6 @@ export function createGameSessionWithDriver<
     definition: initialDefinition,
     state: initialState,
     sceneTick: 0,
-    sceneElapsedSeconds: 0,
   };
   let sceneName: string = initialSceneName;
   let currentSnapshot: DeepReadonly<unknown> = initialSnapshot;
@@ -305,7 +294,6 @@ export function createGameSessionWithDriver<
       definition: targetDefinition,
       state: targetState,
       sceneTick: 0,
-      sceneElapsedSeconds: 0,
     };
     sceneName = targetName;
     currentSnapshot = targetSnapshot;
@@ -460,7 +448,6 @@ export function createGameSessionWithDriver<
           }
           activeScene.state = nextState;
           activeScene.sceneTick = nextSceneTick;
-          activeScene.sceneElapsedSeconds = nextSceneTick * (fixedStepMs / 1000);
           previousSnapshot = currentSnapshot;
           currentSnapshot = nextSnapshot;
           tick = nextTick;
@@ -513,11 +500,7 @@ export function createGameSessionWithDriver<
       if (pendingTransition !== undefined) {
         const pending = pendingTransition;
         pendingTransition = undefined;
-        try {
-          commitTransition(pending, activeScene.state, undefined);
-        } catch (error) {
-          throw error;
-        }
+        commitTransition(pending, activeScene.state, undefined);
         publishOrPause();
       }
     },

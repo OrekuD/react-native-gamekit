@@ -64,3 +64,43 @@ describe('defineGame', () => {
     assert.deepEqual(game.input, { move: { type: 'button' } });
   });
 });
+
+describe('defineGame viewport freeze and optional assets (T0)', () => {
+  const viewport = {
+    logicalSize: { width: 390, height: 844 },
+    mode: 'fit',
+  } as const;
+
+  it('deep-freezes the viewport config so callers cannot mutate it', () => {
+    const definition = {
+      viewport,
+      assets: [],
+      input: {},
+      scenes: { menu: emptyScene() },
+      initialScene: 'menu',
+    } as const;
+    const game = defineGame(definition);
+    assert.equal(Object.isFrozen(game.viewport), true);
+    assert.equal(Object.isFrozen(game.viewport.logicalSize), true);
+    const mutable = game.viewport as { logicalSize: { width: number }; mode: string };
+    assert.throws(() => {
+      mutable.logicalSize.width = 999;
+    }, TypeError);
+    assert.equal(game.viewport.logicalSize.width, 390);
+    assert.throws(() => {
+      mutable.mode = 'fill';
+    }, TypeError);
+    assert.equal(game.viewport.mode, 'fit');
+  });
+
+  it('accepts a definition without assets until asset loading exists', () => {
+    const definition = {
+      viewport,
+      input: {},
+      scenes: { menu: emptyScene() },
+      initialScene: 'menu',
+    } as const;
+    const game = defineGame(definition);
+    assert.equal(game, definition);
+  });
+});

@@ -10,26 +10,20 @@ import type { BrickBreakerRenderFrame } from '../games/brickBreakerGame';
 export interface HudState {
   readonly scene: string;
   readonly score: number;
-  readonly won: boolean | undefined;
   readonly prompt: string;
 }
 
 export function selectHud(frame: BrickBreakerRenderFrame): HudState {
   if (frame.scene === 'ready') {
-    return { scene: 'ready', score: 0, won: undefined, prompt: frame.current.prompt };
+    return { scene: 'ready', score: 0, prompt: frame.current.prompt };
   }
   if (frame.scene === 'play') {
-    return {
-      scene: 'play',
-      score: frame.current.score,
-      won: undefined,
-      prompt: frame.current.prompt,
-    };
+    return { scene: 'play', score: frame.current.score, prompt: frame.current.prompt };
   }
-  return { scene: 'game-over', score: 0, won: undefined, prompt: frame.current.message };
+  return { scene: 'game-over', score: 0, prompt: frame.current.message };
 }
 
 /** Whether two HUD selections are visually equivalent. */
 export function hudEqual(a: HudState, b: HudState): boolean {
-  return a.scene === b.scene && a.score === b.score && a.won === b.won && a.prompt === b.prompt;
+  return a.scene === b.scene && a.score === b.score && a.prompt === b.prompt;
 }

@@ -66,7 +66,7 @@ export interface GameDefinition<
   /** The viewport configuration of the game. */
   readonly viewport: Viewport;
   /** Assets declared by the game. Loading is not implemented yet. */
-  readonly assets: readonly AssetDescriptor[];
+  readonly assets?: readonly AssetDescriptor[];
   /** Semantic input actions declared by the game. */
   readonly input: TInput;
   /** Functional scenes keyed by stable scene name. */
