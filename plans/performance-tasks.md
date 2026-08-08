@@ -883,6 +883,20 @@ Compare first-frame, first-interactive, UI frame time, and GPU/compositor cost.
 
 Commit only if a change is adopted: `perf: apply measured startup transition`.
 
+### Done — A/B executed, decision: KEEP CURRENT (no transition commit)
+
+- [x] Three variants implemented behind a dev experiment toggle in `PlaygroundShell.tsx` (full-surface fade 0→1 / 180 ms; immediate opacity 1; opaque game + opaque cover fading away), each preserving Reduce Motion, `accessibilityViewIsModal`, and immediate back/escape.
+- [x] 3 runs per variant on the simulator (dev-mode, same build/device/thermal state), timing tap→first-visible ("Tap to start") from the Maestro logs:
+
+| Variant | Runs (ms) | Median (ms) |
+| --- | --- | --- |
+| fade (current) | 85 / 188 / 194 | 188 |
+| immediate | 84 / 86 / 87 | 86 |
+| cover | 88 / 90 / 95 | 90 |
+
+- [x] Decision rule applied: the fade's slower reads are its own a11y visibility masking (the prompt is inside the fading view), the fade runs carry high variance, and the plan's **confirmed-cost** bar requires GPU/compositor traces on physical devices — unavailable here. Within-noise alternative readings are not evidence; **keep current behaviour**. The experiment code is reverted (no change adopted → no transition commit).
+- [ ] Device A/B (first-frame, first-interactive, UI frame time, GPU/compositor cost via Instruments, ≥3 runs per variant) — pending the physical-device matrix; this section records the procedure + sim proxy so the device run is a pure re-execution.
+
 ---
 
 ## T11 — Documentation and guardrails
