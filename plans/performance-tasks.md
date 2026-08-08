@@ -797,7 +797,7 @@ This is the reference game; whatever it does teaches every user.
 - Gameplay, scoring, win/loss, and 30/60/120 Hz checkpoints **identical**.
 - Commit: `perf: structurally share Brick Breaker state and snapshots`.
 
-### Done — commit `??` (perf: structurally share Brick Breaker state and snapshots)
+### Done — commit `6b56e80` (perf: structurally share Brick Breaker state and snapshots)
 
 - [x] Tests updated first (RED): the collision test asserts liveness semantics; **new no-hit identity test** — `collideBallWithBricks` returns the same array identity when nothing is hit (precisely what lets T3's trusted cache short-circuit the subtree); **new no-recreation test** — snapshots carry only booleans, geometry lives in the frozen module-scope `BRICK_GRID` with stable identity.
 - [x] Geometry hoisted into a deeply immutable module-scope static grid (`BRICK_GRID`, frozen entries); `INITIAL_LIVENESS` is a shared frozen boolean collection; sessions start from it and copy **lazily on first hit** (`bricks.slice()` once, then mutate the copy).
