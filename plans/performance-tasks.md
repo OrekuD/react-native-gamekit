@@ -841,7 +841,7 @@ check all still run 60–120×/s.
 - No live gameplay position reaches React or Zustand.
 - Commit: `perf: move HUD and semantic effects to commit frequency`.
 
-### Done — commit `??` (perf: move HUD and semantic effects to commit frequency)
+### Done — commit `434274f` (perf: move HUD and semantic effects to commit frequency)
 
 - [x] `useHudValue` already consumed `addCommitListener` (T5); it now holds the last selection in a **pure observer** (`src/screens/hudObserver.ts`): the selector runs per commit to detect changes, but a React state update is requested **only after inequality is confirmed** — unchanged commits enqueue nothing, so HUD React renders equal actual HUD value changes.
 - [x] RED-first Node tests (`hudObserver.test.ts`, 3 tests) counting **selector calls** (10 per 10 unchanged commits) and **state-update requests** (zero for unchanged, exactly one per changed score/prompt/scene).
