@@ -1,4 +1,4 @@
-import { Canvas, type SkSize } from '@shopify/react-native-skia';
+import { Canvas } from '@shopify/react-native-skia';
 import {
   createContext,
   useEffect,
@@ -26,8 +26,6 @@ import { ViewportBinding } from './viewportBinding';
 export interface GameRendererProps<TScenes extends SceneMap> {
   /** Latest session frame, updated without React state. */
   readonly frame: SharedValue<GameRenderFrame<TScenes>>;
-  /** Actual canvas size, including iPad resizing and split view. */
-  readonly surfaceSize: SharedValue<SkSize>;
   /** Latest resolved viewport shared with the input adapter. */
   readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
 }
@@ -68,7 +66,6 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   style,
 }: GameViewProps<TScenes, TInput>) {
   const frame = useSharedValue<GameRenderFrame<TScenes>>(() => game.getRenderFrame());
-  const surfaceSize = useSharedValue<SkSize>({ width: 0, height: 0 });
   const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
 
   const bindingRef = useRef<ViewportBinding | null>(null);
@@ -107,13 +104,12 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
         style={[styles.surface, style]}
         onLayout={(event) => {
           const { width, height } = event.nativeEvent.layout;
-          surfaceSize.value = { width, height };
           binding.setSurfaceSize({ width, height });
           viewportValue.value = binding.resolved;
         }}
       >
-        <Canvas style={StyleSheet.absoluteFill} onSize={surfaceSize}>
-          <Renderer frame={frame} surfaceSize={surfaceSize} viewport={viewportValue} />
+        <Canvas style={StyleSheet.absoluteFill}>
+          <Renderer frame={frame} viewport={viewportValue} />
         </Canvas>
         {children === undefined ? null : (
           <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>

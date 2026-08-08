@@ -271,6 +271,21 @@ Fabric-safe path, but verify **on device**:
 - Rotation/split-view/Stage Manager verified live.
 - Commit: `perf: remove always-on Canvas size polling`.
 
+### Done — commit `1aba6c4` (perf: remove always-on Canvas size polling)
+
+- [x] `GameView` no longer passes `onSize` to the Skia `Canvas`; the Reanimated frame callback + per-frame native `measure()` poll is gone. `onLayout` is the single surface-size authority (P9 dual-writer question removed).
+- [x] `GameRendererProps.surfaceSize` removed from the public renderer props (breaking at 0.0.0); compile fixture asserts its absence (`reactEntry.types.tsx` `@ts-expect-error`, RED-first).
+- [x] Brick Breaker background is now Skia `Fill` (verified present in the pinned 2.6.2) — two derived values deleted; no other renderer consumed `surfaceSize`.
+- [x] Live verification (iPhone 17 Pro Max simulator, iOS 26.5): open → play (press-launch) → paddle drag → landscape rotation → portrait rotation → back to Home. Viewport re-resolves after each rotation; letterbox taps remain correctly rejected; the one-press launch and game-over → tap-to-play-again → ready → play loop behave. Split View / Stage Manager / physical-device runs remain pending (documented tooling gaps; user runs the app manually).
+- [x] Baseline-vs-after capture, scenario 2 (idle brick-breaker), same simulator, dev-mode, 5 s runs:
+
+| Capture | display | zero-step | fixed | catch-up | dropped | commits | update p95 | deep-freeze p95 | publish p95 | UI p95/p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| T1 before (`608c962`) | 301 | 1 | 299 | 0 | 0 | 301 | 0.01 ms | 0.01 ms | 0.00 ms | 16.7/16.7 ms |
+| T2 after | 298 | 54 | 300 | 57 | 0 | 298 | 0.00 ms | 0.01 ms | 0.01 ms | 16.7/16.7 ms |
+
+  **Conclusion (dev-mode, simulator):** JS-stage durations and UI frame deltas are identical within run-to-run jitter (the zero-step/catch-up swing is display-cadence jitter around 16.67 ms, not session cost — both runs average ~60 Hz). The `onSize` poll ran on the UI thread, invisible to the JS counters; its removal is kept because it simplifies (ground rule 3: keep noise-level changes that also remove complexity) and because the mechanism is source-verified: the poll calls native `measure()` every display frame for the Canvas's whole mounted life — 120×/s on an iPad Pro. Quantified device confirmation is pending the physical-device matrix.
+
 ---
 
 ## T3 — Trusted deep-freeze cache

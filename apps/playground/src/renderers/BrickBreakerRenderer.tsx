@@ -1,4 +1,4 @@
-import { Circle, Group, Rect } from '@shopify/react-native-skia';
+import { Circle, Fill, Group, Rect } from '@shopify/react-native-skia';
 import { useDerivedValue } from 'react-native-reanimated';
 
 import type { GameRendererProps } from 'react-native-gamekit/react';
@@ -17,22 +17,10 @@ type RendererProps = GameRendererProps<BrickBreakerDefinition['scenes']>;
  * shared frame and viewport; dead bricks render with zero size so the
  * component tree never changes and React never sees live gameplay positions.
  */
-export function BrickBreakerRenderer({
-  frame,
-  surfaceSize,
-  viewport,
-}: RendererProps) {
-  const backgroundWidth = useDerivedValue(() => surfaceSize.value.width);
-  const backgroundHeight = useDerivedValue(() => surfaceSize.value.height);
+export function BrickBreakerRenderer({ frame, viewport }: RendererProps) {
   return (
     <>
-      <Rect
-        x={0}
-        y={0}
-        width={backgroundWidth}
-        height={backgroundHeight}
-        color="#0f1420"
-      />
+      <Fill color="#0f1420" />
       <Paddle frame={frame} viewport={viewport} />
       <Ball frame={frame} viewport={viewport} />
       <Bricks frame={frame} viewport={viewport} />

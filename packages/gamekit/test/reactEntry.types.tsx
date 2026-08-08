@@ -48,6 +48,14 @@ function MyRenderer(_props: GameRendererProps<Scenes>) {
   return null;
 }
 
+// T2: renderer props no longer carry a size polled from the Skia canvas;
+// layout is the single size authority (onLayout only).
+function NoSurfaceSizeRenderer(props: GameRendererProps<Scenes>) {
+  // @ts-expect-error surfaceSize was removed from renderer props (T2)
+  void props.surfaceSize;
+  return null;
+}
+
 declare const session: GameSession<Scenes, typeof _definition.input>;
 session.scene satisfies 'ready' | 'play';
 session.setScene('play');
