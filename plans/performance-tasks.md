@@ -1028,7 +1028,7 @@ physical-device measurements demonstrate the improvement.
 
 ---
 
-## T11 — Done (docs + guardrails, commit `??`)
+## T11 — Done (docs + guardrails, commit `43e2a97`)
 
 - [x] **Performance model page** (`apps/docs/content/docs/concepts/performance-model.mdx`): JS fixed simulation → commit boundary → UI presentation → React overlays, with the runtime ownership table and the pipeline diagram.
 - [x] **Renderer guide** (`renderer-guide.mdx`): fixed topology, one viewport transform, grouped `select()` shared values, scalar interpolation on the UI runtime, static geometry, resource memoisation, and the Atlas/Picture threshold (scenario 6 + device trace required).
