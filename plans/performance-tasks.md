@@ -742,6 +742,18 @@ does not fix frequency.
 - Verified on 60 and 120 Hz phones **and** iPad split view.
 - Commit: `perf: coalesce pointer movement across runtimes`.
 
+### Done — commit `??` (perf: coalesce pointer movement across runtimes)
+
+- [x] RED-first: `test/pointerCoalescer.test.ts` (9 tests — only-final-move per interval; one forward per interval across intervals; ordering (begin precedes movement); down+up preserves both edges with the final up coordinate on the end event; cancel neutralises exactly once; secondary pointer cannot steal; end→begin starts fresh with the old terminal edge preserved; reset drops queued movement) + `test/pointerContainment.test.ts`-style mirror assertions inside the same file (fit letterbox rejected/inside accepted, no layout rejects, fill has no letterbox).
+- [x] Pure UI-side coalescer (`src/react/pointerCoalescer.ts`): at most one move crossing per configured interval (default = one fixed step), latest dirty position only; edges never throttled or dropped; begin forwarded immediately; `up` sends the final point + terminal edge together. **Worklet-safe state**: captured objects are shared across calls on the UI runtime but captured variables cannot be rebound — the active pointer lives as a property of a captured state object. (First live run crashed with `Compiling JS failed: invalid assignment left-hand side` — a closure rebinding `active = …` inside a worklet; fixed by the object-property state, verified live.)
+- [x] Containment mirror (`src/react/pointerContainment.ts`): the exact `contentBounds` formula workletized; a `fit`-letterbox begin fails the Manual gesture before activation via `GestureStateManager.fail`; JS re-validates on receipt (binding unchanged).
+- [x] Forwarding uses `scheduleOnRN` (worklets 0.10.3; `runOnJS` is deprecated) with one ordered JS dispatcher into the existing `PointerBinding` — ownership, edge sampling, non-finite rejection, and letterbox re-validation stay authoritative on JS; a secondary pointer or an unowned action's moves are dropped by the input buffer.
+- [x] Layout revision: cancels ownership and **recreates the coalescer with fresh state** (a JS-side reset cannot reach the worklet's snapshot; the revision bumps a low-frequency React value, the rebuilt gesture worklets capture the fresh coalescer — stale queued movement dies with the old closures). Unmount cancels + disposes the binding.
+- [x] Live verification (simulator): letterbox tap at 50%/70% stays on the ready screen (mirror rejection, no crash); in-content tap enters play; paddle tracking through the coalescer (drag away 50→80%, back, 3 s hold — ball caught).
+- [x] Captures (dev-mode, same sim): scripted drag — input-to-commit **p50/p95 17.00 ms, p99 18.00 ms** (289 samples) vs T1's 17.00/17.00/17.00 — session-level latency unchanged; UI frames flat 16.7/16.7 ms; display 301 / fixed 298 / commits 295 (commit-frequency architecture intact).
+- [x] Design bound: real-gesture move crossings ≤ 1 per fixed step (verified by the interval tests); worst-case added input-to-visible latency = one step by design, which the T1-locked session floor does not regress.
+- [ ] 60/120 Hz phones + iPad split-view continuous-drag p95/p99 comparison vs. T1 — pending the physical-device matrix (the sim cannot show the crossing-count win numerically; the interval tests pin the bound).
+
 ---
 
 ## T8 — Reference game: structural sharing

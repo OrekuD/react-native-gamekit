@@ -49,12 +49,20 @@ export interface GameViewProps<TScenes extends SceneMap, TInput extends InputMap
 }
 
 /**
- * Context supplying the shared resolved viewport to pointer input children.
+ * Context supplying the resolved viewport to pointer input children.
  *
- * `GamePointerInput` consumes this binding so drawing and hit testing always
- * use the same resolved viewport instance for a layout revision.
+ * `GamePointerInput` consumes the binding for JS-side conversion and the
+ * shared value for the UI-side containment mirror, so drawing and hit
+ * testing always use the same resolved viewport instance for a layout
+ * revision.
  */
-export const GameViewportContext = createContext<ViewportBinding | null>(null);
+export interface GameViewport {
+  readonly binding: ViewportBinding;
+  /** Resolved viewport shared value (layout-only updates). */
+  readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
+}
+
+export const GameViewportContext = createContext<GameViewport | null>(null);
 
 /**
  * Mount a headless GameSession into a Skia canvas.
@@ -146,7 +154,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   });
 
   return (
-    <GameViewportContext.Provider value={binding}>
+    <GameViewportContext.Provider value={{ binding, viewport: viewportValue }}>
       <View
         style={[styles.surface, style]}
         onLayout={(event) => {

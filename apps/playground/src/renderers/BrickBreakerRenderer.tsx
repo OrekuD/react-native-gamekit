@@ -1,5 +1,5 @@
 import { Circle, Fill, Group, Rect, select } from '@shopify/react-native-skia';
-import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import { useDerivedValue } from 'react-native-reanimated';
 
 import type { GameRendererProps } from 'react-native-gamekit/react';
 import {
