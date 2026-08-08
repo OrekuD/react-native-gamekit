@@ -438,6 +438,26 @@ regresses; or p95/p99 worsens beyond noise with no code change.
 - Before/after capture with **no code change** recorded.
 - Commit: `chore(deps): upgrade Skia to 2.11.0 and Reanimated/Worklets patches`.
 
+### Done — commit `5eb018f` (chore(deps): upgrade Skia to 2.11.0 and Reanimated/Worklets patches)
+
+- [x] Versions re-verified in the registry at execution time: `@shopify/react-native-skia@2.11.0`, `react-native-reanimated@4.5.3`, `react-native-worklets@0.10.3` all exist. RNGH held at `~2.32.0` per the plan (3.x New-Arch rewrite would confound T7).
+- [x] Manifest-only commit: library `peerDependencies` + exact `devDependencies` + playground `dependencies` updated together (invariant 3); single lockfile updated via `pnpm install`.
+- [x] `pnpm expo:prebuild:clean` → CocoaPods resolved with exactly **one copy** of each native module: `react-native-skia 2.11.0`, `RNReanimated 4.5.3`, `RNWorklets 0.10.3`, `RNGestureHandler 2.32.0`.
+- [x] Deliberate deviation against the Expo matrix recorded (invariant 3): `expo install --check` flags worklets 0.10.3 vs expected 0.10.1 — intended, documented here.
+- [x] iOS **debug + release** builds succeed (simulator).
+- [x] `pnpm check` green (lint → typecheck → tests → build): 134 library + 34 playground tests; `pack:inspect` succeeds with unchanged tarball shape.
+- [x] Before/after capture, scenario 2 (idle brick-breaker), same simulator, dev-mode, **no code change**:
+
+| Capture | display | zero-step | fixed | catch-up | dropped | commits | update p95 | deep-freeze p95 | publish p95 | UI p95/p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Before (Skia 2.6.2, T1 `608c962`) | 301 | 1 | 299 | 0 | 0 | 301 | 0.01 ms | 0.01 ms | 0.00 ms | 16.7/16.7 ms |
+| After (Skia 2.11.0, Reanimated 4.5.3) | 301 | 1 | 299 | 0 | 0 | 301 | 0.00 ms | 0.01 ms | 0.00 ms | 16.7/16.7 ms |
+
+  Conclusion: identical within run-to-run noise on the 60 Hz simulator — no regression observed; the upgrade is retained (it enables T6's `select()` and carries the mid-animation unmount patch).
+- [ ] **Android debug + release builds: NOT YET VERIFIED** — the build was attempted and failed with `java.io.IOException: No space left on device` (environmental: this machine ran out of disk during the Android build; ~12 GB of iOS build artifacts had to be removed and the build needs re-running). Rollback criterion (native build failure) is **not** invoked — the failure is disk pressure, not the dependency upgrade, and iOS builds of the same Podfile succeed. Re-run `pnpm expo:prebuild:clean` + `cd apps/playground/android && ./gradlew assembleDebug assembleRelease` after freeing disk.
+- [ ] 50× open/close leak scenario + repeated scene enter/exit on Skia 2.11.0 (host-object → native-state migration check): pending physical-device/Instruments work.
+- [ ] Compatibility matrix in root `README.md`, docs compatibility page, and `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot: not yet updated (docs sweep pending).
+
 ---
 
 ## T5 — Split simulation commits from UI presentation
