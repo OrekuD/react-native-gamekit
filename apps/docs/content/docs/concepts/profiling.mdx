@@ -1,0 +1,60 @@
+# Profiling guide
+
+How to capture numbers that mean something.
+
+## Baseline first
+
+No performance-affecting change lands before a baseline capture. Each change
+is one attributable commit with before/after captures on the same device,
+same build config, same thermal state. A commit that bundles two
+optimisations cannot be evaluated.
+
+## Builds
+
+Use **release or `debugOptimized` builds** for any conclusion. Dev-mode
+numbers locate problems; they never approve a gate. Capture with:
+- overlays and remote debugging off (the Performance Lab has a hide-overlay
+  toggle),
+- initial and final thermal state recorded,
+- commit SHA + dirty flag and exact dependency versions recorded.
+
+## Scenarios
+
+The Performance Lab runs deterministic scenarios: idle (bootstrap / Brick
+Breaker), scripted drag (≥20 s), a JS-stall probe, and open/close cycles,
+each with fixed durations and a reset action for three comparable runs. UI
+frame deltas aggregate on the UI runtime and transfer to React at most once
+per second; snapshot payloads are measured offline, never serialised in the
+hot path.
+
+## Devices
+
+Physical devices only for gates: a 60 Hz iPhone, a 120 Hz ProMotion iPhone,
+a mid-range Android at 60/90/120 Hz, a 60 Hz iPad and a 120 Hz iPad Pro,
+plus iPad portrait/landscape/split-view. **Simulator and CI FPS are never a
+device gate** — they locate problems and pin deterministic contracts only.
+
+## The deterministic contracts (CI-safe)
+
+These run headlessly in the test suite and never require a device:
+
+1. A zero-step display callback produces zero commit notifications and
+   allocates nothing.
+2. 120 Hz driver + 60 fixed steps → ≤60 commit notifications after the
+   initial envelope.
+3. Two catch-up steps in one callback → one notification with the final
+   adjacent pair.
+4. Alpha is never written JS→UI per display frame; clamps at 1; never
+   extrapolates.
+5. No permanent UI frame callback exists solely to poll layout.
+6. A no-hit tick preserves brick collection identity.
+7. The deep-freeze cache skips trusted subtrees while still freezing newly
+   introduced nested objects; cyclic snapshots are safe.
+8. Renderer animated-value registrations reduced ≥75% with no visual change.
+9. Raw pointer moves do not each schedule a JS callback; edges never dropped
+   or reordered.
+10. HUD React renders equal actual HUD value changes.
+
+The library's `pnpm test:coverage:gate` enforces ≥80% line coverage on the
+pure engine logic (alpha clock, coalescer, containment mirror, deep-freeze,
+diagnostics).

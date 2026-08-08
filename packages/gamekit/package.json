@@ -36,7 +36,8 @@
     "test:coverage": "node --import tsx --experimental-test-coverage --test test/*.test.ts",
     "prepack": "bob build",
     "pack:inspect": "pnpm pack --dry-run",
-    "bench:deepfreeze": "node --import tsx bench/deepFreeze.bench.ts"
+    "bench:deepfreeze": "node --import tsx bench/deepFreeze.bench.ts",
+    "test:coverage:gate": "node scripts/coverage-gate.mjs"
   },
   "peerDependencies": {
     "@shopify/react-native-skia": "2.11.0",

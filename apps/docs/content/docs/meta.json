@@ -10,8 +10,14 @@
     "concepts/scenes-and-transitions",
     "concepts/viewport",
     "concepts/pointer-input",
+    "---Performance---",
+    "concepts/performance-model",
+    "concepts/renderer-guide",
+    "concepts/input-guide",
+    "concepts/profiling",
     "---Reference---",
     "reference/brick-breaker",
+    "reference/results",
     "compatibility"
   ]
 }

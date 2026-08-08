@@ -1,0 +1,59 @@
+# Performance results
+
+Before/after captures from the performance plan
+(`plans/performance-tasks.md` is the authoritative record with per-task
+commits). All simulator captures are **dev-mode, iPhone 17 Pro Max
+simulator, iOS 26.5** — they locate problems and pin contracts; they never
+approve a gate. Physical-device measurements are pending the device matrix.
+
+## Scenario captures (5 s runs, fixed step 1000/60 ms)
+
+| Scenario | display | zero-step | fixed | catch-up | dropped | commits | input→commit p50 | UI p95/p99 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Idle Brick Breaker, before T5 | 301 | 1–19 | 298–300 | 0–17 | 0 | **301** (display rate) | — | 16.7/16.7 ms |
+| Idle Brick Breaker, after T5 | 301 | 12 | 299 | 11 | 0 | **289** (commit rate) | — | 16.7/16.7 ms |
+| Scripted drag (T1 baseline, RNGH 2.32) | 301 | 16 | 298 | 14 | 0 | 301 | 17.00 ms | 16.7/16.7 ms |
+| Scripted drag (RNGH 3.1.0) | 301 | 19 | 298 | 17 | 0 | 301 | 17.00 ms | 16.7/16.7 ms |
+| Scripted drag (after T7 coalescer) | 301 | 7 | 298 | 5 | 0 | 295 | 17.00 / p99 18.00 ms | 16.7/16.7 ms |
+| JS stall probe, before T5 | 289 | 6 | 292 | 10 | 0 | **289** | — | 16.7/16.7 ms |
+| JS stall probe, after T5 | 286 | 31 | 293 | 39 | 0 | **255** | — | 16.7/16.7 ms |
+
+Key results:
+
+- **Commits now track simulation commits** (T5): 301 → 289 idle; the stall
+  probe's zero-step burst no longer commits (289 → 255), and UI frame time
+  holds a flat 16.7 ms through a 200 ms JS stall — alpha completes and holds,
+  never extrapolates.
+- **Input-to-commit latency is unchanged at 17.00 ms** across the RNGH 3.1
+  migration and the T7 coalescer (worst-case added latency is one fixed step
+  by design).
+- **Deep-freeze cache (T3)**: 5.1–6.3× at 32 entities, 15.4–17.5× at 1,000,
+  17.4× at 2,000 on node/V8 (gate ≥5× / ≥10×); improved to 18.9× at 1,000
+  after T8's identity-preserving liveness.
+- **Renderer mappers (T6)**: 138 → 4 derived values (97%, gate ≥75%).
+- **Dependency upgrade (T4)**: Skia 2.6.2 → 2.11.0, Reanimated 4.5.1 →
+  4.5.3, Worklets 0.10.1 → 0.10.3, RNGH 2.32 → 3.1.0 — no-code-change
+  captures identical within noise.
+- **Offline payload**: Brick Breaker play frame ≈ 3.6 KB → ≈ 219 KB/s at 60
+  Hz commits.
+
+## Rejected experiments
+
+| Change | Why rejected |
+| --- | --- |
+| Canvas `onSize` polling (T2) | Removed: always-on UI frame callback + native `measure()` per display frame; kept because it also simplifies (measured sim delta within noise). |
+| Startup-fade A/B (T10) | Decision **keep current**: sim proxy medians 188 ms (fade) vs 86 ms (immediate) vs 90 ms (cover), but the fade's slower reads are a11y masking inside the fading view with high variance; confirmed cost requires device GPU/compositor traces. |
+| Atlas/Picture for bricks | Not adopted: 32 rectangles is not evidence; requires the shared-texture scenario + device trace first. |
+| Discrete event seam (T9) | Not built: no score/audio/haptic consumers exist; commit selectors cover the HUD. |
+
+## Locked thresholds
+
+- Input-to-visible latency: T1-locked session floor of 17 ms (one commit
+  interval); coalescing adds at most one fixed step by design.
+- Commit frequency: ≤ one notification per simulation step (120 Hz display
+  + 60 Hz steps → ≤60 notifications after the initial envelope).
+- Alpha: reset per commit, clamped at 1, never extrapolated.
+- Deep-freeze: ≥5× at 32 entities, ≥10× at 1,000 (node/V8 gate).
+- Renderer registrations: ≥75% reduction.
+- Pure engine logic: ≥80% line coverage (`pnpm test:coverage:gate`).
+- CI/simulator FPS is never a device gate.

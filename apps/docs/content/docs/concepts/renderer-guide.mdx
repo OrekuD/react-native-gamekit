@@ -1,0 +1,47 @@
+# Renderer guide
+
+How to write Skia renderers that stay fast as scenes grow.
+
+## Fixed topology
+
+- Build the component tree **once**; never add, remove, or reorder nodes for
+  live gameplay. Dead entities render with zero size or zero opacity, not by
+  unmounting.
+- React must never see live positions: every geometry value flows through
+  shared values.
+
+## One viewport transform
+
+Apply the resolved viewport **once** to a parent `Group` as a transform
+(`translate(offsetX, offsetY)` then `scale(scale)`), and author every child in
+**logical world coordinates**. The transform updates only on layout revisions.
+Letterbox behaviour follows from the viewport mode (`fit` clips content to the
+centered bounds; `fill` and `extend-world` cover the surface).
+
+## Grouped shared values with `select()`
+
+One `useDerivedValue` per **moving entity**, consumed through Skia
+`select(value, 'key')`: a single mapper drives every prop of an entity
+instead of one derived value per prop. The reference game dropped 138 derived
+values to 4 (97%).
+
+- Paddle/ball: one group `{x, y, w, h}` per entity; scalar lerp computed once
+  on the UI runtime, blending the commit's `previous`/`current` with the
+  UI-owned alpha.
+- Static geometry (bricks): plain constants — no derived values at all.
+  Only the compact liveness record updates, at commit frequency.
+
+## Resource memoisation
+
+- Never create images, fonts, paths, paints, or shaders per frame. Preload
+  and reuse.
+- Keep retained `Rect`/`Circle` nodes for small entity counts. Consider
+  `Atlas`/`Picture`/shared textures **only after** a shared-texture scene
+  (scenario 6) and a device trace show a material fill-rate win — 32
+  rectangles is not evidence.
+
+## Hard cuts and scene changes
+
+Transitions commit `previous === current` (a hard cut) and the alpha clock
+resets; frames never interpolate between two scene types. Renderers may gate
+on `frame.scene` — narrowing gives the typed snapshot.

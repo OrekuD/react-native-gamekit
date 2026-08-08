@@ -1,0 +1,43 @@
+# Performance model
+
+GameKit separates **simulation** (JS, deterministic, fixed step) from
+**presentation** (UI runtime, interpolated) from **React overlays** (HUD,
+rarely updated). Understanding which runtime owns what is the whole model.
+
+## Runtime ownership
+
+| Concern | Owner | Frequency | Notes |
+| --- | --- | --- | --- |
+| Simulation state, physics, win/loss | JS session (fixed step) | 30–120 Hz steps | Deterministic; never React state |
+| Render **commits** (snapshot pairs) | JS session | one per simulation commit | Never per display frame |
+| `alpha` presentation fraction | UI runtime frame callback | per UI frame | Resets per commit, clamps at 1, never extrapolates |
+| Viewport resolution | JS layout | on layout revision only | Shared with input hit-testing |
+| Pointer sampling + coalescing | UI runtime gesture callbacks | at most one crossing per fixed step | Edges never dropped or reordered |
+| Ownership, edge sampling, re-validation | JS input buffer | per forwarded event | Authoritative |
+| HUD values | React (commit selector) | only when values change | Unchanged commits enqueue nothing |
+
+## The pipeline
+
+```text
+input -> coalescer (UI) -> input buffer (JS) -> fixed-step simulation (JS)
+   -> commit envelope (JS, simulation frequency) -> shared values (UI)
+   -> grouped select() props + alpha clock (UI) -> Skia
+```
+
+- The session **commits** only when the simulation commits: the initial
+  baseline, each step-carrying presentation callback (one commit per callback
+  with the final adjacent snapshot pair), and every transition or restart.
+  Zero-step display callbacks allocate nothing.
+- Renderers read the commit envelope and the UI-owned alpha; they never see
+  per-display frames. The snapshot pair is deeply immutable; unchanged
+  subtrees are trusted-cached by the session's deep-freeze.
+- React consumes commits through selectors (HUD) — never live gameplay
+  positions.
+
+## Why the split matters
+
+At 120 Hz with a 60 Hz simulation, a per-display publish would double commit
+crossings, dirty every frame-dependent mapper, and tie interpolation to JS
+scheduling. The commit + UI-alpha split keeps crossings at simulation
+frequency, drives interpolation on the display clock, and holds (never
+extrapolates) when JS stalls.

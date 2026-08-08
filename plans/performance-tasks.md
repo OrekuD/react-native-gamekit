@@ -1025,3 +1025,17 @@ Requiring devices:
 The work is not done when it "feels smoother." It is done when runtime ownership
 is correct, the deterministic contracts are green, and repeatable
 physical-device measurements demonstrate the improvement.
+
+---
+
+## T11 — Done (docs + guardrails, commit `??`)
+
+- [x] **Performance model page** (`apps/docs/content/docs/concepts/performance-model.mdx`): JS fixed simulation → commit boundary → UI presentation → React overlays, with the runtime ownership table and the pipeline diagram.
+- [x] **Renderer guide** (`renderer-guide.mdx`): fixed topology, one viewport transform, grouped `select()` shared values, scalar interpolation on the UI runtime, static geometry, resource memoisation, and the Atlas/Picture threshold (scenario 6 + device trace required).
+- [x] **Input guide** (`input-guide.mdx`): UI ownership, the coalescing interval, edge ordering, latency tradeoffs, and the discrete-command audio/haptic rule.
+- [x] **Profiling guide** (`profiling.mdx`): release/debugOptimized-only conclusions, scenario discipline, the device matrix, and the 10 deterministic CI-safe contracts; **simulator/CI FPS is never a device gate**.
+- [x] **Results page** (`reference/results.mdx`): the before/after capture table (T1–T8), the rejected experiments and why, and the locked thresholds. The plan's handoff template is the authoritative per-task record.
+- [x] **Compatibility matrix** updated: root `README.md` + `apps/docs/content/docs/compatibility.mdx` → Skia 2.11.0, RNGH ~3.1.0, Reanimated 4.5.3, Worklets 0.10.3; performance skill snapshot verified current. Dated research notes keep their original snapshots (historical evidence).
+- [x] **CI guardrails**: the deterministic counter assertions already land as tests (`commitFrequency.test.ts`: zero-step → zero commits; commit count ≤ steps + transitions; catch-up → one notification with the adjacent pair). New `pnpm test:coverage:gate` (`scripts/coverage-gate.mjs`) enforces **≥80% line coverage** on the pure engine logic (alphaClock 98.3%, pointerCoalescer 100%, pointerContainment 100%, deepFreeze 98.4%, diagnostics 100%). CI/simulator FPS is documented as never a device gate.
+- [x] All 146 library + 44 playground tests green; docs build green; `git diff --check` clean.
+- [ ] The device-matrix items from the global acceptance criteria (14–18) remain the only open work, tracked as pending in the per-task sections: physical-device before/after p95/p99, input-to-visible on hardware, 50× open/close leak trace, split-view verification, and idle/drag frame-drop traces.
