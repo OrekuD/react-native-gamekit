@@ -574,7 +574,7 @@ viewport             -> SharedValue, updated only on layout revision
 - Determinism, hard cuts, pause/resume, input semantics unchanged.
 - Commit: `perf: publish render commits at simulation frequency`.
 
-### Done — commit `091d56a` (perf: publish render commits at simulation frequency)
+### Done — commit `580a24b` (perf: publish render commits at simulation frequency)
 
 - [x] RED tests first: `test/commitFrequency.test.ts` (5 tests — 120 Hz/60 Hz → exactly 1 initial + 60 commits; zero-step callbacks notify nothing; two catch-up steps notify once with the final adjacent pair; revisions strictly monotonic across transitions/external calls; a throwing commit listener pauses and leaves no successor) and `test/alphaClock.test.ts` (7 pure-clock tests — reset on newer commit, advance from frame deltas, clamp-at-1 hold without extrapolation, stale/duplicate commits ignored, new epoch accepted at revision 0, delayed old-epoch write ignored, pause holds and resume continues, hard cut resets).
 - [x] Session: `publish()` → `commit()`; `CommitFrame` envelope (scene, previous, current, tick, elapsedSeconds, **revision**, **hardCut**, **stepMs**) allocated and notified **only** on the initial baseline, step-carrying callbacks (one commit per callback), and transitions/restarts. Zero-step callbacks allocate nothing. `getRenderFrame()` computes alpha on demand (freshness contract documented); `addCommitListener` replaces `addRenderFrameListener` (removed before v1 — migration surface was exactly `bindGameSession`, the HUD hook, the perf-lab latency listener, and 7 test sites).
