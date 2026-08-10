@@ -76,12 +76,16 @@ export function createDeepFreeze(): DeepFreezer {  const trusted = new WeakSet<o
             continue;
           }
           if (!isArrayIndexKey(key)) {
-            freeze((node as Record<PropertyKey, unknown>)[key]);
+            const value = (node as unknown as Record<PropertyKey, unknown>)[key];
+            freeze(value);
           }
         }
         const symbols = Object.getOwnPropertySymbols(node);
         for (let index = 0; index < symbols.length; index += 1) {
-          freeze((node as Record<PropertyKey, unknown>)[symbols[index]]);
+          const symbol = symbols[index];
+          if (symbol !== undefined) {
+            freeze((node as unknown as Record<PropertyKey, unknown>)[symbol]);
+          }
         }
       } else {
         for (const key of Reflect.ownKeys(node)) {
