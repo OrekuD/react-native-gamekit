@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 
 import { createGameSessionWithDriver, ManualFrameDriver } from 'react-native-gamekit/testing';
 import {
+  BRICK_BREAKER_CONFIG,
   BRICK_GRID,
   ballLost,
   bounceBallOffPaddle,
@@ -23,6 +24,11 @@ function createSession(): { readonly session: BrickBreakerSession; readonly driv
     fixedStepMs: FIXED_STEP_MS,
   });
   return { session, driver };
+}
+
+function pulseStart(session: BrickBreakerSession): void {
+  session.input.press('start');
+  session.input.release('start');
 }
 
 /**
@@ -59,22 +65,30 @@ function continueFrames(
 }
 
 describe('Brick Breaker headless gameplay', () => {
-  it('opens on the ready scene and enters play on the first press', () => {
+  it('opens on the ready scene and enters play from the semantic start action', () => {
     const { session, driver } = createSession();
     assert.equal(session.scene, 'ready');
     runFrames(session, driver, 4, () => {
       if (session.scene === 'ready' && session.status === 'running') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        pulseStart(session);
       }
     });
     assert.equal(session.scene, 'play');
+  });
+
+  it('uses a portrait game world that can fill the screen body', () => {
+    assert.deepEqual(brickBreakerDefinition.viewport.logicalSize, {
+      width: 320,
+      height: 480,
+    });
+    assert.ok(BRICK_BREAKER_CONFIG.paddle.y > BRICK_BREAKER_CONFIG.logicalHeight * 0.9);
   });
 
   it('enters play with the ball in motion (one-press launch) and clamps the paddle', () => {
     const { session, driver } = createSession();
     runFrames(session, driver, 4, () => {
       if (session.scene === 'ready') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        pulseStart(session);
       }
     });
     assert.equal(session.scene, 'play');
@@ -103,7 +117,11 @@ describe('Brick Breaker headless gameplay', () => {
     if (frame.scene !== 'play') {
       assert.fail(`expected play scene, got ${frame.scene}`);
     }
-    assert.equal(frame.current.paddle.x, 320 - 24, 'clamped to the right edge');
+    assert.equal(
+      frame.current.paddle.x,
+      BRICK_BREAKER_CONFIG.logicalWidth - BRICK_BREAKER_CONFIG.paddle.width / 2,
+      'clamped to the right edge',
+    );
 
     session.input.move('primary', 2, { x: -10_000, y: 90 });
     driver.fireNext(80);
@@ -111,14 +129,18 @@ describe('Brick Breaker headless gameplay', () => {
     if (frame.scene !== 'play') {
       assert.fail(`expected play scene, got ${frame.scene}`);
     }
-    assert.equal(frame.current.paddle.x, 24, 'clamped to the left edge');
+    assert.equal(
+      frame.current.paddle.x,
+      BRICK_BREAKER_CONFIG.paddle.width / 2,
+      'clamped to the left edge',
+    );
   });
 
   it('keeps the ball inside the world with wall bounces', () => {
     const { session, driver } = createSession();
     runFrames(session, driver, 4, () => {
       if (session.scene === 'ready') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        pulseStart(session);
       }
     });
     runFrames(session, driver, 1, () => {
@@ -139,19 +161,52 @@ describe('Brick Breaker headless gameplay', () => {
     }
     const ball = frame.current.ball;
     assert.ok(ball.x >= 4 && ball.x <= 316, `ball x in bounds, got ${ball.x}`);
-    assert.ok(ball.y >= 4 && ball.y <= 180, `ball y in bounds, got ${ball.y}`);
+    assert.ok(
+      ball.y >= BRICK_BREAKER_CONFIG.ball.radius &&
+        ball.y <= BRICK_BREAKER_CONFIG.logicalHeight,
+      `ball y in bounds, got ${ball.y}`,
+    );
   });
 
   it('reflects the ball off the paddle', () => {
-    const ball = { x: 160, y: 165, vx: 0, vy: 120, radius: 4 };
-    const next = bounceBallOffPaddle(ball, 160, 168, 48, 6);
+    const { paddle, ball: ballConfig } = BRICK_BREAKER_CONFIG;
+    const ball = {
+      x: 160,
+      y: paddle.y - ballConfig.radius + 1,
+      vx: 0,
+      vy: 120,
+      radius: ballConfig.radius,
+    };
+    const next = bounceBallOffPaddle(ball, 160, paddle.y, paddle.width, paddle.height);
     assert.ok(next.vy < 0, 'vertical velocity reflects');
-    assert.equal(next.y, 164);
+    assert.equal(next.y, paddle.y - ballConfig.radius);
+  });
+
+  it('uses paddle hit slop without changing the rendered paddle width', () => {
+    const { width, hitSlop } = BRICK_BREAKER_CONFIG.paddle;
+    const paddleX = 160;
+    const ball = {
+      x: paddleX + width / 2 + 4 + hitSlop.horizontal - 1,
+      y: BRICK_BREAKER_CONFIG.paddle.y - BRICK_BREAKER_CONFIG.ball.radius + 1,
+      vx: 0,
+      vy: 120,
+      radius: 4,
+    };
+    const next = bounceBallOffPaddle(
+      ball,
+      paddleX,
+      BRICK_BREAKER_CONFIG.paddle.y,
+      width,
+      BRICK_BREAKER_CONFIG.paddle.height,
+    );
+    assert.ok(next.vy < 0, 'near-edge hit reflects inside the collision-only hit slop');
   });
 
   it('removes bricks and increases the score when the ball crosses the brick row', () => {
     const bricks = initialBrickLiveness();
-    const ball = { x: 20, y: 24, vx: 0, vy: 40, radius: 4 };
+    // The tall portrait world starts the brick field at `bricks.top` (64);
+    // place the ball inside the first row for the collision.
+    const ball = { x: 20, y: BRICK_BREAKER_CONFIG.bricks.top + 4, vx: 0, vy: 40, radius: 4 };
     const result = collideBallWithBricks(ball, bricks);
     assert.equal(result.removed, 1);
     assert.equal(result.bricks.filter((alive) => alive === false).length, 1);
@@ -160,7 +215,7 @@ describe('Brick Breaker headless gameplay', () => {
 
   it('preserves brick collection identity when nothing is hit (T3 cache short-circuit)', () => {
     const bricks = initialBrickLiveness();
-    const ball = { x: 20, y: 160, vx: 0, vy: 40, radius: 4 };
+    const ball = { x: 20, y: 300, vx: 0, vy: 40, radius: 4 };
     const result = collideBallWithBricks(ball, bricks);
     assert.equal(result.removed, 0);
     assert.equal(result.bricks, bricks, 'a no-hit tick must return the same array identity');
@@ -171,7 +226,7 @@ describe('Brick Breaker headless gameplay', () => {
     session.start();
     driver.fireNext(0);
     if (session.scene === 'ready') {
-      session.input.begin('primary', 1, { x: 160, y: 90 });
+      pulseStart(session);
     }
     driver.fireNext(10);
     const frame = session.getRenderFrame();
@@ -188,11 +243,23 @@ describe('Brick Breaker headless gameplay', () => {
   });
 
   it('loses the ball when it passes the bottom edge and reaches game-over', () => {
-    assert.equal(ballLost({ x: 160, y: 185, vx: 0, vy: 0, radius: 4 }, 180), true);
+    assert.equal(
+      ballLost(
+        {
+          x: 160,
+          y: BRICK_BREAKER_CONFIG.logicalHeight + BRICK_BREAKER_CONFIG.ball.radius + 1,
+          vx: 0,
+          vy: 0,
+          radius: BRICK_BREAKER_CONFIG.ball.radius,
+        },
+        BRICK_BREAKER_CONFIG.logicalHeight,
+      ),
+      true,
+    );
     const { session, driver } = createSession();
     runFrames(session, driver, 4, () => {
       if (session.scene === 'ready') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        pulseStart(session);
       }
     });
     runFrames(session, driver, 1, () => {
@@ -210,7 +277,7 @@ describe('Brick Breaker headless gameplay', () => {
     const { session, driver } = createSession();
     runFrames(session, driver, 4, () => {
       if (session.scene === 'ready') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        pulseStart(session);
       }
     });
     runFrames(session, driver, 1, () => {
@@ -242,11 +309,11 @@ describe('Brick Breaker headless gameplay', () => {
     assert.equal(score, 32);
   });
 
-  it('supports the full ready -> play -> game-over -> ready cycle', () => {
+  it('restarts directly from game-over into play with one start action', () => {
     const { session, driver } = createSession();
     runFrames(session, driver, 4, () => {
       if (session.scene === 'ready') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        pulseStart(session);
       }
     });
     assert.equal(session.scene, 'play');
@@ -260,15 +327,16 @@ describe('Brick Breaker headless gameplay', () => {
     assert.equal(session.scene, 'game-over');
     runFrames(session, driver, 4, () => {
       if (session.scene === 'game-over') {
-        session.input.begin('primary', 1, { x: 160, y: 90 });
+        session.input.press('start');
+        session.input.release('start');
       }
     });
-    assert.equal(session.scene, 'ready');
+    assert.equal(session.scene, 'play');
   });
 
   it('reaches the same checkpoints at 30, 60, and 120 Hz presentation', () => {
     const script: readonly { readonly atTick: number; readonly run: (session: BrickBreakerSession) => void }[] = [
-      { atTick: 10, run: (session) => session.input.begin('primary', 1, { x: 160, y: 90 }) },
+      { atTick: 10, run: pulseStart },
       { atTick: 30, run: (session) => session.input.begin('primary', 2, { x: 160, y: 90 }) },
       { atTick: 80, run: (session) => session.input.move('primary', 2, { x: 260, y: 90 }) },
       { atTick: 140, run: (session) => session.input.move('primary', 2, { x: 60, y: 90 }) },
@@ -326,9 +394,13 @@ describe('Brick Breaker headless gameplay', () => {
   });
 
   it('clamps paddle and wall-bounce helpers deterministically', () => {
-    assert.equal(clampPaddle(-50, 320, 48), 24);
-    assert.equal(clampPaddle(500, 320, 48), 296);
-    const ball = bounceBallOffWalls({ x: 2, y: 50, vx: -40, vy: 0, radius: 4 }, 320, 180);
+    assert.equal(clampPaddle(-50, 320, 64), 32);
+    assert.equal(clampPaddle(500, 320, 64), 288);
+    const ball = bounceBallOffWalls(
+      { x: 2, y: 50, vx: -40, vy: 0, radius: 4 },
+      BRICK_BREAKER_CONFIG.logicalWidth,
+      BRICK_BREAKER_CONFIG.logicalHeight,
+    );
     assert.equal(ball.x, 4);
     assert.equal(ball.vx, 40);
   });

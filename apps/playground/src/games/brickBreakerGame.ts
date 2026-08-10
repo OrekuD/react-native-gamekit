@@ -22,8 +22,14 @@ import {
 export const BRICK_BREAKER_CONFIG = {
   /** Authored logical world size, resolved onto the surface by Viewport2D. */
   logicalWidth: 320,
-  logicalHeight: 180,
-  paddle: { width: 48, height: 6, y: 168 },
+  logicalHeight: 480,
+  paddle: {
+    width: 64,
+    height: 8,
+    y: 452,
+    /** Collision-only forgiveness; the rendered paddle keeps its authored size. */
+    hitSlop: { horizontal: 10, vertical: 4 },
+  },
   ball: { radius: 4 },
   bricks: {
     columns: 8,
@@ -32,19 +38,19 @@ export const BRICK_BREAKER_CONFIG = {
     height: 10,
     gapX: 4,
     gapY: 4,
-    top: 16,
+    top: 64,
   },
   // Straight-up launch: the ball returns to the centered paddle, giving the
   // player a beat to take control after the one-press start.
-  launch: { vx: 0, vy: -150 },
+  launch: { vx: 0, vy: -240 },
   /** Maximum horizontal ball velocity imposed by paddle deflection. */
-  maxBallVx: 150,
+  maxBallVx: 220,
   /** Paddle deflection per unit of off-center hit position. */
   paddleDeflection: 1.1,
   /** Fractional speed increase applied on every paddle hit, capped. */
   speedUpPerPaddleHit: 0.03,
   /** Absolute speed cap for the speed-up mechanic. */
-  maxBallSpeed: 340,
+  maxBallSpeed: 400,
 } as const;
 
 export const TOTAL_BRICKS = BRICK_BREAKER_CONFIG.bricks.columns * BRICK_BREAKER_CONFIG.bricks.rows;
@@ -139,13 +145,14 @@ export function bounceBallOffPaddle(
   if (ball.vy <= 0) {
     return ball;
   }
-  const left = paddleX - paddleWidth / 2 - ball.radius;
-  const right = paddleX + paddleWidth / 2 + ball.radius;
+  const { hitSlop } = BRICK_BREAKER_CONFIG.paddle;
+  const left = paddleX - paddleWidth / 2 - ball.radius - hitSlop.horizontal;
+  const right = paddleX + paddleWidth / 2 + ball.radius + hitSlop.horizontal;
   if (ball.x < left || ball.x > right) {
     return ball;
   }
-  const top = paddleY;
-  const bottom = paddleY + paddleHeight;
+  const top = paddleY - hitSlop.vertical;
+  const bottom = paddleY + paddleHeight + hitSlop.vertical;
   if (ball.y + ball.radius < top || ball.y - ball.radius > bottom) {
     return ball;
   }
@@ -269,31 +276,36 @@ export interface GameOverSnapshot {
   readonly message: string;
 }
 
+const createLaunchBall = (paddleX: number): BallBody => {
+  const { paddle, ball, launch } = BRICK_BREAKER_CONFIG;
+  return {
+    x: paddleX,
+    y: paddle.y - ball.radius,
+    vx: launch.vx,
+    vy: launch.vy,
+    radius: ball.radius,
+  };
+};
+
 const createPlayState = (): PlayState => {
-  const { logicalWidth, paddle, ball, launch } = BRICK_BREAKER_CONFIG;
+  const { logicalWidth } = BRICK_BREAKER_CONFIG;
   // The press that entered play launches the ball: the new scene begins with
   // the ball already in motion (Task 3 transitions carry no payloads, so the
   // launch intent is encoded in the scene's initial state).
   return {
     paddleX: logicalWidth / 2,
-    ball: {
-      x: logicalWidth / 2,
-      y: paddle.y - ball.radius,
-      vx: launch.vx,
-      vy: launch.vy,
-      radius: ball.radius,
-    },
+    ball: createLaunchBall(logicalWidth / 2),
     bricks: INITIAL_LIVENESS,
     score: 0,
   };
 };
 
 const readyScene = defineScene({
-  actions: ['primary'],
+  actions: ['start', 'primary'],
   transitions: ['play'],
   create: (): ReadyState => ({ prompt: 'Tap to start' }),
   update: ({ state, input, transition }) => {
-    if (input.pointer('primary').pressed) {
+    if (input.button('start').pressed || input.pointer('primary').pressed) {
       transition.setScene('play');
     }
     return state;
@@ -301,63 +313,97 @@ const readyScene = defineScene({
   snapshot: ({ state }): ReadySnapshot => ({ prompt: state.prompt }),
 });
 
-const playScene = defineScene({
-  actions: ['primary'],
-  transitions: ['game-over'],
-  create: createPlayState,
-  update: ({ state, input, transition, deltaSeconds }) => {
-    const pointer = input.pointer('primary');
-    const { logicalWidth, logicalHeight, paddle } = BRICK_BREAKER_CONFIG;
+function createPlayScene(loopForPerformanceLab: boolean) {
+  return defineScene({
+    actions: ['start', 'primary'],
+    transitions: ['game-over'],
+    create: createPlayState,
+    update: ({ state, input, transition, deltaSeconds }) => {
+      const pointer = input.pointer('primary');
+      const { logicalWidth, logicalHeight, paddle } = BRICK_BREAKER_CONFIG;
 
-    // Won: the result flow stays inside this scene. A press restarts it.
-    if (state.over) {
-      if (pointer.pressed) {
-        transition.restartScene();
+      // Won: the result flow stays inside this scene. A press restarts it.
+      if (state.over) {
+        if (input.button('start').pressed || pointer.pressed) {
+          transition.restartScene();
+        }
+        return state;
       }
-      return state;
-    }
 
-    let paddleX = state.paddleX;
-    if (pointer.position !== undefined) {
-      paddleX = paddleFromPointer(pointer.position.x);
-    }
+      let paddleX = state.paddleX;
+      if (pointer.position !== undefined) {
+        paddleX = paddleFromPointer(pointer.position.x);
+      }
 
-    let ball = state.ball;
-    ball = { ...ball, x: ball.x + ball.vx * deltaSeconds, y: ball.y + ball.vy * deltaSeconds };
-    ball = bounceBallOffWalls(ball, logicalWidth, logicalHeight);
-    ball = bounceBallOffPaddle(ball, paddleX, paddle.y, paddle.width, paddle.height);
-    const collision = collideBallWithBricks(ball, state.bricks);
-    ball = collision.ball;
-    const score = state.score + collision.removed;
+      let ball = state.ball;
+      ball = {
+        ...ball,
+        x: ball.x + ball.vx * deltaSeconds,
+        y: ball.y + ball.vy * deltaSeconds,
+      };
+      ball = bounceBallOffWalls(ball, logicalWidth, logicalHeight);
+      ball = bounceBallOffPaddle(ball, paddleX, paddle.y, paddle.width, paddle.height);
+      const collision = collideBallWithBricks(ball, state.bricks);
+      ball = collision.ball;
+      const score = state.score + collision.removed;
 
-    if (ballLost(ball, logicalHeight)) {
-      // Loss is result-free here: the game-over scene is a generic screen
-      // because Task 3 transitions carry no payloads.
-      transition.setScene('game-over');
-      return { ...state, paddleX, ball, score };
-    }
-    if (score >= TOTAL_BRICKS) {
-      return { ...state, paddleX, ball, score, bricks: collision.bricks, over: { won: true, score } };
-    }
-    return { ...state, paddleX, ball, score, bricks: collision.bricks };
-  },
-  snapshot: ({ state }): PlaySnapshot => ({
-    paddle: { x: state.paddleX },
-    ball: { x: state.ball.x, y: state.ball.y },
-    bricks: state.bricks,
-    score: state.score,
-    prompt: state.over ? 'You win! Tap to play again' : 'Drag to move the paddle',
-    ...(state.over ? { over: state.over } : {}),
-  }),
-});
+      if (ballLost(ball, logicalHeight)) {
+        if (loopForPerformanceLab) {
+          return {
+            ...state,
+            paddleX,
+            ball: createLaunchBall(paddleX),
+            score,
+            bricks: collision.bricks,
+          };
+        }
+        // Loss is result-free here: the game-over scene is a generic screen
+        // because Task 3 transitions carry no payloads.
+        transition.setScene('game-over');
+        return { ...state, paddleX, ball, score };
+      }
+      if (score >= TOTAL_BRICKS) {
+        if (loopForPerformanceLab) {
+          return {
+            ...state,
+            paddleX,
+            ball: createLaunchBall(paddleX),
+            bricks: INITIAL_LIVENESS,
+            score: 0,
+          };
+        }
+        return {
+          ...state,
+          paddleX,
+          ball,
+          score,
+          bricks: collision.bricks,
+          over: { won: true, score },
+        };
+      }
+      return { ...state, paddleX, ball, score, bricks: collision.bricks };
+    },
+    snapshot: ({ state }): PlaySnapshot => ({
+      paddle: { x: state.paddleX },
+      ball: { x: state.ball.x, y: state.ball.y },
+      bricks: state.bricks,
+      score: state.score,
+      prompt: state.over ? 'You win! Tap to play again' : 'Drag to move the paddle',
+      ...(state.over ? { over: state.over } : {}),
+    }),
+  });
+}
+
+const playScene = createPlayScene(false);
+const performancePlayScene = createPlayScene(true);
 
 const gameOverScene = defineScene({
-  actions: ['primary'],
-  transitions: ['ready'],
+  actions: ['start', 'primary'],
+  transitions: ['play'],
   create: (): GameOverState => ({ message: 'Game over — tap to play again' }),
   update: ({ state, input, transition }) => {
-    if (input.pointer('primary').pressed) {
-      transition.setScene('ready');
+    if (input.button('start').pressed || input.pointer('primary').pressed) {
+      transition.setScene('play');
     }
     return state;
   },
@@ -375,6 +421,10 @@ export const brickBreakerDefinition = defineGame({
   },
   assets: [],
   input: {
+    start: {
+      type: 'button',
+      description: 'Start or restart the game from the screen body',
+    },
     primary: {
       type: 'pointer',
       description: 'Move the paddle and start or restart the game',
@@ -386,6 +436,26 @@ export const brickBreakerDefinition = defineGame({
     'game-over': gameOverScene,
   },
   initialScene: 'ready',
+});
+
+/**
+ * Brick Breaker variant used only by the Performance Lab.
+ *
+ * It starts directly in play so the benchmark's first native touch is not
+ * invalidated by the normal ready-to-play transition. Losses and wins relaunch
+ * in place, keeping the renderer, simulation, and input pipeline active for
+ * the full measurement window.
+ */
+export const brickBreakerPerformanceDefinition = defineGame({
+  viewport: brickBreakerDefinition.viewport,
+  assets: brickBreakerDefinition.assets,
+  input: brickBreakerDefinition.input,
+  scenes: {
+    ready: readyScene,
+    play: performancePlayScene,
+    'game-over': gameOverScene,
+  },
+  initialScene: 'play',
 });
 
 /**
