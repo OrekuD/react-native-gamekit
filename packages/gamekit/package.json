@@ -4,23 +4,30 @@
   "description": "A headless-first 2D game toolkit for React Native and Expo, built for mobile and tablet.",
   "license": "MIT",
   "main": "./lib/module/index.js",
+  "source": "./src/index.ts",
   "types": "./lib/typescript/src/index.d.ts",
   "exports": {
     ".": {
+      "react-native": "./src/index.ts",
+      "source": "./src/index.ts",
       "types": "./lib/typescript/src/index.d.ts",
       "default": "./lib/module/index.js"
     },
     "./react": {
+      "react-native": "./src/react.ts",
+      "source": "./src/react.ts",
       "types": "./lib/typescript/src/react.d.ts",
       "default": "./lib/module/react.js"
     },
     "./package.json": "./package.json",
     "./testing": {
+      "react-native": "./src/testing.ts",
+      "source": "./src/testing.ts",
       "types": "./lib/typescript/src/testing.d.ts",
       "default": "./lib/module/testing.js"
     }
   },
-  "react-native": "./lib/module/index.js",
+  "react-native": "./src/index.ts",
   "files": [
     "lib",
     "src",
