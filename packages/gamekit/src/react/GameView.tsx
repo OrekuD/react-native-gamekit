@@ -21,6 +21,7 @@ import type { ResolvedViewport2D } from '../viewport2d';
 import { advanceAlpha } from './alphaClock';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
+import type { GameViewInstrumentation } from './instrumentation';
 import { ViewportBinding } from './viewportBinding';
 
 /** Stable imperative values supplied to a Skia renderer component. */
@@ -42,6 +43,8 @@ export interface GameViewProps<TScenes extends SceneMap, TInput extends InputMap
   readonly game: GameSession<TScenes, TInput>;
   /** Stable Skia renderer component for the session's scene snapshots. */
   readonly renderer: ComponentType<GameRendererProps<TScenes>>;
+  /** Optional measurement callbacks for the Performance Lab (F1). */
+  readonly instrumentation?: GameViewInstrumentation;
   /** Static React HUD and controls mounted above the canvas. */
   readonly children?: ReactNode;
   /** Optional style for the mounted surface. */
@@ -82,6 +85,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   renderer: Renderer,
   children,
   style,
+  instrumentation,
 }: GameViewProps<TScenes, TInput>) {
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
@@ -103,6 +107,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
     epoch.value += 1;
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
+      instrumentation?.onPresentCommit?.(nextFrame.revision, Date.now());
     });
     const cleanupLifecycle = bindAppLifecycle(AppState, {
       getStatus: () => game.status,
@@ -124,7 +129,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
       cleanupBinding();
       binding.dispose();
     };
-  }, [binding, epoch, frame, game, running]);
+  }, [binding, epoch, frame, game, instrumentation, running]);
 
   // UI-owned alpha clock: advances only while the session is running,
   // resets on every new commit, clamps at 1 and holds (no extrapolation).

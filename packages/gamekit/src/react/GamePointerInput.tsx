@@ -6,6 +6,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 import type { InputMap, PointerInputAction, SceneMap } from '../definition/types';
 import type { GameSession } from '../core/session/types';
 import { GameViewportContext } from './GameView';
+import type { GamePointerInstrumentation } from './instrumentation';
 import { isBeginAllowed } from './pointerContainment';
 import { createPointerCoalescer, type CoalescedPointerEvent, type PointerCoalescer } from './pointerCoalescer';
 import { createPointerBinding, type PointerBindingEntry } from './pointerBinding';
@@ -21,6 +22,8 @@ export interface GamePointerInputProps<TScenes extends SceneMap, TInput extends 
   readonly game: GameSession<TScenes, TInput>;
   /** A declared pointer action on the game. */
   readonly action: PointerActionName<TInput>;
+  /** Optional measurement callbacks for the Performance Lab (F1). */
+  readonly instrumentation?: GamePointerInstrumentation;
 }
 
 interface BindingEntry<TScenes extends SceneMap, TInput extends InputMap, TName extends string>
@@ -50,6 +53,7 @@ interface BindingEntry<TScenes extends SceneMap, TInput extends InputMap, TName 
 export function GamePointerInput<TScenes extends SceneMap, TInput extends InputMap>({
   game,
   action,
+  instrumentation,
 }: GamePointerInputProps<TScenes, TInput>) {
   const viewportContext = useContext(GameViewportContext);
 
@@ -119,6 +123,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       if (touch === undefined) {
         return;
       }
+      instrumentation?.onRawTouch?.('down', touch.id, Date.now());
       // UI-side containment mirror: an invalid layout or `fit` letterbox
       // begin fails the gesture before it activates. JS re-validates.
       if (!isBeginAllowed(viewportShared.value, touch.x, touch.y)) {
@@ -127,6 +132,11 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       }
       const batch = coalescer.down(touch.id, touch.x, touch.y, Date.now());
       for (const forwarded of batch) {
+        instrumentation?.onForwarded?.(
+          forwarded.kind,
+          'pointerId' in forwarded ? forwarded.pointerId : -1,
+          Date.now(),
+        );
         scheduleOnRN(forwardEventOnJS, forwarded);
       }
       GestureStateManager.activate(event.handlerTag);
@@ -134,8 +144,14 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     onTouchesMove: (event) => {
       'worklet';
       for (const touch of event.changedTouches) {
+        instrumentation?.onRawTouch?.('move', touch.id, Date.now());
         const batch = coalescer.move(touch.id, touch.x, touch.y, Date.now());
         for (const forwarded of batch) {
+          instrumentation?.onForwarded?.(
+            forwarded.kind,
+            'pointerId' in forwarded ? forwarded.pointerId : -1,
+            Date.now(),
+          );
           scheduleOnRN(forwardEventOnJS, forwarded);
         }
       }
@@ -143,16 +159,24 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     onTouchesUp: (event) => {
       'worklet';
       for (const touch of event.changedTouches) {
+        instrumentation?.onRawTouch?.('up', touch.id, Date.now());
         const batch = coalescer.up(touch.id, touch.x, touch.y, Date.now());
         for (const forwarded of batch) {
+          instrumentation?.onForwarded?.(
+            forwarded.kind,
+            'pointerId' in forwarded ? forwarded.pointerId : -1,
+            Date.now(),
+          );
           scheduleOnRN(forwardEventOnJS, forwarded);
         }
       }
     },
     onTouchesCancel: () => {
       'worklet';
+      instrumentation?.onRawTouch?.('cancel', -1, Date.now());
       const batch = coalescer.cancel(Date.now());
       for (const forwarded of batch) {
+        instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
         scheduleOnRN(forwardEventOnJS, forwarded);
       }
     },

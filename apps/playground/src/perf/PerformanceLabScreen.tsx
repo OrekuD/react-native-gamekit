@@ -1,54 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { runOnJS, useFrameCallback, useSharedValue } from 'react-native-reanimated';
+import { useEffect, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 
 import type { PlaygroundGameScreenProps } from '../shell/PlaygroundGameScreenProps';
 import { usePlaygroundStore } from '../state/playgroundStore';
-import { brickBreakerDefinition } from '../games/brickBreakerGame';
-import { bootstrapDefinition } from '../games/bootstrapGame';
-import { CounterSeries, PerfSummary, type SeriesSnapshot } from './summary';
-import {
-  runOpenCloseCycles,
-  runScenario,
-  type RunningScenario,
-  type ScenarioResult,
-} from './scenarios';
+import LabHost from './LabHost';
+import { LabRunController, issueRunId, type PerfScenarioId, type ScenarioResult } from './labRun';
+import { runOpenCloseCycles } from './scenarios';
+import { PerfSummary, type SeriesSnapshot } from './summary';
 
 const SCENARIO_DURATION_MS = 5_000;
-const UI_TRANSFER_FRAMES = 60;
+/** The mounted game pipeline occupies the top 55% of the screen. */
+const GAME_AREA_RATIO = 0.55;
 
-interface UiFrameSummary {
-  readonly count: number;
-  readonly mean: number;
-  readonly p50: number;
-  readonly p95: number;
-  readonly p99: number;
-}
-
-function summarize(samples: readonly number[]): UiFrameSummary {
-  const series = new CounterSeries();
-  for (const sample of samples) {
-    series.record(sample);
-  }
-  const snapshot = series.snapshot();
-  return {
-    count: snapshot.count,
-    mean: snapshot.mean,
-    p50: snapshot.p50,
-    p95: snapshot.p95,
-    p99: snapshot.p99,
-  };
-}
-
-/** Module-level results so the lab survives its own open/close remounts. */
+/** Module-level controller and results so the lab survives remounts. */
+const controller = new LabRunController({ onComplete: (result) => onCompleteRef.current?.(result) });
 const moduleResults: ScenarioResult[] = [];
-let lastUiSummary: UiFrameSummary | undefined;
+
+/** The screen registers its result handler per mount. */
+const onCompleteRef: { current: ((result: ScenarioResult) => void) | undefined } = {
+  current: undefined,
+};
 
 function formatSeries(snapshot: SeriesSnapshot): string {
   return `${snapshot.count} · p50 ${snapshot.p50.toFixed(2)} · p95 ${snapshot.p95.toFixed(2)} · p99 ${snapshot.p99.toFixed(2)} ms`;
 }
 
-function formatCounters(summary: PerfSummary): string {
+function formatResult(result: ScenarioResult): string {
+  const summary = result.summary;
   const lines = [
     `display ${summary.getCounter('display-callbacks')}`,
     `zero-step ${summary.getCounter('zero-step-callbacks')}`,
@@ -60,107 +38,106 @@ function formatCounters(summary: PerfSummary): string {
   for (const [name, snapshot] of summary.seriesSnapshot()) {
     lines.push(`${name} ${formatSeries(snapshot)}`);
   }
+  if (result.ui !== undefined && result.ui.count > 0) {
+    lines.push(
+      `ui frames ${result.ui.count} · mean ${result.ui.mean.toFixed(2)} · p50 ${result.ui.p50.toFixed(2)} · p95 ${result.ui.p95.toFixed(2)} · p99 ${result.ui.p99.toFixed(2)} ms`,
+    );
+  }
+  if (result.inputStages !== undefined) {
+    const stages = result.inputStages;
+    lines.push(
+      `input raw ${stages.raw} · forwarded ${stages.forwarded} · sampled ${stages.sampled} · committed ${stages.committed} · presented ${stages.presented}`,
+    );
+  }
+  if (result.inputToPresentMs !== undefined) {
+    lines.push(`input→present ${formatSeries(result.inputToPresentMs)}`);
+  }
   return lines.join('\n');
 }
 
 /**
- * Deterministic performance diagnostics harness.
+ * Performance Lab — F1: scenarios run against the **mounted** game pipeline.
  *
- * Scenarios run instrumented sessions with the internal diagnostics sink;
- * UI frame deltas are aggregated on the UI runtime and transferred to React
- * at most once per second. The overlay can be hidden for Instruments captures.
+ * The host surface (top of the screen) mounts the same GameView, Skia
+ * renderer, and pointer surface the catalog game uses; engine scenarios
+ * script deterministic input into the session input buffer, the native-drag
+ * scenario measures real RNGH touches, and UI frame deltas aggregate in
+ * constant space on the UI runtime with at most one transfer per second.
+ * The overlay can be hidden for Instruments/Maestro captures.
  */
 export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenProps) {
+  const { height } = useWindowDimensions();
   const openGame = usePlaygroundStore((state) => state.openGame);
   const closeGame = usePlaygroundStore((state) => state.closeGame);
   const [results, setResults] = useState<readonly ScenarioResult[]>(() => [...moduleResults]);
-  const [uiSummary, setUiSummary] = useState<UiFrameSummary | undefined>(lastUiSummary);
-  const [running, setRunning] = useState<string | null>(null);
+  const [activeRun, setActiveRun] = useState<{ runId: number; scenario: PerfScenarioId } | null>(null);
   const [overlayHidden, setOverlayHidden] = useState(false);
   const toggleOverlay = () => setOverlayHidden((hidden) => !hidden);
-  const runningRef = useRef<RunningScenario | null>(null);
 
-  const commitResult = useCallback((result: ScenarioResult) => {
-    moduleResults.unshift(result);
-    moduleResults.length = Math.min(moduleResults.length, 20);
-    setResults([...moduleResults]);
-    setRunning(null);
+  useEffect(() => {
+    onCompleteRef.current = (result: ScenarioResult) => {
+      moduleResults.unshift(result);
+      moduleResults.length = Math.min(moduleResults.length, 20);
+      setResults([...moduleResults]);
+      setActiveRun(null);
+    };
+    return () => {
+      onCompleteRef.current = undefined;
+    };
   }, []);
 
-  const transferUi = useCallback((samples: readonly number[]) => {
-    const summary = summarize(samples);
-    lastUiSummary = summary;
-    setUiSummary(summary);
-  }, []);
-
-  const uiDeltas = useSharedValue<number[]>([]);
-  const framesSinceTransfer = useSharedValue(0);
-
-  useFrameCallback((frameInfo) => {
-    const delta = frameInfo.timeSincePreviousFrame ?? 0;
-    if (frameInfo.timeSincePreviousFrame === undefined) {
-      return;
-    }
-    uiDeltas.value = [...uiDeltas.value, delta];
-    framesSinceTransfer.value += 1;
-    if (framesSinceTransfer.value >= UI_TRANSFER_FRAMES) {
-      framesSinceTransfer.value = 0;
-      const samples = uiDeltas.value;
-      uiDeltas.value = [];
-      runOnJS(transferUi)(samples);
-    }
-  });
-
-  useEffect(
-    () => () => {
-      runningRef.current?.stop();
-    },
-    [],
-  );
-
-  const startScenario = (scenario: 'idle' | 'drag' | 'stall', game: 'brick-breaker' | 'bootstrap') => {
-    runningRef.current?.stop();
-    setRunning(`${scenario}:${game}`);
-    const definition = game === 'brick-breaker' ? brickBreakerDefinition : bootstrapDefinition;
-    runningRef.current = runScenario(scenario, {
-      durationMs: SCENARIO_DURATION_MS,
-      game: definition,
-      onComplete: commitResult,
-    });
+  const startRun = (scenario: PerfScenarioId) => {
+    setActiveRun({ runId: issueRunId(), scenario });
   };
 
   const runCycles = async () => {
-    setRunning('open-close');
     const result = await runOpenCloseCycles(6, openGame, closeGame);
-    setResults([
-      {
-        scenario: 'idle',
-        game: `open-close ${result.cycles} cycles`,
-        durationMs: result.durationMs,
-        summary: (() => {
-          const summary = new PerfSummary();
-          summary.count('cycles', result.cycles);
-          summary.record('cycle-ms', result.durationMs / result.cycles);
-          return summary;
-        })(),
-      },
-      ...results,
-    ]);
-    setRunning(null);
+    moduleResults.unshift({
+      runId: issueRunId(),
+      scenario: 'idle-active',
+      game: `open-close ${result.cycles} cycles`,
+      durationMs: result.durationMs,
+      summary: (() => {
+        const summary = new PerfSummary();
+        summary.count('cycles', result.cycles);
+        summary.record('cycle-ms', result.durationMs / result.cycles);
+        return summary;
+      })(),
+      ui: undefined,
+      inputStages: undefined,
+      inputToPresentMs: undefined,
+    });
+    setResults([...moduleResults]);
   };
 
   const reset = () => {
-    runningRef.current?.stop();
-    runningRef.current = null;
+    setActiveRun(null);
     moduleResults.length = 0;
-    lastUiSummary = undefined;
     setResults([]);
-    setUiSummary(undefined);
-    setRunning(null);
   };
+
+  const gameAreaHeight = Math.round(height * GAME_AREA_RATIO);
 
   return (
     <View style={styles.screen}>
+      <View style={[styles.gameArea, { height: gameAreaHeight }]}>
+        {activeRun === null ? (
+          <View style={styles.gamePlaceholder}>
+            <Text style={styles.gamePlaceholderText}>
+              Game pipeline idle — start a scenario to mount GameView + renderer + pointer surface
+            </Text>
+          </View>
+        ) : (
+          <LabHost
+            key={activeRun.runId}
+            runId={activeRun.runId}
+            scenario={activeRun.scenario}
+            durationMs={SCENARIO_DURATION_MS}
+            controller={controller}
+          />
+        )}
+      </View>
+
       <View style={styles.header}>
         <Pressable
           accessibilityLabel="Back to playground"
@@ -173,7 +150,11 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
         </Pressable>
         <Text style={styles.title}>Performance Lab</Text>
         <Text style={styles.meta}>
-          {overlayHidden ? 'overlay hidden' : `ui frames: ${uiSummary ? `${uiSummary.p95.toFixed(1)}ms p95 · ${uiSummary.p99.toFixed(1)}ms p99` : '…'}`}
+          {activeRun !== null
+            ? `run ${activeRun.runId} · ${activeRun.scenario} (${SCENARIO_DURATION_MS} ms)…`
+            : overlayHidden
+              ? 'overlay hidden'
+              : 'scenarios run against the mounted game pipeline'}
         </Text>
       </View>
 
@@ -181,17 +162,17 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
         {!overlayHidden ? (
           <>
             <View style={styles.buttons}>
-              <Pressable style={styles.button} onPress={() => startScenario('idle', 'brick-breaker')}>
-                <Text style={styles.buttonLabel}>Idle · Brick Breaker</Text>
+              <Pressable style={styles.button} onPress={() => startRun('idle-active')}>
+                <Text style={styles.buttonLabel}>Idle · active play</Text>
               </Pressable>
-              <Pressable style={styles.button} onPress={() => startScenario('idle', 'bootstrap')}>
-                <Text style={styles.buttonLabel}>Idle · Bootstrap</Text>
+              <Pressable style={styles.button} onPress={() => startRun('engine-drag')}>
+                <Text style={styles.buttonLabel}>Engine drag</Text>
               </Pressable>
-              <Pressable style={styles.button} onPress={() => startScenario('drag', 'brick-breaker')}>
-                <Text style={styles.buttonLabel}>Scripted drag</Text>
-              </Pressable>
-              <Pressable style={styles.button} onPress={() => startScenario('stall', 'brick-breaker')}>
+              <Pressable style={styles.button} onPress={() => startRun('stall')}>
                 <Text style={styles.buttonLabel}>JS stall probe</Text>
+              </Pressable>
+              <Pressable style={styles.button} onPress={() => startRun('native-drag')}>
+                <Text style={styles.buttonLabel}>Native drag</Text>
               </Pressable>
               <Pressable style={styles.button} onPress={runCycles}>
                 <Text style={styles.buttonLabel}>Open/close ×6</Text>
@@ -204,32 +185,26 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
               </Pressable>
             </View>
 
-            {running !== null ? (
-              <Text style={styles.running}>running: {running} ({SCENARIO_DURATION_MS} ms)…</Text>
-            ) : null}
-
-            {uiSummary !== undefined ? (
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>UI presentation (aggregated on UI, 1 s transfer)</Text>
-                <Text style={styles.mono}>
-                  frames {uiSummary.count} · mean {uiSummary.mean.toFixed(2)} · p50{' '}
-                  {uiSummary.p50.toFixed(2)} · p95 {uiSummary.p95.toFixed(2)} · p99{' '}
-                  {uiSummary.p99.toFixed(2)} ms
-                </Text>
-              </View>
+            {activeRun !== null ? (
+              <Text style={styles.running}>
+                running: {activeRun.scenario} #{activeRun.runId} — the game pipeline above is live.
+                {'\n'}Native drag: touch and drag inside the game area.
+              </Text>
             ) : null}
 
             {results.map((result, index) => (
-              <View key={`${result.scenario}-${result.game}-${index}`} style={styles.card}>
+              <View key={`${result.runId}-${result.scenario}-${index}`} style={styles.card}>
                 <Text style={styles.cardTitle}>
-                  {result.scenario} · {result.game} · {result.durationMs} ms
+                  #{result.runId} {result.scenario} · {result.game} · {result.durationMs} ms
                 </Text>
-                <Text style={styles.mono}>{formatCounters(result.summary)}</Text>
+                <Text style={styles.mono}>{formatResult(result)}</Text>
               </View>
             ))}
           </>
         ) : (
-          <Text style={styles.meta}>Overlay hidden for external captures. Tap Reset to restore.</Text>
+          <Text style={styles.meta}>
+            Overlay hidden for external captures. Tap Reset to restore controls.
+          </Text>
         )}
       </ScrollView>
     </View>
@@ -241,9 +216,24 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#080b12',
   },
+  gameArea: {
+    backgroundColor: '#0f1420',
+    overflow: 'hidden',
+  },
+  gamePlaceholder: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  gamePlaceholderText: {
+    color: '#52525b',
+    fontSize: 12,
+    textAlign: 'center',
+  },
   header: {
     paddingHorizontal: 24,
-    paddingTop: 24,
+    paddingTop: 16,
   },
   backButton: {
     alignSelf: 'flex-start',
