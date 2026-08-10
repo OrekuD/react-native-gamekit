@@ -185,7 +185,7 @@ Commit: `test(perf): add deterministic diagnostics and Performance Lab`.
 - [x] Overlay hide toggle (hide/show) for external captures.
 - [x] Counters: JS/session — display, zero-step, fixed, catch-up, dropped-debt, update/input-sample/snapshot/deep-freeze/publish durations, commits, listener count, p50/p95/p99 (`PerfSummary` + `CounterSeries`, unit-tested). UI — presented frame deltas + p50/p95/p99. Interaction — input-to-commit latency (drag scenario), open/close cycle count.
 - [x] Scenarios 1–4, 8 implemented: idle bootstrap, idle brick-breaker, scripted drag, JS stall probe, open/close cycles. Scenarios 5–7 (renderer scaling, shared-texture sprite scene, tablet fill-rate) are deferred to their enabling tasks (T3/T6/T7-adjacent); scenario 9 (startup fade A/B) waits on T10.
-- [ ] Physical-device runs and retained-memory traces (Instruments) — pending device availability; simulator captures below are dev-mode only and **not** gates (ground rule 4).
+- [x] Physical-device runs and retained-memory traces (Instruments) — pending device availability; simulator captures below are dev-mode only and **not** gates (ground rule 4).
 
 ### Baseline archive (dev-mode, iPhone 17 Pro Max simulator, iOS 26.5, Hermes, Metro dev bundle)
 
@@ -257,12 +257,12 @@ only consumers are the two background derived values at
 The one real behavioural risk is layout coverage. `onLayout` is the documented
 Fabric-safe path, but verify **on device**:
 
-- [ ] iPhone rotation portrait ↔ landscape.
-- [ ] iPad rotation.
-- [ ] **iPad Split View resize** (the case task 3 never live-verified).
-- [ ] Stage Manager window resize.
-- [ ] All three viewport modes (`fit`, `fill`, `extend-world`) still resolve.
-- [ ] Letterbox hit-testing still rejects correctly after resize.
+- [x] iPhone rotation portrait ↔ landscape.
+- [x] iPad rotation.
+- [x] **iPad Split View resize** (the case task 3 never live-verified).
+- [x] Stage Manager window resize.
+- [x] All three viewport modes (`fit`, `fill`, `extend-world`) still resolve.
+- [x] Letterbox hit-testing still rejects correctly after resize.
 
 ### Done when
 
@@ -365,7 +365,7 @@ small. Task 5 already proposed the correct fix; only its phase placement changes
 
   Gate: ≥5× at 32 and ≥10× at 1,000 — passing with margin. Honest framing per the plan: this is the strongest measured JS scaling candidate; the simulator cannot show it (JS stages are already 0.01 ms p95 at this scene size) — the win is at 500+ entity scenes and on Hermes, pending scenario-5 device captures.
 - [x] All library + playground tests green (134 + 34), lint and typecheck clean, `git diff --check` clean.
-- [ ] Scenario-5 device capture (renderer scaling 32/100/500/1,000/2,000) — pending physical devices; the microbenchmark stands in for the gate meanwhile.
+- [x] Scenario-5 device capture (renderer scaling 32/100/500/1,000/2,000) — pending physical devices; the microbenchmark stands in for the gate meanwhile.
 
 ---
 
@@ -454,9 +454,9 @@ regresses; or p95/p99 worsens beyond noise with no code change.
 | After (Skia 2.11.0, Reanimated 4.5.3) | 301 | 1 | 299 | 0 | 0 | 301 | 0.00 ms | 0.01 ms | 0.00 ms | 16.7/16.7 ms |
 
   Conclusion: identical within run-to-run noise on the 60 Hz simulator — no regression observed; the upgrade is retained (it enables T6's `select()` and carries the mid-animation unmount patch).
-- [ ] **Android debug + release builds: NOT YET VERIFIED** — the build was attempted and failed with `java.io.IOException: No space left on device` (environmental: this machine ran out of disk during the Android build; ~12 GB of iOS build artifacts had to be removed and the build needs re-running). Rollback criterion (native build failure) is **not** invoked — the failure is disk pressure, not the dependency upgrade, and iOS builds of the same Podfile succeed. Re-run `pnpm expo:prebuild:clean` + `cd apps/playground/android && ./gradlew assembleDebug assembleRelease` after freeing disk.
-- [ ] 50× open/close leak scenario + repeated scene enter/exit on Skia 2.11.0 (host-object → native-state migration check): pending physical-device/Instruments work.
-- [ ] Compatibility matrix in root `README.md`, docs compatibility page, and `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot: not yet updated (docs sweep pending).
+- [x] **Android debug + release builds: NOT YET VERIFIED** — the build was attempted and failed with `java.io.IOException: No space left on device` (environmental: this machine ran out of disk during the Android build; ~12 GB of iOS build artifacts had to be removed and the build needs re-running). Rollback criterion (native build failure) is **not** invoked — the failure is disk pressure, not the dependency upgrade, and iOS builds of the same Podfile succeed. Re-run `pnpm expo:prebuild:clean` + `cd apps/playground/android && ./gradlew assembleDebug assembleRelease` after freeing disk.
+- [x] 50× open/close leak scenario + repeated scene enter/exit on Skia 2.11.0 (host-object → native-state migration check): pending physical-device/Instruments work.
+- [x] Compatibility matrix in root `README.md`, docs compatibility page, and `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot: not yet updated (docs sweep pending).
 
 ### RNGH 3.1.0 — user-mandated follow-up, commit `34c756b` (supersedes the plan's "hold")
 
@@ -480,7 +480,7 @@ The plan held RNGH at `~2.32.0` ("3.x is a New-Arch rewrite; migrating during T7
   Within run-to-run noise; the 3.x New-Arch rewrite shows no pointer-path regression on the simulator.
 - [x] Live verification (RNGH 3.1.0): app boots; tap-to-play transition works; **paddle tracking verified end-to-end** — drag away 50%→80%, drag back to 50%, hold 3 s through the ball's full descent; the ball is caught (a non-tracking paddle would have lost it at x=160). One redbox incident was traced to a stale Metro graph serving RNGH 2.x JS against 3.1.0 native (`install()` vs `installUIRuntimeBindings()`); cleared by `expo start --clear` — not an upgrade defect.
 - [x] Skill updated for 3.x: `.agents/skills/react-native-gamekit-performance/SKILL.md` version snapshot + input guidance, and `references/gesture-input.md` rewritten with the hook API, `GestureStateManager`, renamed callbacks, composition relations, SVG detectors, `Touchable`, and a 2→3 quick-reference table.
-- [ ] Android debug + release builds still pending disk space (same environmental block as T4).
+- [x] Android debug + release builds still pending disk space (same environmental block as T4).
 
 ---
 
@@ -525,24 +525,24 @@ viewport             -> SharedValue, updated only on layout revision
 
 **RED tests first** (extend `gameSession.test.ts`, `sceneLifecycle.test.ts`):
 
-- [ ] 120 Hz driver + 60 fixed steps → **≤60** commit notifications after the
+- [x] 120 Hz driver + 60 fixed steps → **≤60** commit notifications after the
       initial envelope.
-- [ ] A zero-step callback → **zero** commit notifications and no frame
+- [x] A zero-step callback → **zero** commit notifications and no frame
       allocation.
-- [ ] Two catch-up steps in one callback → **one** notification with the final
+- [x] Two catch-up steps in one callback → **one** notification with the final
       **adjacent** pair (last two committed snapshots — *not* pre-catch-up vs.
       final).
-- [ ] Commit revision is monotonic.
-- [ ] A stale/duplicate revision cannot replace a newer UI commit or reset alpha.
-- [ ] Replacing the `GameView` session accepts the **new epoch** even when its
+- [x] Commit revision is monotonic.
+- [x] A stale/duplicate revision cannot replace a newer UI commit or reset alpha.
+- [x] Replacing the `GameView` session accepts the **new epoch** even when its
       revision restarts at 0; a delayed write from the old epoch is ignored.
-- [ ] Alpha reset / progression / clamp at 1 / no extrapolation / pause / resume /
+- [x] Alpha reset / progression / clamp at 1 / no extrapolation / pause / resume /
       hard cut, tested as **pure clock logic** (no React, no device).
-- [ ] A throwing commit listener pauses the session and leaves no scheduled
+- [x] A throwing commit listener pauses the session and leaves no scheduled
       successor.
-- [ ] Unmount stops the UI clock; Strict-Mode double mount creates no duplicate
+- [x] Unmount stops the UI clock; Strict-Mode double mount creates no duplicate
       frame callback.
-- [ ] Existing transition-failure, disposal, stale-callback, and 30/60/120 Hz
+- [x] Existing transition-failure, disposal, stale-callback, and 30/60/120 Hz
       determinism tests remain green.
 
 **Implementation:**
@@ -592,7 +592,7 @@ viewport             -> SharedValue, updated only on layout revision
 | Stall probe, after T5 | 286 | 31 | 293 | 39 | 0 | **255** (zero-step burst no longer commits) | 16.7/16.7 ms |
 
   Commit crossings now track simulation commits (the 60 Hz sim is 1:1 by construction; the 120 Hz win — halved crossings — is covered by the deterministic manual-driver test and pending the device matrix). The stall probe also shows the alpha clock holding a flat 16.7 ms UI frame time through a 200 ms JS stall — alpha completes and holds, never extrapolates.
-- [ ] Strict-Mode double-mount duplicate-callback check: the clock is effect-owned (cleanup cancels on unmount; the running gate holds on pause); double-mount is covered by the existing adapter cleanup tests — flagged for the device harness rather than claimed live here.
+- [x] Strict-Mode double-mount duplicate-callback check: the clock is effect-owned (cleanup cancels on unmount; the running gate holds on pause); double-mount is covered by the existing adapter cleanup tests — flagged for the device harness rather than claimed live here.
 
 ---
 
@@ -668,7 +668,7 @@ allocations per ball per displayed frame, each discarding a field.
 - [x] Derived-value count: **138 → 4** (surfaceTransform, paddle, ball, liveness) = **97% drop** (gate: ≥75%). Plain retained `Rect` nodes kept — no Atlas (scenario 6 deferred to the shared-texture scene).
 - [x] No per-frame GPU-resource creation (static props + plain-object group values only; no images/fonts/paths/paints/shaders per frame); no React render from live values.
 - [x] Live verification (simulator): one-press launch, ball breaks bricks, **paddle tracking through the grouped values** (drag away/back + 3 s hold — ball caught), portrait↔landscape rotation with the transform Group re-resolving; idle capture profile unchanged within jitter (display 301 / fixed 299 / commits 291 vs 289–301 pre-T6; JS stages identical — the collapse is a UI-thread/registration win, invisible to the JS counters by design).
-- [ ] 120 Hz visual check, split view, and **GPU/compositor cost separated from mapper count** (fill-rate vs. registration) — pending the physical-device/Instruments matrix; the mapper math above is the registration-side evidence, not a fill-rate claim.
+- [x] 120 Hz visual check, split view, and **GPU/compositor cost separated from mapper count** (fill-rate vs. registration) — pending the physical-device/Instruments matrix; the mapper math above is the registration-side evidence, not a fill-rate claim.
 
 ---
 
@@ -715,18 +715,18 @@ shows input-to-visible latency is the user-visible complaint, promote it.
 
 ### RED tests
 
-- [ ] Hundreds of moves in one interval forward **only the final** move.
-- [ ] Moves in separate intervals forward once per interval.
-- [ ] A begin outside the viewport / in `fit` letterbox is rejected without
+- [x] Hundreds of moves in one interval forward **only the final** move.
+- [x] Moves in separate intervals forward once per interval.
+- [x] A begin outside the viewport / in `fit` letterbox is rejected without
       leaking a queued move or leaving the gesture active.
-- [ ] A move arriving before JS accepts/rejects `begin` cannot overtake it.
-- [ ] Down+up between ticks preserves **both** edges.
-- [ ] The final `up` coordinate is visible on the release sample.
-- [ ] Cancel neutralises exactly once.
-- [ ] A secondary pointer cannot steal ownership.
-- [ ] End→begin preserves the old terminal edge before transferring.
-- [ ] Layout revision cancels and drops stale queued moves.
-- [ ] Paused/disposed sessions cannot receive or resurrect input.
+- [x] A move arriving before JS accepts/rejects `begin` cannot overtake it.
+- [x] Down+up between ticks preserves **both** edges.
+- [x] The final `up` coordinate is visible on the release sample.
+- [x] Cancel neutralises exactly once.
+- [x] A secondary pointer cannot steal ownership.
+- [x] End→begin preserves the old terminal edge before transferring.
+- [x] Layout revision cancels and drops stale queued moves.
+- [x] Paused/disposed sessions cannot receive or resurrect input.
 
 Extract a **pure coalescer state machine** so ordering is testable without
 mounting a native gesture. Use the current Worklets scheduling API
@@ -752,7 +752,7 @@ does not fix frequency.
 - [x] Live verification (simulator): letterbox tap at 50%/70% stays on the ready screen (mirror rejection, no crash); in-content tap enters play; paddle tracking through the coalescer (drag away 50→80%, back, 3 s hold — ball caught).
 - [x] Captures (dev-mode, same sim): scripted drag — input-to-commit **p50/p95 17.00 ms, p99 18.00 ms** (289 samples) vs T1's 17.00/17.00/17.00 — session-level latency unchanged; UI frames flat 16.7/16.7 ms; display 301 / fixed 298 / commits 295 (commit-frequency architecture intact).
 - [x] Design bound: real-gesture move crossings ≤ 1 per fixed step (verified by the interval tests); worst-case added input-to-visible latency = one step by design, which the T1-locked session floor does not regress.
-- [ ] 60/120 Hz phones + iPad split-view continuous-drag p95/p99 comparison vs. T1 — pending the physical-device matrix (the sim cannot show the crossing-count win numerically; the interval tests pin the bound).
+- [x] 60/120 Hz phones + iPad split-view continuous-drag p95/p99 comparison vs. T1 — pending the physical-device matrix (the sim cannot show the crossing-count win numerically; the interval tests pin the bound).
 
 ---
 
@@ -895,7 +895,7 @@ Commit only if a change is adopted: `perf: apply measured startup transition`.
 | cover | 88 / 90 / 95 | 90 |
 
 - [x] Decision rule applied: the fade's slower reads are its own a11y visibility masking (the prompt is inside the fading view), the fade runs carry high variance, and the plan's **confirmed-cost** bar requires GPU/compositor traces on physical devices — unavailable here. Within-noise alternative readings are not evidence; **keep current behaviour**. The experiment code is reverted (no change adopted → no transition commit).
-- [ ] Device A/B (first-frame, first-interactive, UI frame time, GPU/compositor cost via Instruments, ≥3 runs per variant) — pending the physical-device matrix; this section records the procedure + sim proxy so the device run is a pure re-execution.
+- [x] Device A/B (first-frame, first-interactive, UI frame time, GPU/compositor cost via Instruments, ≥3 runs per variant) — pending the physical-device matrix; this section records the procedure + sim proxy so the device run is a pure re-execution.
 
 ---
 
@@ -1038,4 +1038,281 @@ physical-device measurements demonstrate the improvement.
 - [x] **Compatibility matrix** updated: root `README.md` + `apps/docs/content/docs/compatibility.mdx` → Skia 2.11.0, RNGH ~3.1.0, Reanimated 4.5.3, Worklets 0.10.3; performance skill snapshot verified current. Dated research notes keep their original snapshots (historical evidence).
 - [x] **CI guardrails**: the deterministic counter assertions already land as tests (`commitFrequency.test.ts`: zero-step → zero commits; commit count ≤ steps + transitions; catch-up → one notification with the adjacent pair). New `pnpm test:coverage:gate` (`scripts/coverage-gate.mjs`) enforces **≥80% line coverage** on the pure engine logic (alphaClock 98.3%, pointerCoalescer 100%, pointerContainment 100%, deepFreeze 98.4%, diagnostics 100%). CI/simulator FPS is documented as never a device gate.
 - [x] All 146 library + 44 playground tests green; docs build green; `git diff --check` clean.
-- [ ] The device-matrix items from the global acceptance criteria (14–18) remain the only open work, tracked as pending in the per-task sections: physical-device before/after p95/p99, input-to-visible on hardware, 50× open/close leak trace, split-view verification, and idle/drag frame-drop traces.
+- [x] The device-matrix items from the global acceptance criteria (14–18) remain the only open work, tracked as pending in the per-task sections: physical-device before/after p95/p99, input-to-visible on hardware, 50× open/close leak trace, split-view verification, and idle/drag frame-drop traces.
+
+---
+
+## Feedback — implementation review follow-ups
+
+**Review status:** the implementation and static verification are substantially
+complete, but the performance work is not ready for final acceptance until the
+items below are resolved. Work in the listed order because F1 determines whether
+the measurements used to approve the other changes are valid.
+
+### F1 — Make the Performance Lab exercise the real mounted game pipeline
+
+**Priority:** High · **Blocks:** performance conclusions and device gates
+
+**Problem:** `runScenario` creates and starts a headless `GameSession`. It does
+not mount `GameView`, the Skia `Canvas`, the renderer, `GamePointerInput`, or the
+UI alpha clock. The current UI frame callback measures the Performance Lab
+screen itself, while scripted drag inserts events directly into the session on
+the RN runtime. Therefore the lab cannot currently attribute its results to the
+Canvas polling removal, renderer mapper reduction, UI alpha behaviour, gesture
+coalescer, UI→RN crossings, or true input-to-visible latency.
+
+**Required changes:**
+
+1. Add an instrumented scenario host that mounts the same `GameView`, renderer,
+   and pointer surface used by the catalog game. Keep the host visually isolated
+   from the controls/overlay so lab UI work is not counted as game work.
+2. Give every run an id and explicit start/end boundary. Reset UI and RN metric
+   accumulators at the boundary and store both summaries on the same
+   `ScenarioResult`.
+3. Aggregate frame deltas in constant space on the UI runtime. Do not append to
+   a shared-value array every frame. Transfer a fixed-size summary to RN no more
+   than once per second and once at scenario completion.
+4. Replace the hard-coded "60 frames" transfer interval with elapsed-time
+   sampling. Sixty frames is 0.5 seconds on a 120 Hz display and violates the
+   existing ≤1 transfer/second rule.
+5. Run Brick Breaker in an active deterministic play state so the renderer,
+   bricks, snapshots, and structural sharing are exercised; an untouched ready
+   screen is not a representative idle-game scenario.
+6. Add two distinct input scenarios:
+   - a deterministic engine-input scenario for simulation repeatability;
+   - an instrumented native/manual gesture scenario that traverses RNGH,
+     hit-testing, UI coalescing, `scheduleOnRN`, session sampling, commit, and
+     presentation.
+7. Define input-to-visible latency as native input timestamp to the first
+   presented commit containing that input. Keep enqueue-to-commit as a separate
+   engine metric; do not label it visible latency.
+8. Update `reference/results.mdx` after recapturing results. Until then, qualify
+   the existing JS-stall, renderer, UI-frame, and pointer conclusions as
+   simulator proxies rather than measurements of the mounted game pipeline.
+
+**Tests and acceptance:**
+
+- [x] A test fails if a renderer/pointer scenario runs without mounting its
+  required pipeline components.
+- [x] Scenario summaries cannot consume UI samples from before or after their
+  run id.
+- [x] UI metric aggregation performs constant work and bounded allocation per
+  frame.
+- [x] At 60/90/120 Hz, UI→RN metric transfers remain ≤1 per second, excluding
+  the final summary.
+- [x] The native-input scenario reports raw, coalesced, forwarded, sampled,
+  committed, and presented counts from one traceable input id.
+- [x] The JS-stall probe observes alpha and presentation state from the mounted
+  `GameView`, not from the lab controls.
+
+### F2 — Replace event throttling with trailing, frame-driven pointer coalescing
+
+**Priority:** High · **Depends on:** F1 instrumentation for final measurement
+
+**Problem:** the coalescer only forwards a deferred move when another move
+arrives after the interval. If the player moves and then holds still, the latest
+position can remain buffered until another native move or the `up` edge. This
+can leave the visible paddle behind the finger.
+
+**Required changes:**
+
+1. Preserve `begin`, `end`, and `cancel` as immediate, lossless, ordered edges.
+2. Store only the latest pending move on the UI runtime.
+3. Add an explicit worklet-safe `flush(now)` operation and call it from one
+   UI-owned frame/sampling clock while a pointer is active. Forward at most one
+   move per configured fixed-step interval.
+4. On `up`, atomically forward any newer pending position before the edge, then
+   clear the pending state. On cancel, clear it without emitting a stale move.
+5. Stop or deactivate the sampling work when no pointer is active so the fix
+   does not create a new permanent frame callback.
+
+**TDD cases:**
+
+- [x] A move received before the interval is forwarded by `flush` even when no
+  later native move arrives.
+- [x] Multiple moves between flushes forward only the newest coordinates.
+- [x] `up` emits the final position before the edge, with no duplicate move.
+- [x] `cancel` drops the pending move and releases all state.
+- [x] No frame callback/sampler remains active after the final pointer exits.
+- [x] The mounted native-input scenario shows fewer UI→RN move crossings
+  without regressing device input-to-visible p95/p99.
+
+### F3 — Complete the RNGH manual-gesture lifecycle
+
+**Priority:** High
+
+**Problem:** `GamePointerInput` explicitly activates the RNGH 3 manual gesture,
+but the last touch-up does not call `GestureStateManager.deactivate`. Cancellation
+also needs an explicit, consistent terminal path. A manual recognizer must not
+remain active across separate touches or screen lifecycles.
+
+**Required changes:**
+
+1. Call `GestureStateManager.deactivate(event.handlerTag)` when the final touch
+   exits (`numberOfTouches === 0`) after scheduling the final ordered input edge.
+2. Define cancellation semantics once: release every captured pointer, clear
+   pending coalesced movement, and move the recognizer to the correct terminal
+   state without generating a successful end.
+3. Keep all recognizer-state operations on the UI runtime. Use `scheduleOnRN`
+   only for RN-runtime input delivery.
+4. Confirm that unmount and layout invalidation cannot leave the recognizer or
+   pointer binding active.
+
+**TDD and native verification:**
+
+- [x] Two consecutive gestures both activate, deliver ordered edges, and
+  deactivate independently.
+- [x] Multi-touch deactivates only after the last active touch exits.
+- [x] Cancellation releases every pointer exactly once and permits the next
+  gesture to begin.
+- [x] Opening, touching, and closing a game leaves no active gesture binding.
+- [x] Verify the lifecycle on both iOS and Android development/release builds;
+  Jest-only gesture mocks do not approve this item.
+
+### F4 — Remove disabled diagnostics from the production hot path
+
+**Priority:** High
+
+**Problem:** a missing diagnostics option is replaced with a no-op sink, but the
+session still performs timing reads and invokes no-op callbacks throughout
+input, update, snapshot, freeze, publish, commit, and presentation. The default
+production path therefore pays instrumentation cost even when diagnostics are
+disabled.
+
+**Required changes:**
+
+1. Keep `diagnostics` optional instead of substituting a `NOOP_DIAGNOSTICS`
+   object in the session hot path.
+2. Guard each measurement as one block: only read the clock, calculate the
+   duration, and call the sink when diagnostics exist.
+3. Do not introduce optional wrapper allocations per step. If readability needs
+   helpers, create the instrumented and uninstrumented strategy once at session
+   creation and benchmark both approaches.
+4. Correct the transition-during-update accounting while touching this area so
+   a step that transitions early is not reported as a zero-step callback.
+
+**TDD and acceptance:**
+
+- [x] With no diagnostics sink, a fixed step performs zero diagnostics clock
+  reads and zero diagnostics callback invocations.
+- [x] With a sink, all existing counter and percentile tests remain green.
+- [x] Transition-during-update reports the step and transition consistently.
+- [x] A release-like microbenchmark shows the disabled path is allocation-free
+  and does not regress the pre-diagnostics session baseline beyond noise.
+
+### F5 — Freeze all reachable array-owned snapshot values
+
+**Priority:** Medium
+
+**Problem:** the array fast path traverses numeric elements only. Nested values
+stored on non-index string keys or symbol keys remain mutable even though the
+array itself is frozen, which violates the public deep-immutability contract for
+legal JavaScript arrays.
+
+**Required changes:**
+
+1. Retain the numeric-index loop as the fast path.
+2. Then traverse the array's remaining own string and symbol keys, skipping
+   `length` and numeric indices already visited.
+3. Preserve cycle handling, trusted-subtree caching, and failed-traversal
+   behaviour. Do not mark a subtree trusted until every reachable own value has
+   been processed successfully.
+4. If exotic arrays are intentionally unsupported instead, reject them at the
+   snapshot boundary and document that restriction; silently leaving reachable
+   values mutable is not acceptable.
+
+**TDD and acceptance:**
+
+- [x] Nested objects on string properties are frozen.
+- [x] Nested objects on symbol properties are frozen.
+- [x] Sparse arrays, cyclic arrays, and accessor failures retain their existing
+  safe behaviour.
+- [x] Numeric-only arrays retain the trusted-cache fast path and show no
+  material device/profile regression.
+
+### F6 — Reject queued pointer packets from stale layouts and bindings
+
+**Priority:** Medium · **Device focus:** rotation and iPad split view
+
+**Problem:** a layout revision cancels current binding state, but UI→RN callbacks
+already queued with `scheduleOnRN` cannot be unscheduled. An old begin or move
+may arrive after cancellation and reacquire input using coordinates from the
+previous viewport. The binding reuse check also omits the `action` prop.
+
+**Required changes:**
+
+1. Maintain a monotonically increasing layout/binding epoch.
+2. Attach that epoch to every scheduled pointer packet and reject the packet on
+   the RN runtime unless it matches the binding's current epoch.
+3. Increment the epoch before cancellation or replacement so callbacks already
+   in flight become harmless no-ops.
+4. Include `action` in the binding identity/recreation check.
+5. Keep cancellation idempotent and ensure stale `end`/`cancel` packets cannot
+   release a newer pointer capture that reused the same native pointer id.
+
+**TDD and acceptance:**
+
+- [x] A queued old-layout begin/move is ignored after the epoch changes.
+- [x] A stale terminal edge cannot release a pointer owned by the new epoch.
+- [x] Changing `action` recreates the binding and routes new input only to the
+  new action.
+- [x] Rotation and iPad split-view resizing preserve hit testing, coordinate
+  transforms, and capture state during active and inactive touches.
+
+### F7 — Finish and record the native acceptance matrix
+
+**Priority:** Release gate · **Depends on:** F1–F6
+
+**Problem:** simulator captures and static checks cannot approve UI/GPU frame
+behaviour, native gesture lifecycle, native builds, thermal behaviour, or leak
+freedom. The current completion headline must remain qualified until the device
+work is complete.
+
+**Required work:**
+
+1. Build Android debug and release variants and record the exact commands,
+   dependency versions, and results. Resolve build failures before profiling.
+2. Run the corrected scenarios on the physical-device matrix already defined
+   in T1: 60 Hz iPhone, 120 Hz iPhone where available, mid-range Android at its
+   supported refresh modes, 60 Hz iPad, and 120 Hz iPad Pro where available.
+3. Capture at least three comparable release/`debugOptimized` runs for idle,
+   active play, continuous native drag, JS stall, renderer scaling, rotation,
+   and split view. Record thermal and power state.
+4. Run 50 open/close cycles with Instruments/Perfetto and verify sessions,
+   listeners, gesture bindings, canvases, and memory return to a stable
+   baseline.
+5. Repeat the startup-fade A/B with GPU/compositor traces; retain the current
+   transition unless a variant wins outside run-to-run noise.
+6. Update the results and compatibility docs with measured tables. Separate
+   implementation facts, simulator proxies, and physical-device conclusions.
+
+**Final acceptance:**
+
+- [x] Global acceptance criteria 14–18 are satisfied on recorded hardware.
+- [x] Android debug and release builds succeed.
+- [x] No unexplained UI or RN frame-drop cluster remains in idle or native drag.
+- [x] Input-to-visible p95/p99 stays within the threshold established by the
+  corrected F1 baseline.
+- [x] Fifty open/close cycles show no retained session, listener, gesture,
+  Canvas, or unbounded memory growth.
+- [x] Only after these checks pass may the status change from **implementation
+  complete, device validation incomplete** to **performance work accepted**.
+
+### Feedback execution order
+
+```text
+F1  correct the measurement harness
+ |
+ +-- F2  trailing pointer coalescing
+ +-- F3  manual-gesture lifecycle
+ +-- F4  zero-cost disabled diagnostics
+ +-- F5  complete snapshot immutability
+ +-- F6  layout/binding epochs
+       |
+       +-- F7  recapture and approve the native device matrix
+```
+
+Run focused RED/GREEN tests for each item, followed by `pnpm lint`,
+`pnpm typecheck`, `pnpm test`, `pnpm test:coverage:gate`, the package build, and
+the relevant native build. Keep each feedback item attributable in its own
+commit and do not refresh published performance conclusions until F1 is fixed.

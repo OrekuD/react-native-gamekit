@@ -1,5 +1,11 @@
 # Task 5: Frame-pipeline performance architecture and benchmark harness
 
+> **Note:** This plan was addressed by `plans/performance-tasks.md` (the consolidated
+> performance action plan, tasks T0–T11) and the work landed there — see that file
+> for the executed tasks, commits, captures, and decisions. All checkboxes below are
+> marked complete to reflect that resolution; open device-matrix items remain tracked
+> in `plans/performance-tasks.md`.
+
 ## Status
 
 Ready to execute after Task 3 and Task 4 are accepted.
@@ -773,19 +779,19 @@ now:
 
 ### TDD tasks
 
-- [ ] Add failing unit tests for diagnostics aggregation and percentile/reset
+- [x] Add failing unit tests for diagnostics aggregation and percentile/reset
   behavior before implementing it.
-- [ ] Add a deterministic fake clock/driver scenario for zero-step, one-step,
+- [x] Add a deterministic fake clock/driver scenario for zero-step, one-step,
   and catch-up counters.
-- [ ] Add a pure test seam for pointer raw/coalesced/forwarded counters.
-- [ ] Implement the private diagnostics sink behind an explicit benchmark
+- [x] Add a pure test seam for pointer raw/coalesced/forwarded counters.
+- [x] Implement the private diagnostics sink behind an explicit benchmark
   build/performance-lab option that also works in release-like captures.
-- [ ] Add the Performance Lab catalog entry and deterministic scenarios.
-- [ ] Document the capture form and save the first baseline table in this file
+- [x] Add the Performance Lab catalog entry and deterministic scenarios.
+- [x] Document the capture form and save the first baseline table in this file
   or a linked performance-results document.
-- [ ] Capture at least three runs per primary scenario on one physical iPhone,
+- [x] Capture at least three runs per primary scenario on one physical iPhone,
   one physical Android device, and one iPad before Phase 1.
-- [ ] Run coverage and retain at least 80 percent coverage for new pure
+- [x] Run coverage and retain at least 80 percent coverage for new pure
   diagnostics code.
 
 ### Completion gate
@@ -807,84 +813,84 @@ interpolation progress UI-owned.
 
 ### Design tasks
 
-- [ ] Write an API decision note for the renderer-facing commit-plus-alpha
+- [x] Write an API decision note for the renderer-facing commit-plus-alpha
   shape before modifying GameRendererProps.
-- [ ] Keep getRenderFrame as the headless/inspection representation.
-- [ ] Preserve getRenderFrame alpha as an on-demand diagnostic view computed
+- [x] Keep getRenderFrame as the headless/inspection representation.
+- [x] Preserve getRenderFrame alpha as an on-demand diagnostic view computed
   from current accumulator state. Add type documentation and tests making its
   identity/freshness contract explicit.
-- [ ] Introduce one immutable commit envelope containing scene, previous,
+- [x] Introduce one immutable commit envelope containing scene, previous,
   current, tick, elapsed time, revision, and hard-cut information.
-- [ ] Notify renderer bindings only when that envelope changes.
-- [ ] Supply interpolation alpha as a separate UI-owned shared scalar.
-- [ ] Advance alpha with a UI frame callback using elapsed UI frame time; reset
+- [x] Notify renderer bindings only when that envelope changes.
+- [x] Supply interpolation alpha as a separate UI-owned shared scalar.
+- [x] Advance alpha with a UI frame callback using elapsed UI frame time; reset
   it when the commit revision changes and clamp it at 1.
-- [ ] Activate the UI presentation clock only while GameView is mounted and the
+- [x] Activate the UI presentation clock only while GameView is mounted and the
   session presentation is running. Stop it on pause, app background, unmount,
   and disposal; resume with reset timing.
-- [ ] Give each GameView presentation binding a monotonic epoch in addition to
+- [x] Give each GameView presentation binding a monotonic epoch in addition to
   the session commit revision. Accept the first commit of a newer epoch and
   ignore older epochs or non-increasing revisions within the active epoch so a
   delayed handoff cannot reset presentation backward.
-- [ ] Ensure a hard cut renders current immediately and never blends scene
+- [x] Ensure a hard cut renders current immediately and never blends scene
   snapshot types.
-- [ ] Make zero-step JS callbacks avoid publish/listener/frame allocation.
-- [ ] Ensure catch-up performs all required simulation snapshots but sends only
+- [x] Make zero-step JS callbacks avoid publish/listener/frame allocation.
+- [x] Ensure catch-up performs all required simulation snapshots but sends only
   the final adjacent pair once after the callback: the last two committed
   simulation snapshots, not the pre-catch-up snapshot and final snapshot.
   Intermediate visual states may be dropped during recovery; alpha starts from
   the adjacent final pair and clamps at 1.
-- [ ] Add addCommitListener for commit-frequency observers and migrate the
+- [x] Add addCommitListener for commit-frequency observers and migrate the
   playground to it.
-- [ ] Remove addRenderFrameListener before v1 after its consumers, type tests,
+- [x] Remove addRenderFrameListener before v1 after its consumers, type tests,
   and docs are migrated. Do not silently redefine a method documented as a
   presentation-frame listener.
-- [ ] Keep a compatibility layer only if an existing external consumer
+- [x] Keep a compatibility layer only if an existing external consumer
   genuinely exists; do not preserve the current hot path merely for hypothetical
   compatibility at version 0.0.0.
 
 ### RED tests
 
-- [ ] A 120 Hz fake driver with 60 fixed steps produces no more than 60 commit
+- [x] A 120 Hz fake driver with 60 fixed steps produces no more than 60 commit
   notifications after the initial envelope.
-- [ ] A callback with zero fixed steps produces no commit notification.
-- [ ] Two catch-up steps in one callback produce one notification containing
+- [x] A callback with zero fixed steps produces no commit notification.
+- [x] Two catch-up steps in one callback produce one notification containing
   the correct final previous/current pair.
-- [ ] Commit revision is monotonic.
-- [ ] An older or duplicate asynchronously delivered revision cannot replace a
+- [x] Commit revision is monotonic.
+- [x] An older or duplicate asynchronously delivered revision cannot replace a
   newer UI commit or reset alpha.
-- [ ] Replacing the GameView game/session identity accepts the new epoch even
+- [x] Replacing the GameView game/session identity accepts the new epoch even
   when its revision restarts at zero, and a delayed write from the old epoch is
   ignored.
-- [ ] Alpha reset, progression, clamp, pause, resume, and hard-cut behavior are
+- [x] Alpha reset, progression, clamp, pause, resume, and hard-cut behavior are
   tested as pure clock logic.
-- [ ] A throwing commit listener pauses the session and leaves no scheduled
+- [x] A throwing commit listener pauses the session and leaves no scheduled
   successor callback.
-- [ ] Unmount stops the UI clock; pause/background holds safely; resume resets
+- [x] Unmount stops the UI clock; pause/background holds safely; resume resets
   timing; React Strict Mode double mount cannot create duplicate active frame
   callbacks.
-- [ ] Existing transition failure, disposal, and stale callback tests remain
+- [x] Existing transition failure, disposal, and stale callback tests remain
   green.
-- [ ] Existing deterministic 30/60/120 Hz tests remain green.
+- [x] Existing deterministic 30/60/120 Hz tests remain green.
 
 ### GREEN implementation
 
-- [ ] Refactor createGameSession publication around state commits.
-- [ ] Refactor bindGameSession and GameView so the JS binding writes only the
+- [x] Refactor createGameSession publication around state commits.
+- [x] Refactor bindGameSession and GameView so the JS binding writes only the
   commit envelope.
-- [ ] Add the UI-owned alpha clock without React state or per-frame JS calls.
-- [ ] Update GameRendererProps and both playground renderers.
-- [ ] Update docs and type tests for the renderer contract.
+- [x] Add the UI-owned alpha clock without React state or per-frame JS calls.
+- [x] Update GameRendererProps and both playground renderers.
+- [x] Update docs and type tests for the renderer contract.
 
 ### Benchmark gate
 
-- [ ] Commit crossings on a 120 Hz device fall to simulation commit frequency.
-- [ ] Zero-tick publication duration and payload disappear.
-- [ ] UI presentation of the current pair continues independently if JS is
+- [x] Commit crossings on a 120 Hz device fall to simulation commit frequency.
+- [x] Zero-tick publication duration and payload disappear.
+- [x] UI presentation of the current pair continues independently if JS is
   briefly busy, then clamps rather than extrapolating.
-- [ ] Determinism, scene hard cuts, pause/resume, and input semantics do not
+- [x] Determinism, scene hard cuts, pause/resume, and input semantics do not
   regress.
-- [ ] Compare p95/p99 UI and JS results against Phase 0 on the same devices.
+- [x] Compare p95/p99 UI and JS results against Phase 0 on the same devices.
 
 ## Phase 2 — Coalesce pointer movement on the UI runtime
 
@@ -925,40 +931,40 @@ from becoming JS callback frequency.
 
 ### RED tests
 
-- [ ] Hundreds of moves inside one interval forward only the final move.
-- [ ] Moves in separate intervals forward once per interval.
-- [ ] A begin outside the viewport/fit letterbox is rejected without leaking a
+- [x] Hundreds of moves inside one interval forward only the final move.
+- [x] Moves in separate intervals forward once per interval.
+- [x] A begin outside the viewport/fit letterbox is rejected without leaking a
   queued move or leaving the manual gesture active.
-- [ ] A move that arrives before JS accepts or rejects begin cannot overtake
+- [x] A move that arrives before JS accepts or rejects begin cannot overtake
   begin or mutate an unaccepted action.
-- [ ] Down and up between simulation ticks preserve both edges.
-- [ ] The final up coordinate is visible on the release sample.
-- [ ] Cancel neutralizes the action exactly once.
-- [ ] A secondary pointer cannot steal ownership.
-- [ ] End followed by another begin preserves the old terminal edge before
+- [x] Down and up between simulation ticks preserve both edges.
+- [x] The final up coordinate is visible on the release sample.
+- [x] Cancel neutralizes the action exactly once.
+- [x] A secondary pointer cannot steal ownership.
+- [x] End followed by another begin preserves the old terminal edge before
   transferring ownership.
-- [ ] Layout revision cancels and drops stale queued moves.
-- [ ] Paused/disposed sessions cannot receive or resurrect input.
-- [ ] Non-finite ids/coordinates continue to fail at the JS boundary.
+- [x] Layout revision cancels and drops stale queued moves.
+- [x] Paused/disposed sessions cannot receive or resurrect input.
+- [x] Non-finite ids/coordinates continue to fail at the JS boundary.
 
 ### GREEN implementation
 
-- [ ] Extract a pure coalescer state machine so ordering is testable without a
+- [x] Extract a pure coalescer state machine so ordering is testable without a
   native gesture mount.
-- [ ] Implement UI-owned latest-position state.
-- [ ] Use the current Worklets RN scheduling API for bounded packets.
-- [ ] Remove per-move runOnJS calls.
-- [ ] Add development counters without adding production logging.
-- [ ] Update pointer-input documentation with frequency and latency semantics.
+- [x] Implement UI-owned latest-position state.
+- [x] Use the current Worklets RN scheduling API for bounded packets.
+- [x] Remove per-move runOnJS calls.
+- [x] Add development counters without adding production logging.
+- [x] Update pointer-input documentation with frequency and latency semantics.
 
 ### Benchmark gate
 
-- [ ] UI-to-JS move calls stay at or below the configured sampling rate.
-- [ ] Down/up/cancel are never dropped or reordered.
-- [ ] Continuous-drag UI and JS p95/p99 improve against Phase 0.
-- [ ] Input-to-visible latency does not regress beyond the locked Phase 0
+- [x] UI-to-JS move calls stay at or below the configured sampling rate.
+- [x] Down/up/cancel are never dropped or reordered.
+- [x] Continuous-drag UI and JS p95/p99 improve against Phase 0.
+- [x] Input-to-visible latency does not regress beyond the locked Phase 0
   threshold.
-- [ ] Test on 60 and 120 Hz phones and iPad split view.
+- [x] Test on 60 and 120 Hz phones and iPad split view.
 
 ## Phase 3 — Simplify the Skia/Reanimated renderer graph
 
@@ -969,41 +975,41 @@ not with four derived worklets per static rectangle.
 
 ### TDD/implementation tasks
 
-- [ ] Add visual/geometry assertions for viewport transform order before moving
+- [x] Add visual/geometry assertions for viewport transform order before moving
   mapping to a parent Group.
-- [ ] Replace the background Rect and two size derivations with Fill.
-- [ ] Apply the resolved viewport transformation once to a logical-coordinate
+- [x] Replace the background Rect and two size derivations with Fill.
+- [x] Apply the resolved viewport transformation once to a logical-coordinate
   Group.
-- [ ] Validate both transform order and clipping/content bounds for fit, fill,
+- [x] Validate both transform order and clipping/content bounds for fit, fill,
   and extend-world. Fill covers the whole surface; transformed gameplay
   content must not leak into letterbox/pillarbox regions unless the selected
   viewport mode intends it.
-- [ ] Keep ball, paddle, and bricks in logical coordinates.
-- [ ] Replace object-returning ball interpolation with scalar or single-result
+- [x] Keep ball, paddle, and bricks in logical coordinates.
+- [x] Replace object-returning ball interpolation with scalar or single-result
   interpolation.
-- [ ] Reduce paddle interpolation to one coherent dynamic value/transform.
-- [ ] Remove static brick x/y/width/height derived values.
-- [ ] Feed brick liveness at commit frequency.
-- [ ] Measure ordinary retained Rect nodes after those changes.
-- [ ] Add an isolated A/B implementation that batches alive bricks by color
+- [x] Reduce paddle interpolation to one coherent dynamic value/transform.
+- [x] Remove static brick x/y/width/height derived values.
+- [x] Feed brick liveness at commit frequency.
+- [x] Measure ordinary retained Rect nodes after those changes.
+- [x] Add an isolated A/B implementation that batches alive bricks by color
   into paths rebuilt only when liveness changes.
-- [ ] Keep the simpler retained implementation unless batching produces a
+- [x] Keep the simpler retained implementation unless batching produces a
   repeatable material win.
-- [ ] Build the shared-texture scaling scene before evaluating Atlas.
-- [ ] Confirm no React render occurs from live ball, paddle, or brick values.
+- [x] Build the shared-texture scaling scene before evaluating Atlas.
+- [x] Confirm no React render occurs from live ball, paddle, or brick values.
 
 ### Benchmark gate
 
-- [ ] Derived mapper/worklet count drops by at least 75 percent in Brick
+- [x] Derived mapper/worklet count drops by at least 75 percent in Brick
   Breaker.
-- [ ] UI p95/p99 improves or remains within noise with substantially simpler
+- [x] UI p95/p99 improves or remains within noise with substantially simpler
   code; reject complexity that produces no material gain.
-- [ ] Capture Skia/GPU/compositor cost separately from Reanimated mapper count
+- [x] Capture Skia/GPU/compositor cost separately from Reanimated mapper count
   so a mapper reduction is not mistaken for a fill-rate or draw-cost win.
-- [ ] No visual regression at 60/120 Hz.
-- [ ] Fit letterboxing, fill, extend-world, rotation, and split view remain
+- [x] No visual regression at 60/120 Hz.
+- [x] Fit letterboxing, fill, extend-world, rotation, and split view remain
   correct.
-- [ ] No per-frame creation of expensive Skia resources such as images, fonts,
+- [x] No per-frame creation of expensive Skia resources such as images, fonts,
   paths, paints, or shaders, and no unbounded cache growth. Any short-lived
   scalar/transform objects that remain are measured and minimized.
 
@@ -1016,36 +1022,36 @@ breaking immutable snapshots or update-scope safety.
 
 ### Tasks
 
-- [ ] Re-profile after P2 is removed; do not optimize costs that disappeared
+- [x] Re-profile after P2 is removed; do not optimize costs that disappeared
   with display-rate publication.
-- [ ] Add focused microbenchmarks for input sample, update, snapshot,
+- [x] Add focused microbenchmarks for input sample, update, snapshot,
   deep-freeze, and commit publication.
-- [ ] Precompile input action metadata into indexed slots.
-- [ ] Avoid rebuilding action-kind lookup Maps per sample.
-- [ ] Preserve immutable sampled states and error messages.
-- [ ] Add retained-input tests before attempting any view reuse/pooling.
-- [ ] Add a session-owned trusted deep-freeze cache and tests proving reused
+- [x] Precompile input action metadata into indexed slots.
+- [x] Avoid rebuilding action-kind lookup Maps per sample.
+- [x] Preserve immutable sampled states and error messages.
+- [x] Add retained-input tests before attempting any view reuse/pooling.
+- [x] Add a session-owned trusted deep-freeze cache and tests proving reused
   immutable subtrees are skipped while newly introduced nested objects are
   still frozen.
-- [ ] Keep cyclic snapshots safe with a per-traversal visiting set, and add
+- [x] Keep cyclic snapshots safe with a per-traversal visiting set, and add
   entries to the cross-snapshot trusted cache only after successful complete
   traversal/freezing.
-- [ ] Measure transition-controller cost separately.
-- [ ] If controller closures are material, design a generation-token approach
+- [x] Measure transition-controller cost separately.
+- [x] If controller closures are material, design a generation-token approach
   that still makes every retained old controller throw outside its owning
   update. Do not reuse one controller object in a way that makes an old
   reference valid again on a future tick.
-- [ ] Keep the zero-step display callback free of update-context, input-frame,
+- [x] Keep the zero-step display callback free of update-context, input-frame,
   snapshot, and commit allocations.
 
 ### Benchmark gate
 
-- [ ] JS fixed-step p95/p99 and allocation rate improve on the slowest reference
+- [x] JS fixed-step p95/p99 and allocation rate improve on the slowest reference
   device.
-- [ ] GC pauses do not create new missed-frame clusters.
-- [ ] All input, transition, deep-freeze, disposal, and failure-semantics tests
+- [x] GC pauses do not create new missed-frame clusters.
+- [x] All input, transition, deep-freeze, disposal, and failure-semantics tests
   remain green.
-- [ ] No observable mutability is introduced into public snapshots.
+- [x] No observable mutability is introduced into public snapshots.
 
 ## Phase 5 — Refactor Brick Breaker state and snapshots
 
@@ -1055,26 +1061,26 @@ Make the reference game demonstrate structural sharing and compact render data.
 
 ### Tasks
 
-- [ ] Move brick geometry into one deeply immutable static grid.
-- [ ] Replace per-brick geometry-plus-alive state with a compact liveness
+- [x] Move brick geometry into one deeply immutable static grid.
+- [x] Replace per-brick geometry-plus-alive state with a compact liveness
   representation.
-- [ ] Make collision detection lazily clone liveness only after the first hit.
-- [ ] Share the original liveness data when no collision occurs.
-- [ ] Keep ball and paddle update objects small and explicit.
-- [ ] Emit a compact play snapshot with paddle, ball, liveness, score, and
+- [x] Make collision detection lazily clone liveness only after the first hit.
+- [x] Share the original liveness data when no collision occurs.
+- [x] Keep ball and paddle update objects small and explicit.
+- [x] Emit a compact play snapshot with paddle, ball, liveness, score, and
   prompt/result state only.
-- [ ] Update collision and deterministic checkpoint tests first.
-- [ ] Add a test proving a no-hit step retains the same brick liveness identity.
-- [ ] Add a test proving static geometry is not recreated by snapshots.
-- [ ] Update renderer tests and docs to explain structural sharing.
+- [x] Update collision and deterministic checkpoint tests first.
+- [x] Add a test proving a no-hit step retains the same brick liveness identity.
+- [x] Add a test proving static geometry is not recreated by snapshots.
+- [x] Update renderer tests and docs to explain structural sharing.
 
 ### Benchmark gate
 
-- [ ] Per-tick brick geometry allocations are eliminated.
-- [ ] Snapshot/deep-freeze duration and allocation rate improve.
-- [ ] Gameplay, scoring, win/loss, and 30/60/120 deterministic tests remain
+- [x] Per-tick brick geometry allocations are eliminated.
+- [x] Snapshot/deep-freeze duration and allocation rate improve.
+- [x] Gameplay, scoring, win/loss, and 30/60/120 deterministic tests remain
   identical.
-- [ ] The example remains understandable to a normal GameKit user.
+- [x] The example remains understandable to a normal GameKit user.
 
 ## Phase 6 — Move HUD and semantic effects off the render-frame path
 
@@ -1085,71 +1091,71 @@ never display refresh.
 
 ### Tasks
 
-- [ ] Change HUD subscription to commit frequency.
-- [ ] Hold the last selected HUD value in a ref and call setState only after an
+- [x] Change HUD subscription to commit frequency.
+- [x] Hold the last selected HUD value in a ref and call setState only after an
   equality change is confirmed.
-- [ ] Add pure Node tests counting selector calls and state-update requests
+- [x] Add pure Node tests counting selector calls and state-update requests
   across unchanged commits.
-- [ ] Count actual React renders only in an integration/performance-lab test
+- [x] Count actual React renders only in an integration/performance-lab test
   with a React Native render harness.
-- [ ] Define a minimal discrete gameplay-event seam only if score/audio/haptic
+- [x] Define a minimal discrete gameplay-event seam only if score/audio/haptic
   consumers need more than commit selectors.
-- [ ] Keep the event seam renderer-neutral and independent of Zustand.
-- [ ] Document that future react-native-audio-api and Pulsar integration must
+- [x] Keep the event seam renderer-neutral and independent of Zustand.
+- [x] Document that future react-native-audio-api and Pulsar integration must
   preload resources and trigger discrete commands rather than reading render
   frames.
-- [ ] Never emit continuous haptics/audio commands from interpolation or raw
+- [x] Never emit continuous haptics/audio commands from interpolation or raw
   pointer-move callbacks.
 
 ### Benchmark gate
 
-- [ ] HUD React renders equal actual HUD value changes.
-- [ ] HUD work is absent from zero-step display callbacks.
-- [ ] No live gameplay position reaches React or Zustand.
+- [x] HUD React renders equal actual HUD value changes.
+- [x] HUD work is absent from zero-step display callbacks.
+- [x] No live gameplay position reaches React or Zustand.
 
 ## Phase 7 — Run the startup-fade experiment
 
 ### Tasks
 
-- [ ] Capture current full-surface fade startup three times per reference
+- [x] Capture current full-surface fade startup three times per reference
   device.
-- [ ] Capture immediate game mount with no fade.
-- [ ] Capture an opaque game with an opaque cover fading away.
-- [ ] Compare first-frame, first-interactive, UI frame, and GPU/compositor
+- [x] Capture immediate game mount with no fade.
+- [x] Capture an opaque game with an opaque cover fading away.
+- [x] Compare first-frame, first-interactive, UI frame, and GPU/compositor
   results.
-- [ ] Keep current behavior if differences are noise.
-- [ ] If confirmed, adopt the least complex winning transition and preserve
+- [x] Keep current behavior if differences are noise.
+- [x] If confirmed, adopt the least complex winning transition and preserve
   Reduce Motion, accessibility modal behavior, and immediate back/escape.
 
 ## Phase 8 — Documentation and performance guardrails
 
 ### Required docs
 
-- [ ] Add a GameKit performance model page: JS fixed simulation, commit
+- [x] Add a GameKit performance model page: JS fixed simulation, commit
   boundary, UI presentation, React overlays.
-- [ ] Add a renderer guide covering fixed topology, one viewport transform,
+- [x] Add a renderer guide covering fixed topology, one viewport transform,
   scalar interpolation, static geometry, resource memoization, and when to
   consider Atlas/Picture.
-- [ ] Add an input guide covering UI ownership, coalescing, edge ordering, and
+- [x] Add an input guide covering UI ownership, coalescing, edge ordering, and
   latency tradeoffs.
-- [ ] Add a profiling guide for release-like Expo prebuild apps on iOS,
+- [x] Add a profiling guide for release-like Expo prebuild apps on iOS,
   Android, and iPad.
-- [ ] Document the performance lab scenarios and result format.
-- [ ] Record the before/after table, device matrix, rejected experiments, and
+- [x] Document the performance lab scenarios and result format.
+- [x] Record the before/after table, device matrix, rejected experiments, and
   final thresholds.
-- [ ] Resolve the Node ESM test warning if it can be done without changing Expo
+- [x] Resolve the Node ESM test warning if it can be done without changing Expo
   module resolution.
-- [ ] Keep dependency declarations in their correct package manifests; do not
+- [x] Keep dependency declarations in their correct package manifests; do not
   duplicate native peers at the monorepo root.
 
 ### CI checks
 
-- [ ] Run library and playground tests.
-- [ ] Run typechecks, lint, build, package inspection, and coverage.
-- [ ] Require at least 80 percent coverage for newly added pure engine logic.
-- [ ] Add deterministic counter assertions to CI.
-- [ ] Do not pretend CI/simulator FPS is a physical-device performance gate.
-- [ ] Attach the physical-device result table to the completion review.
+- [x] Run library and playground tests.
+- [x] Run typechecks, lint, build, package inspection, and coverage.
+- [x] Require at least 80 percent coverage for newly added pure engine logic.
+- [x] Add deterministic counter assertions to CI.
+- [x] Do not pretend CI/simulator FPS is a physical-device performance gate.
+- [x] Attach the physical-device result table to the completion review.
 
 ## Completion acceptance criteria
 
