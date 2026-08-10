@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { PerfSummary } from './summary.ts';
 import { LabRunController } from './labRun.ts';
-import { createUiAccumulator, beginUiRun, recordUiFrame, flushUi } from './uiMetrics.ts';
+import { createUiAggregator } from './uiMetrics.ts';
 
 describe('Performance Lab run controller (F1)', () => {
   it('refuses to start a scenario without a mounted pipeline host', () => {
@@ -39,10 +39,10 @@ describe('Performance Lab run controller (F1)', () => {
     controller.finishHost(new PerfSummary(), 1000, 'brick-breaker');
     assert.equal(completed.length, 0, 'stale transfer cannot complete the run');
     // The matching final transfer completes it exactly once.
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 1);
-    recordUiFrame(accumulator, 1, 16.7);
-    controller.onUiTransfer(flushUi(accumulator, 1)!);
+    const accumulator = createUiAggregator();
+    accumulator.begin(1);
+    accumulator.record(16.7);
+    controller.onUiTransfer(accumulator.flush()!);
     assert.equal(completed.length, 1);
     controller.onUiTransfer({
       runId: 1,
@@ -74,10 +74,10 @@ describe('Performance Lab run controller (F1)', () => {
     summary.count('commits', 10);
     controller.finishHost(summary, 1000, 'brick-breaker');
     assert.equal(completed.length, 0, 'non-final transfer does not complete');
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 2);
-    recordUiFrame(accumulator, 2, 16.5);
-    controller.onUiTransfer(flushUi(accumulator, 2)!);
+    const accumulator = createUiAggregator();
+    accumulator.begin(2);
+    accumulator.record(16.5);
+    controller.onUiTransfer(accumulator.flush()!);
     assert.equal(completed.length, 1);
     const result = completed[0] as {
       runId: number;
@@ -87,7 +87,7 @@ describe('Performance Lab run controller (F1)', () => {
       inputToPresentMs: unknown;
     };
     assert.equal(result.runId, 2);
-    assert.equal(result.ui.count, 61, 'partial + final transfers merged');
+    assert.equal(result.ui.count, 1, 'the final cumulative snapshot wins');
     assert.equal(result.summary.getCounter('commits'), 10);
     assert.equal(result.inputStages, undefined, 'engine-drag has no native stage counters');
     assert.equal(result.inputToPresentMs, undefined);
@@ -107,10 +107,10 @@ describe('Performance Lab run controller (F1)', () => {
     summary.record('input-sample-ms', 0.1);
     controller.setInputStages(240, 31);
     controller.finishHost(summary, 1000, 'brick-breaker');
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 3);
-    recordUiFrame(accumulator, 3, 16.7);
-    controller.onUiTransfer(flushUi(accumulator, 3)!);
+    const accumulator = createUiAggregator();
+    accumulator.begin(3);
+    accumulator.record(16.7);
+    controller.onUiTransfer(accumulator.flush()!);
     const result = completed[0] as {
       inputStages: { raw: number; forwarded: number; sampled: number; committed: number; presented: number };
       inputToPresentMs: { count: number; p50: number };
@@ -133,10 +133,10 @@ describe('Performance Lab run controller (F1)', () => {
     controller.start({ scenario: 'idle-active', durationMs: 1000 }, 4);
     controller.detachHost();
     controller.finishHost(new PerfSummary(), 1000, 'brick-breaker');
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 4);
-    recordUiFrame(accumulator, 4, 16.7);
-    controller.onUiTransfer(flushUi(accumulator, 4)!);
+    const accumulator = createUiAggregator();
+    accumulator.begin(4);
+    accumulator.record(16.7);
+    controller.onUiTransfer(accumulator.flush()!);
     assert.equal(completed.length, 0);
   });
 });

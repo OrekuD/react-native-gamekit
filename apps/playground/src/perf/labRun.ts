@@ -17,7 +17,7 @@
  */
 
 import type { UiFrameSummary, UiTransfer } from './uiMetrics.ts';
-import { createUiAccumulator, mergeUiTransfers, summarizeUi } from './uiMetrics.ts';
+import { createUiAggregator, summarizeUi } from './uiMetrics.ts';
 import { CounterSeries, PerfSummary, type SeriesSnapshot } from './summary.ts';
 
 export type PerfScenarioId = 'idle-active' | 'engine-drag' | 'stall' | 'native-drag';
@@ -77,7 +77,7 @@ export class LabRunController {
   #jsSummary = new PerfSummary();
   #durationMs = 0;
   #game = '';
-  #uiMerged = createUiAccumulator();
+  #uiMerged = createUiAggregator();
   #finalTransferLanded = false;
   #completed = false;
   #inputStages: { raw: number; forwarded: number } | undefined;
@@ -123,7 +123,7 @@ export class LabRunController {
     this.#activeRunId = runId;
     this.#spec = spec;
     this.#jsSummary = new PerfSummary();
-    this.#uiMerged = createUiAccumulator();
+    this.#uiMerged = createUiAggregator();
     this.#finalTransferLanded = false;
     this.#completed = false;
     this.#inputStages = undefined;
@@ -137,7 +137,7 @@ export class LabRunController {
     if (this.#completed || transfer.runId !== this.#activeRunId) {
       return;
     }
-    mergeUiTransfers(this.#uiMerged, transfer);
+    this.#uiMerged.replace(transfer);
     if (transfer.final) {
       this.#finalTransferLanded = true;
       this.#maybeComplete();

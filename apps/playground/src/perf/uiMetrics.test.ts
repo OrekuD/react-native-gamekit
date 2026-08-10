@@ -5,98 +5,90 @@ import {
   UI_BUCKET_MS,
   UI_CAP_MS,
   UI_TRANSFER_INTERVAL_MS,
-  beginUiRun,
-  createUiAccumulator,
-  flushUi,
+  createUiAggregator,
   histogramPercentile,
-  mergeUiTransfers,
-  recordUiFrame,
   summarizeUi,
   uiBucketIndex,
 } from './uiMetrics.ts';
 
 describe('UI metric aggregation (F1)', () => {
   it('aggregates in constant space: bucket count never grows with sample count', () => {
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 1);
+    const aggregator = createUiAggregator();
+    aggregator.begin(1);
     for (let frame = 0; frame < 100_000; frame += 1) {
-      recordUiFrame(accumulator, 1, 16.7);
+      aggregator.record(16.7);
     }
-    assert.equal(accumulator.buckets.length, 256, 'fixed bucket array');
-    assert.equal(accumulator.count, 100_000, 'every frame recorded');
+    assert.equal(aggregator.buckets.length, 256, 'fixed bucket array');
+    assert.equal(aggregator.count, 100_000, 'every frame recorded');
   });
 
-  it('ignores frames recorded under a different run id', () => {
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 7);
-    recordUiFrame(accumulator, 5, 16.7);
-    recordUiFrame(accumulator, 7, 16.7);
-    assert.equal(accumulator.count, 1, 'only the matching run id records');
+  it('ignores frames recorded before the run begins', () => {
+    const aggregator = createUiAggregator();
+    aggregator.record(16.7);
+    assert.equal(aggregator.count, 0, 'no run: nothing recorded');
+    aggregator.begin(7);
+    aggregator.record(16.7);
+    assert.equal(aggregator.count, 1);
   });
 
   it('transfers at most once per second of elapsed time at 60/90/120 Hz', () => {
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 1);
+    const aggregator = createUiAggregator();
+    aggregator.begin(1);
     // 120 Hz: 60 frames is only 500 ms of elapsed time — the hard-coded
     // "60 frames" interval would violate the 1 transfer/second rule.
     let transfers = 0;
     for (let frame = 0; frame < 60; frame += 1) {
-      if (recordUiFrame(accumulator, 1, 1000 / 120) !== undefined) {
+      if (aggregator.record(1000 / 120) !== undefined) {
         transfers += 1;
       }
     }
     assert.equal(transfers, 0, 'no transfer before a full second elapses');
     for (let frame = 60; frame < 121; frame += 1) {
-      if (recordUiFrame(accumulator, 1, 1000 / 120) !== undefined) {
+      if (aggregator.record(1000 / 120) !== undefined) {
         transfers += 1;
       }
     }
     assert.equal(transfers, 1, 'exactly one transfer in the first second');
-    assert.equal(accumulator.count, 121);
+    assert.equal(aggregator.count, 121);
 
     // 60 Hz: a transfer lands at the 61st frame (the gate is elapsed-time
     // based; 60 × 1000/60 ms sums to 999.99… due to float accumulation).
-    const sixty = createUiAccumulator();
-    beginUiRun(sixty, 1);
+    const sixty = createUiAggregator();
+    sixty.begin(1);
     let atSixty = 0;
     for (let frame = 0; frame < 60; frame += 1) {
-      if (recordUiFrame(sixty, 1, 1000 / 60) !== undefined) {
+      if (sixty.record(1000 / 60) !== undefined) {
         atSixty += 1;
       }
     }
     assert.equal(atSixty, 0, '60 Hz: no transfer before a full second');
-    assert.ok(
-      recordUiFrame(sixty, 1, 1000 / 60) !== undefined,
-      '60 Hz transfers within a frame of the one-second mark',
-    );
+    assert.ok(sixty.record(1000 / 60) !== undefined, '60 Hz transfers within a frame of the one-second mark');
 
     // 90 Hz: 90 frames = 1000 ms (±1 frame for float accumulation).
-    const ninety = createUiAccumulator();
-    beginUiRun(ninety, 1);
+    const ninety = createUiAggregator();
+    ninety.begin(1);
     let atNinety = 0;
     for (let frame = 0; frame < 90; frame += 1) {
-      if (recordUiFrame(ninety, 1, 1000 / 90) !== undefined) {
+      if (ninety.record(1000 / 90) !== undefined) {
         atNinety += 1;
       }
     }
     assert.equal(atNinety, 0, '90 Hz: no transfer before a full second');
-    assert.ok(
-      recordUiFrame(ninety, 1, 1000 / 90) !== undefined,
-      '90 Hz transfers within a frame of the one-second mark',
-    );
+    assert.ok(ninety.record(1000 / 90) !== undefined, '90 Hz transfers within a frame of the one-second mark');
   });
 
   it('flushes exactly one final transfer with the run id, then nothing', () => {
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 3);
-    recordUiFrame(accumulator, 3, 8.3);
-    const final = flushUi(accumulator, 3);
+    const aggregator = createUiAggregator();
+    aggregator.begin(3);
+    aggregator.record(8.3);
+    const final = aggregator.flush();
     assert.ok(final !== undefined);
     assert.equal(final.final, true);
     assert.equal(final.runId, 3);
     assert.equal(final.count, 1);
-    assert.equal(flushUi(accumulator, 3), undefined, 'second flush emits nothing');
-    assert.equal(flushUi(accumulator, 9), undefined, 'wrong run id flushes nothing');
+    assert.equal(aggregator.flush(), undefined, 'second flush emits nothing');
+    aggregator.begin(9);
+    assert.equal(aggregator.flush()!.runId, 9, 'a fresh run flushes again');
   });
 
   it('bins deltas with a hard cap and preserves the raw maximum', () => {
@@ -109,12 +101,12 @@ describe('UI metric aggregation (F1)', () => {
   });
 
   it('computes percentiles from the histogram on known distributions', () => {
-    const accumulator = createUiAccumulator();
-    beginUiRun(accumulator, 1);
+    const aggregator = createUiAggregator();
+    aggregator.begin(1);
     for (let sample = 0; sample < 1000; sample += 1) {
-      recordUiFrame(accumulator, 1, 16.7);
+      aggregator.record(16.7);
     }
-    const summary = summarizeUi(accumulator);
+    const summary = summarizeUi(aggregator);
     assert.equal(summary.count, 1000);
     assert.equal(summary.min, 16.7);
     assert.equal(summary.max, 16.7);
@@ -125,25 +117,31 @@ describe('UI metric aggregation (F1)', () => {
     assert.equal(summary.p99, 16.625);
   });
 
-  it('merges partial transfers into one accumulator', () => {
-    const merged = createUiAccumulator();
-    const first = createUiAccumulator();
-    beginUiRun(first, 1);
-    recordUiFrame(first, 1, 10);
-    recordUiFrame(first, 1, 20);
-    mergeUiTransfers(merged, flushUi(first, 1)!);
-    const second = createUiAccumulator();
-    beginUiRun(second, 1);
-    recordUiFrame(second, 1, 30);
-    mergeUiTransfers(merged, flushUi(second, 1)!);
-    assert.equal(merged.count, 3);
+  it('replaces the accumulator with cumulative transfer snapshots', () => {
+    // Transfers are cumulative snapshots: each one is a superset of the
+    // previous, so the latest accepted transfer is the complete state and
+    // earlier ones must not be added on top.
+    const merged = createUiAggregator();
+    const first = createUiAggregator();
+    first.begin(1);
+    first.record(10);
+    first.record(20);
+    merged.replace(first.flush()!);
+    assert.equal(merged.count, 2);
+    const second = createUiAggregator();
+    second.begin(1);
+    second.record(10);
+    second.record(20);
+    second.record(30);
+    merged.replace(second.flush()!);
+    assert.equal(merged.count, 3, 'latest snapshot wins, no double counting');
     assert.equal(merged.minMs, 10);
     assert.equal(merged.maxMs, 30);
     assert.equal(summarizeUi(merged).mean, 20);
   });
 
   it('returns a zero summary for an untouched accumulator', () => {
-    const summary = summarizeUi(createUiAccumulator());
+    const summary = summarizeUi(createUiAggregator());
     assert.equal(summary.count, 0);
     assert.equal(summary.p95, 0);
   });

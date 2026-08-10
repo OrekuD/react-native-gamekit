@@ -1,15 +1,18 @@
 /**
  * UI frame-metric aggregation (F1).
  *
- * Constant-space, worklet-safe accumulator for UI presentation frame
- * deltas. Frame deltas are binned into a fixed histogram on the UI runtime
- * (no per-frame allocations, no growth with run length) and transferred to
- * the RN runtime at most once per second of **elapsed time** plus once at
- * run completion. Percentiles are computed from the histogram on the RN
- * side when the run finishes.
+ * Constant-space aggregation of UI presentation frame deltas, built exactly
+ * like the pointer coalescer: a factory returns a stateful object whose
+ * methods are worklets that close over their own state. The UI runtime
+ * captures the aggregator through the host's frame-callback closure (never
+ * passed as a worklet argument — an object passed across runtimes is
+ * serialized and its keys cannot be modified afterwards), so all mutation
+ * happens on the UI-side copy and only transfer snapshots cross runtimes.
  *
- * Every function here is pure and worklet-compatible ('worklet' directives)
- * so the exact same code runs on the UI runtime and in the node test suite.
+ * Frames are binned into a fixed histogram (no per-frame allocations, no
+ * growth with run length) and transferred to the RN runtime at most once
+ * per second of **elapsed time** plus once at run completion. Percentiles
+ * are computed from the histogram when the run finishes.
  */
 
 /** Histogram bucket width in milliseconds. */
@@ -35,20 +38,6 @@ export interface UiTransfer {
   readonly buckets: readonly number[];
 }
 
-/** Constant-space UI aggregation state (mutable, worklet-owned). */
-export interface UiAccumulator {
-  runId: number;
-  count: number;
-  sumMs: number;
-  minMs: number;
-  maxMs: number;
-  elapsedMs: number;
-  lastTransferMs: number;
-  /** Set once the final transfer has been emitted for the run. */
-  flushed: boolean;
-  readonly buckets: number[];
-}
-
 /** UI frame summary merged on the RN runtime for the final result. */
 export interface UiFrameSummary {
   readonly count: number;
@@ -60,9 +49,37 @@ export interface UiFrameSummary {
   readonly p99: number;
 }
 
-export function createUiAccumulator(): UiAccumulator {
-  return {
-    runId: -1,
+/** Worklet-safe, constant-space UI aggregation state. */
+export interface UiAggregator {
+  /** Reset for a run; frames recorded before a begin are ignored. */
+  begin(runId: number): void;
+  /**
+   * Record one UI frame delta in constant time and space. Returns an
+   * intermediate transfer when a full transfer interval has elapsed.
+   */
+  record(deltaMs: number): UiTransfer | undefined;
+  /** Final transfer for the run; emits nothing once flushed. */
+  flush(): UiTransfer | undefined;
+  /**
+   * Replace this (RN-side) accumulator with a transfer. Transfers are
+   * cumulative snapshots of the UI-side aggregator (each one is a superset
+   * of the previous), so the latest accepted transfer is the complete state;
+   * merging them would double-count.
+   */
+  replace(transfer: UiTransfer): void;
+  readonly runId: number;
+  readonly count: number;
+  readonly sumMs: number;
+  readonly minMs: number;
+  readonly maxMs: number;
+  readonly buckets: number[];
+}
+
+export function createUiAggregator(runId = -1): UiAggregator {
+  // Worklet-safe state: the UI runtime mutates this captured object through
+  // the methods below; the JS copy is a separate snapshot (coalescer rule).
+  const state = {
+    runId,
     count: 0,
     sumMs: 0,
     minMs: 0,
@@ -72,22 +89,110 @@ export function createUiAccumulator(): UiAccumulator {
     flushed: false,
     buckets: new Array<number>(UI_BUCKET_COUNT).fill(0),
   };
-}
 
-/** Reset the accumulator for a run. Frames recorded under other ids are ignored. */
-export function beginUiRun(accumulator: UiAccumulator, runId: number): void {
-  'worklet';
-  accumulator.runId = runId;
-  accumulator.count = 0;
-  accumulator.sumMs = 0;
-  accumulator.minMs = 0;
-  accumulator.maxMs = 0;
-  accumulator.elapsedMs = 0;
-  accumulator.lastTransferMs = 0;
-  accumulator.flushed = false;
-  for (let index = 0; index < accumulator.buckets.length; index += 1) {
-    accumulator.buckets[index] = 0;
-  }
+  const begin = (runId: number): void => {
+    'worklet';
+    state.runId = runId;
+    state.count = 0;
+    state.sumMs = 0;
+    state.minMs = 0;
+    state.maxMs = 0;
+    state.elapsedMs = 0;
+    state.lastTransferMs = 0;
+    state.flushed = false;
+    for (let index = 0; index < state.buckets.length; index += 1) {
+      state.buckets[index] = 0;
+    }
+  };
+
+  const record = (deltaMs: number): UiTransfer | undefined => {
+    'worklet';
+    if (state.runId < 0) {
+      return undefined; // No run in progress.
+    }
+    state.count += 1;
+    state.sumMs += deltaMs;
+    if (state.count === 1) {
+      state.minMs = deltaMs;
+      state.maxMs = deltaMs;
+    } else {
+      if (deltaMs < state.minMs) {
+        state.minMs = deltaMs;
+      }
+      if (deltaMs > state.maxMs) {
+        state.maxMs = deltaMs;
+      }
+    }
+    state.elapsedMs += deltaMs;
+    state.buckets[uiBucketIndex(deltaMs)] += 1;
+    if (state.elapsedMs - state.lastTransferMs >= UI_TRANSFER_INTERVAL_MS) {
+      state.lastTransferMs = state.elapsedMs;
+      return {
+        runId: state.runId,
+        final: false,
+        count: state.count,
+        sumMs: state.sumMs,
+        minMs: state.minMs,
+        maxMs: state.maxMs,
+        buckets: state.buckets.slice(0, UI_BUCKET_COUNT),
+      };
+    }
+    return undefined;
+  };
+
+  const flush = (): UiTransfer | undefined => {
+    'worklet';
+    if (state.runId < 0 || state.flushed) {
+      return undefined;
+    }
+    state.flushed = true;
+    return {
+      runId: state.runId,
+      final: true,
+      count: state.count,
+      sumMs: state.sumMs,
+      minMs: state.minMs,
+      maxMs: state.maxMs,
+      buckets: state.buckets.slice(0, UI_BUCKET_COUNT),
+    };
+  };
+
+  const replace = (transfer: UiTransfer): void => {
+    'worklet';
+    state.runId = transfer.runId;
+    state.count = transfer.count;
+    state.sumMs = transfer.sumMs;
+    state.minMs = transfer.minMs;
+    state.maxMs = transfer.maxMs;
+    for (let index = 0; index < state.buckets.length; index += 1) {
+      state.buckets[index] = transfer.buckets[index] ?? 0;
+    }
+  };
+
+  return {
+    begin,
+    record,
+    flush,
+    replace,
+    get runId() {
+      return state.runId;
+    },
+    get count() {
+      return state.count;
+    },
+    get sumMs() {
+      return state.sumMs;
+    },
+    get minMs() {
+      return state.minMs;
+    },
+    get maxMs() {
+      return state.maxMs;
+    },
+    get buckets() {
+      return state.buckets;
+    },
+  };
 }
 
 /** The histogram bucket for a frame delta (clamped into the cap bucket). */
@@ -98,87 +203,6 @@ export function uiBucketIndex(deltaMs: number): number {
     return 0;
   }
   return index >= UI_BUCKET_COUNT ? UI_BUCKET_COUNT - 1 : index;
-}
-
-/**
- * Record one UI frame delta in constant time and constant space.
- *
- * Returns an intermediate transfer snapshot when a full transfer interval
- * has elapsed, otherwise `undefined`. Frames recorded under a run id that is
- * not the accumulator's current run are ignored entirely.
- */
-export function recordUiFrame(
-  accumulator: UiAccumulator,
-  runId: number,
-  deltaMs: number,
-): UiTransfer | undefined {
-  'worklet';
-  if (runId !== accumulator.runId) {
-    return undefined;
-  }
-  accumulator.count += 1;
-  accumulator.sumMs += deltaMs;
-  if (accumulator.count === 1) {
-    accumulator.minMs = deltaMs;
-    accumulator.maxMs = deltaMs;
-  } else {
-    if (deltaMs < accumulator.minMs) {
-      accumulator.minMs = deltaMs;
-    }
-    if (deltaMs > accumulator.maxMs) {
-      accumulator.maxMs = deltaMs;
-    }
-  }
-  accumulator.elapsedMs += deltaMs;
-  accumulator.buckets[uiBucketIndex(deltaMs)] += 1;
-  if (accumulator.elapsedMs - accumulator.lastTransferMs >= UI_TRANSFER_INTERVAL_MS) {
-    accumulator.lastTransferMs = accumulator.elapsedMs;
-    return snapshot(accumulator, false);
-  }
-  return undefined;
-}
-
-/** Final transfer for the run; emits nothing once flushed or for a mismatched id. */
-export function flushUi(accumulator: UiAccumulator, runId: number): UiTransfer | undefined {
-  'worklet';
-  if (runId !== accumulator.runId || accumulator.flushed) {
-    return undefined;
-  }
-  accumulator.flushed = true;
-  return snapshot(accumulator, true);
-}
-
-function snapshot(accumulator: UiAccumulator, final: boolean): UiTransfer {
-  'worklet';
-  return {
-    runId: accumulator.runId,
-    final,
-    count: accumulator.count,
-    sumMs: accumulator.sumMs,
-    minMs: accumulator.minMs,
-    maxMs: accumulator.maxMs,
-    buckets: accumulator.buckets.slice(0, UI_BUCKET_COUNT),
-  };
-}
-
-/** Merge a partial transfer into a run accumulator (RN side). */
-export function mergeUiTransfers(into: UiAccumulator, transfer: UiTransfer): void {
-  'worklet';
-  into.runId = transfer.runId;
-  into.count += transfer.count;
-  into.sumMs += transfer.sumMs;
-  if (transfer.count > 0) {
-    if (into.count === transfer.count) {
-      into.minMs = transfer.minMs;
-      into.maxMs = transfer.maxMs;
-    } else {
-      into.minMs = Math.min(into.minMs, transfer.minMs);
-      into.maxMs = Math.max(into.maxMs, transfer.maxMs);
-    }
-  }
-  for (let index = 0; index < transfer.buckets.length; index += 1) {
-    into.buckets[index] += transfer.buckets[index] ?? 0;
-  }
 }
 
 /**
@@ -208,20 +232,20 @@ export function histogramPercentile(
   return UI_CAP_MS;
 }
 
-/** Summarize an accumulator into the final UI frame summary. */
-export function summarizeUi(accumulator: UiAccumulator): UiFrameSummary {
+/** Summarize an aggregator into the final UI frame summary. */
+export function summarizeUi(aggregator: UiAggregator): UiFrameSummary {
   'worklet';
-  const count = accumulator.count;
+  const count = aggregator.count;
   if (count === 0) {
     return { count: 0, mean: 0, min: 0, max: 0, p50: 0, p95: 0, p99: 0 };
   }
   return {
     count,
-    mean: accumulator.sumMs / count,
-    min: accumulator.minMs,
-    max: accumulator.maxMs,
-    p50: histogramPercentile(accumulator.buckets, count, 0.5),
-    p95: histogramPercentile(accumulator.buckets, count, 0.95),
-    p99: histogramPercentile(accumulator.buckets, count, 0.99),
+    mean: aggregator.sumMs / count,
+    min: aggregator.minMs,
+    max: aggregator.maxMs,
+    p50: histogramPercentile(aggregator.buckets, count, 0.5),
+    p95: histogramPercentile(aggregator.buckets, count, 0.95),
+    p99: histogramPercentile(aggregator.buckets, count, 0.99),
   };
 }

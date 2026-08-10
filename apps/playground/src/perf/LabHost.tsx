@@ -24,22 +24,23 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { GamePointerInput, GameView } from 'react-native-gamekit/react';
 import { createAnimationFrameDriver, createGameSessionWithDriver } from 'react-native-gamekit/testing';
 
-import { brickBreakerDefinition, type BrickBreakerSession } from '../games/brickBreakerGame';
+import {
+  brickBreakerPerformanceDefinition,
+  type BrickBreakerSession,
+} from '../games/brickBreakerGame';
 import { BrickBreakerRenderer } from '../renderers/BrickBreakerRenderer';
 import type { LabRunController, PerfScenarioId } from './labRun';
 import { createSummarySink, generateDragSchedule } from './sessionSink';
 import { PerfSummary } from './summary';
 import {
-  beginUiRun,
-  createUiAccumulator,
-  flushUi,
-  recordUiFrame,
-  type UiAccumulator,
+  UI_BUCKET_COUNT,
+  UI_TRANSFER_INTERVAL_MS,
+  uiBucketIndex,
   type UiTransfer,
 } from './uiMetrics';
 
-/** Engine scenarios start play with a scripted tap at this offset. */
-const TAP_AT_MS = 300;
+/** Let the mounted pipeline settle before scripted engine input begins. */
+const INPUT_AT_MS = 300;
 const STALL_AT_MS = 1000;
 const STALL_DURATION_MS = 200;
 
@@ -55,7 +56,7 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
   // writes into the summary from inside session creation.
   const [summary] = useState(() => new PerfSummary());
   const [session] = useState<BrickBreakerSession>(() =>
-    createGameSessionWithDriver(brickBreakerDefinition, {
+    createGameSessionWithDriver(brickBreakerPerformanceDefinition, {
       frameDriver: createAnimationFrameDriver(),
       diagnostics: createSummarySink(summary),
     }),
@@ -88,9 +89,21 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
     },
   };
 
-  // Constant-space UI metric aggregation: one shared-value accumulator with
-  // a fixed histogram; transfers at most once per second of elapsed time.
-  const uiAccumulator = useSharedValue<UiAccumulator>(createUiAccumulator());
+  // Constant-space UI metric aggregation backed by scalar shared values:
+  // worklet-owned mutable state must live in shared values (closure-captured
+  // objects are serialized into per-registration copies and cannot be relied
+  // upon to share state between record and flush paths). Only transfer
+  // snapshots cross runtimes. `runEnded` is set on the RN runtime at run
+  // end; the next UI frame flushes the final transfer exactly once.
+  const uiCount = useSharedValue(0);
+  const uiSumMs = useSharedValue(0);
+  const uiMinMs = useSharedValue(0);
+  const uiMaxMs = useSharedValue(0);
+  const uiElapsedMs = useSharedValue(0);
+  const uiLastTransferMs = useSharedValue(0);
+  const uiFlushed = useSharedValue(false);
+  const uiBuckets = useSharedValue<Int32Array>(new Int32Array(256));
+  const runEnded = useSharedValue(false);
   const onUiTransfer = useCallback(
     (transfer: UiTransfer) => controller.onUiTransfer(transfer),
     [controller],
@@ -98,36 +111,130 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
 
   useFrameCallback((frameInfo) => {
     'worklet';
+    if (runEnded.value) {
+      if (uiFlushed.value) {
+        return;
+      }
+      uiFlushed.value = true;
+      const buckets = new Array<number>(UI_BUCKET_COUNT);
+      const source = uiBuckets.value;
+      for (let index = 0; index < UI_BUCKET_COUNT; index += 1) {
+        buckets[index] = source[index] ?? 0;
+      }
+      scheduleOnRN(onUiTransfer, {
+        runId,
+        final: true,
+        count: uiCount.value,
+        sumMs: uiSumMs.value,
+        minMs: uiMinMs.value,
+        maxMs: uiMaxMs.value,
+        buckets,
+      });
+      return;
+    }
+
     const delta = frameInfo.timeSincePreviousFrame;
     if (delta === undefined || delta === null) {
       return;
     }
-    const transfer = recordUiFrame(uiAccumulator.value, runId, delta);
-    if (transfer !== undefined) {
-      scheduleOnRN(onUiTransfer, transfer);
+
+    const nextCount = uiCount.value + 1;
+    uiCount.value = nextCount;
+    uiSumMs.value += delta;
+    uiElapsedMs.value += delta;
+    if (nextCount === 1) {
+      uiMinMs.value = delta;
+      uiMaxMs.value = delta;
+    } else {
+      uiMinMs.value = Math.min(uiMinMs.value, delta);
+      uiMaxMs.value = Math.max(uiMaxMs.value, delta);
     }
+    const bucketIndex = uiBucketIndex(delta);
+    uiBuckets.modify((buckets) => {
+      buckets[bucketIndex] = (buckets[bucketIndex] ?? 0) + 1;
+      return buckets;
+    }, false);
+
+    if (uiElapsedMs.value - uiLastTransferMs.value < UI_TRANSFER_INTERVAL_MS) {
+      return;
+    }
+    uiLastTransferMs.value = uiElapsedMs.value;
+    const buckets = new Array<number>(UI_BUCKET_COUNT);
+    const source = uiBuckets.value;
+    for (let index = 0; index < UI_BUCKET_COUNT; index += 1) {
+      buckets[index] = source[index] ?? 0;
+    }
+    scheduleOnRN(onUiTransfer, {
+      runId,
+      final: false,
+      count: uiCount.value,
+      sumMs: uiSumMs.value,
+      minMs: uiMinMs.value,
+      maxMs: uiMaxMs.value,
+      buckets,
+    });
   });
 
   useEffect(() => {
     controller.attachHost();
     controller.start({ scenario, durationMs }, runId);
-    beginUiRun(uiAccumulator.value, runId);
 
     const timers: ReturnType<typeof setTimeout>[] = [];
     let disposed = false;
+
+    // Engine metric (F1.7): enqueue → commit stays separate from the
+    // native input → presented path. One sample per scripted event, measured
+    // on the RN runtime through the session's own commit listener.
+    let lastEnqueueAt: number | undefined;
+    const subscription = session.addCommitListener(() => {
+      if (lastEnqueueAt !== undefined) {
+        summary.record('input-to-commit-ms', Date.now() - lastEnqueueAt);
+        lastEnqueueAt = undefined;
+      }
+    });
+    const enqueue = (event: ScriptedPointerEvent) => {
+      if (disposed) {
+        return;
+      }
+      lastEnqueueAt = Date.now();
+      if (event.kind === 'begin') {
+        session.input.begin('primary', event.pointerId, { x: event.x, y: event.y });
+      } else if (event.kind === 'move') {
+        session.input.move('primary', event.pointerId, { x: event.x, y: event.y });
+      } else {
+        session.input.end('primary', event.pointerId);
+      }
+    };
 
     const finishRun = () => {
       if (session.status !== 'disposed') {
         session.pause();
       }
-      // Final UI summary travels UI→RN; the controller completes the run
-      // only when it lands (no race between the two sides).
+      // Stop frame recording immediately, then explicitly flush on the UI
+      // runtime. Waiting for another frame after pausing the session can
+      // strand the controller if no callback is delivered. Both paths share
+      // `uiFlushed`, so a racing frame callback cannot emit twice.
+      runEnded.value = true;
       runOnUI(() => {
         'worklet';
-        const transfer = flushUi(uiAccumulator.value, runId);
-        if (transfer !== undefined) {
-          scheduleOnRN(onUiTransfer, transfer);
+        if (uiFlushed.value) {
+          return;
         }
+        uiFlushed.value = true;
+        const buckets = new Array<number>(UI_BUCKET_COUNT);
+        const source = uiBuckets.value;
+        for (let index = 0; index < UI_BUCKET_COUNT; index += 1) {
+          buckets[index] = source[index] ?? 0;
+        }
+        scheduleOnRN(onUiTransfer, {
+          runId,
+          final: true,
+          count: uiCount.value,
+          sumMs: uiSumMs.value,
+          minMs: uiMinMs.value,
+          maxMs: uiMaxMs.value,
+          buckets,
+        });
       })();
       controller.setInputStages(rawCount.value, forwardedCount.value);
       controller.finishHost(summary, durationMs, 'brick-breaker');
@@ -135,20 +242,7 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
 
     const schedule = buildScenarioSchedule(scenario, durationMs);
     for (const event of schedule) {
-      timers.push(
-        setTimeout(() => {
-          if (disposed) {
-            return;
-          }
-          if (event.kind === 'begin') {
-            session.input.begin('primary', event.pointerId, { x: event.x, y: event.y });
-          } else if (event.kind === 'move') {
-            session.input.move('primary', event.pointerId, { x: event.x, y: event.y });
-          } else {
-            session.input.end('primary', event.pointerId);
-          }
-        }, event.atMs),
-      );
+      timers.push(setTimeout(() => enqueue(event), event.atMs));
     }
 
     if (scenario === 'stall') {
@@ -172,6 +266,7 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
       for (const timer of timers) {
         clearTimeout(timer);
       }
+      subscription.remove();
       controller.detachHost();
       if (session.status !== 'disposed') {
         session.dispose();
@@ -183,11 +278,17 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
     forwardedCount,
     onUiTransfer,
     rawCount,
+    runEnded,
     runId,
     scenario,
     session,
     summary,
-    uiAccumulator,
+    uiBuckets,
+    uiCount,
+    uiFlushed,
+    uiMaxMs,
+    uiMinMs,
+    uiSumMs,
   ]);
 
   return (
@@ -198,7 +299,11 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
         instrumentation={viewInstrumentation}
         style={styles.game}
       >
-        <GamePointerInput game={session} action="primary" instrumentation={pointerInstrumentation} />
+        <GamePointerInput
+          game={session}
+          action="primary"
+          instrumentation={pointerInstrumentation}
+        />
       </GameView>
     </View>
   );
@@ -220,19 +325,15 @@ function buildScenarioSchedule(
   if (scenario === 'native-drag') {
     return [];
   }
-  const tap: readonly ScriptedPointerEvent[] = [
-    { atMs: TAP_AT_MS, kind: 'begin', pointerId: 1, x: 160, y: 90 },
-    { atMs: TAP_AT_MS + 16, kind: 'end', pointerId: 1, x: 160, y: 90 },
-  ];
   if (scenario !== 'engine-drag') {
-    // idle-active and stall: a tap starts play, then the ball flies alone.
-    return tap;
+    // The lab-only definition starts in play, so idle and stall need no input.
+    return [];
   }
   // The drag schedule fits inside the remaining window so its terminal
   // `end` fires before the duration timer.
-  return generateDragSchedule(durationMs - TAP_AT_MS, 16, 320).map((event) => ({
+  return generateDragSchedule(durationMs - INPUT_AT_MS, 16, 320).map((event) => ({
     ...event,
-    atMs: event.atMs + TAP_AT_MS,
+    atMs: event.atMs + INPUT_AT_MS,
   }));
 }
 
