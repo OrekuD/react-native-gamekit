@@ -12,7 +12,7 @@ import {
   type GameSession,
   type GameSessionStatus,
 } from './types';
-import { NOOP_DIAGNOSTICS, type SessionDiagnostics } from './diagnostics';
+import type { SessionDiagnostics } from './diagnostics';
 import { createDeepFreeze, type DeepFreezer } from './deepFreeze';
 
 const DEFAULT_FIXED_STEP_MS = 1000 / 60;
@@ -104,7 +104,9 @@ export function createGameSessionWithDriver<
   const fixedStepMs = options.fixedStepMs ?? DEFAULT_FIXED_STEP_MS;
   const maxCatchUpSteps = options.maxCatchUpSteps ?? DEFAULT_MAX_CATCH_UP_STEPS;
   const maxFrameDeltaMs = options.maxFrameDeltaMs ?? fixedStepMs * DEFAULT_MAX_CATCH_UP_STEPS;
-  const diagnostics = options.diagnostics ?? NOOP_DIAGNOSTICS;
+  // F4: keep diagnostics optional and guard every measurement — the disabled
+  // path must perform no timing reads, callbacks, or wrapper allocations.
+  const diagnostics = options.diagnostics;
   const deepFreeze: DeepFreezer = createDeepFreeze();
 
   if (!(fixedStepMs > 0) || !Number.isFinite(fixedStepMs)) {
@@ -198,7 +200,7 @@ export function createGameSessionWithDriver<
     const hardCut = hardCutPending;
     hardCutPending = false;
     publishedThisCallback = true;
-    const publishStart = now();
+    const publishStart = diagnostics === undefined ? 0 : now();
     const frame = Object.freeze({
       scene: sceneName,
       previous: previousSnapshot,
@@ -213,9 +215,11 @@ export function createGameSessionWithDriver<
     for (const listener of [...listeners]) {
       listener(frame);
     }
-    diagnostics.onPublish(now() - publishStart);
-    diagnostics.onCommitNotification();
-    diagnostics.onListenerCount(listeners.size);
+    if (diagnostics !== undefined) {
+      diagnostics.onPublish(now() - publishStart);
+      diagnostics.onCommitNotification();
+      diagnostics.onListenerCount(listeners.size);
+    }
   };
 
   const pauseInternal = () => {
@@ -386,7 +390,9 @@ export function createGameSessionWithDriver<
       }
       frameHandle = undefined;
       publishedThisCallback = false;
-      diagnostics.onDisplayCallback();
+      if (diagnostics !== undefined) {
+        diagnostics.onDisplayCallback();
+      }
 
       // A pending external transition commits at the next fixed-step boundary
       // without advancing simulation tick/time.
@@ -433,13 +439,15 @@ export function createGameSessionWithDriver<
           stepsRan = true;
           const nextTick = tick + 1;
           const nextSceneTick = activeScene.sceneTick + 1;
-          const sampleStart = now();
+          const sampleStart = diagnostics === undefined ? 0 : now();
           const input = inputBuffer.sample();
-          diagnostics.onInputSample(now() - sampleStart);
+          if (diagnostics !== undefined) {
+            diagnostics.onInputSample(now() - sampleStart);
+          }
           const scope: UpdateScope = {};
           activeUpdateScope = scope;
           updateInProgress = true;
-          const updateStart = now();
+          const updateStart = diagnostics === undefined ? 0 : now();
           const nextState = freezeObject(
             activeScene.definition.update({
               state: activeScene.state,
@@ -454,7 +462,9 @@ export function createGameSessionWithDriver<
           );
           activeUpdateScope = undefined;
           updateInProgress = false;
-          diagnostics.onUpdate(now() - updateStart);
+          if (diagnostics !== undefined) {
+            diagnostics.onUpdate(now() - updateStart);
+          }
           const intent = scope.intent;
           if (isDisposed()) {
             return;
@@ -465,14 +475,24 @@ export function createGameSessionWithDriver<
             // hard-cut frame publishes at the end of this presentation callback.
             commitTransition(intent, nextState, nextTick, true);
             accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
+            // F4: the transition consumed one fixed step; report it as such
+            // and never as a zero-step callback (zero-step fires only when
+            // no step ran at all).
+            if (diagnostics !== undefined) {
+              diagnostics.onFixedStep();
+            }
             break;
           }
-          const snapshotStart = now();
+          const snapshotStart = diagnostics === undefined ? 0 : now();
           const rawSnapshot = activeScene.definition.snapshot({ state: nextState });
-          diagnostics.onSnapshot(now() - snapshotStart);
-          const freezeStart = now();
+          if (diagnostics !== undefined) {
+            diagnostics.onSnapshot(now() - snapshotStart);
+          }
+          const freezeStart = diagnostics === undefined ? 0 : now();
           const nextSnapshot = deepFreeze(rawSnapshot);
-          diagnostics.onDeepFreeze(now() - freezeStart);
+          if (diagnostics !== undefined) {
+            diagnostics.onDeepFreeze(now() - freezeStart);
+          }
           if (isDisposed()) {
             return;
           }
@@ -483,9 +503,11 @@ export function createGameSessionWithDriver<
           tick = nextTick;
           accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
           catchUpSteps += 1;
-          diagnostics.onFixedStep();
-          if (catchUpSteps > 1) {
-            diagnostics.onCatchUpStep();
+          if (diagnostics !== undefined) {
+            diagnostics.onFixedStep();
+            if (catchUpSteps > 1) {
+              diagnostics.onCatchUpStep();
+            }
           }
         }
       } catch (error) {
@@ -498,11 +520,15 @@ export function createGameSessionWithDriver<
       if (catchUpSteps === maxCatchUpSteps && accumulatorMs >= fixedStepMs) {
         const droppedSteps = Math.floor(accumulatorMs / fixedStepMs);
         accumulatorMs %= fixedStepMs;
-        diagnostics.onDroppedDebt(droppedSteps);
+        if (diagnostics !== undefined) {
+          diagnostics.onDroppedDebt(droppedSteps);
+        }
       }
 
-      if (catchUpSteps === 0) {
-        diagnostics.onZeroStepCallback();
+      if (catchUpSteps === 0 && !stepsRan) {
+        if (diagnostics !== undefined) {
+          diagnostics.onZeroStepCallback();
+        }
       }
 
       if (stepsRan && !publishedThisCallback) {

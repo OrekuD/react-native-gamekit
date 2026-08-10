@@ -110,4 +110,74 @@ describe('session diagnostics sink (T1)', () => {
     driver.fireNext(10);
     assert.equal(session.getRenderFrame().tick, 1);
   });
+
+  it('performs zero diagnostics clock reads and zero sink calls without a sink (F4)', () => {
+    const driver = new ManualFrameDriver();
+    const session = createGameSessionWithDriver(createCounterGame(), {
+      frameDriver: driver,
+      fixedStepMs: 10,
+    });
+    const originalNow = performance.now.bind(performance);
+    let clockReads = 0;
+    // @ts-expect-error patching the global clock for the duration of the test
+    performance.now = () => {
+      clockReads += 1;
+      return originalNow();
+    };
+    try {
+      session.start();
+      for (let frame = 0; frame < 20; frame += 1) {
+        driver.fireNext(frame * 10);
+      }
+    } finally {
+      // @ts-expect-error restoring the global clock
+      performance.now = originalNow;
+    }
+    assert.equal(clockReads, 0, 'no timing reads on the disabled diagnostics path');
+    assert.equal(session.status, 'running');
+  });
+
+  it('reports a transition-during-update step as fixed, never as zero-step (F4)', () => {
+    const { events, sink } = createRecordingSink();
+    const driver = new ManualFrameDriver();
+    const session = createGameSessionWithDriver(
+      defineGame({
+        viewport,
+        assets: [],
+        input: {},
+        scenes: {
+          a: defineScene({
+            actions: [],
+            transitions: ['b'],
+            create: () => ({})
+            ,
+            update: ({ transition }) => {
+              transition.setScene('b');
+              return {};
+            },
+            snapshot: () => ({}),
+          }),
+          b: defineScene({
+            actions: [],
+            create: () => ({})
+            ,
+            update: ({ state }) => ({ ready: state.ready ?? 1 }),
+            snapshot: ({ state }) => ({ ready: state.ready }),
+          }),
+        },
+        initialScene: 'a',
+      }),
+      {
+        frameDriver: driver,
+        fixedStepMs: 10,
+        diagnostics: sink,
+      },
+    );
+    session.start();
+    driver.fireNext(0); // baseline frame
+    driver.fireNext(10); // one fixed step that transitions mid-update
+
+    assert.ok(events.includes('fixed-step'), 'the transition step ran a fixed step');
+    assert.ok(!events.includes('zero-step'), 'a step that transitions early is not zero-step');
+  });
 });

@@ -2,9 +2,10 @@
  * Internal performance diagnostics sink.
  *
  * The session calls these hooks only when a sink is supplied through the
- * testing seam. Production sessions pass no sink and pay only a `?.` check per
- * hook. This is intentionally NOT a public diagnostics API: its usefulness is
- * being proven by the playground Performance Lab before any public contract.
+ * testing seam. Production sessions pass no sink and pay no timing reads,
+ * callbacks, or wrapper allocation on the disabled path (F4). This is
+ * intentionally NOT a public diagnostics API: its usefulness is being proven
+ * by the playground Performance Lab before any public contract.
  */
 export interface SessionDiagnostics {
   /** A presentation callback was delivered by the frame driver. */
@@ -32,19 +33,3 @@ export interface SessionDiagnostics {
   /** Listener count at publish time. */
   onListenerCount(count: number): void;
 }
-
-/** Default sink that does nothing; the zero-overhead production path. */
-export const NOOP_DIAGNOSTICS: SessionDiagnostics = {
-  onDisplayCallback() {},
-  onZeroStepCallback() {},
-  onFixedStep() {},
-  onCatchUpStep() {},
-  onDroppedDebt() {},
-  onUpdate() {},
-  onInputSample() {},
-  onSnapshot() {},
-  onDeepFreeze() {},
-  onPublish() {},
-  onCommitNotification() {},
-  onListenerCount() {},
-};
