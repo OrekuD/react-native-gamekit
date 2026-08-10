@@ -33,6 +33,8 @@ type MutableInputState = MutableButtonState | MutablePointerState;
 interface InputBuffer<TActionName extends string> {
   readonly controller: InputController<TActionName>;
   sample(): InputFrame<TActionName>;
+  /** Clear scene-local edges while retaining pointers that remain physically down. */
+  resetForTransition(targetActions: readonly string[]): void;
   reset(): void;
 }
 
@@ -269,6 +271,35 @@ export function createInputBuffer<TInput extends InputMap>(
           return entry.state as PointerState;
         },
       });
+    },
+    resetForTransition(targetActions: readonly string[]) {
+      const targetActionSet = new Set(targetActions);
+      for (const [action, state] of states) {
+        const preservePointer =
+          state.kind === 'pointer' &&
+          state.ownsSlot &&
+          state.active &&
+          targetActionSet.has(action);
+
+        if (state.kind === 'pointer') {
+          if (!preservePointer) {
+            state.ownsSlot = false;
+            state.active = false;
+            state.pointerId = undefined;
+            state.position = undefined;
+          }
+          state.pendingBegin = undefined;
+          state.delta.x = 0;
+          state.delta.y = 0;
+        } else {
+          // Buttons are semantic scene actions rather than a continuous spatial
+          // gesture. Do not leak a held button into a newly created scene.
+          state.held = false;
+        }
+        state.pressed = false;
+        state.released = false;
+        state.cancelled = false;
+      }
     },
     reset() {
       for (const state of states.values()) {

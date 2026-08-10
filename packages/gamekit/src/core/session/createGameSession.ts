@@ -246,14 +246,21 @@ export function createGameSessionWithDriver<
    * Transition to `targetName` following the deterministic ordering:
    * prepare the target -> dispose the outgoing scene exactly once -> advance
    * session time when the request came from a successful update -> install
-   * the new scene with scene-local time reset -> clear input and
-   * interpolation debt -> install hard-cut snapshots.
+   * the new scene with scene-local time reset -> clear scene-local input edges
+   * and interpolation debt -> install hard-cut snapshots. An update-scoped
+   * transition may retain a physically active pointer when the target scene
+   * consumes the same action; external transitions still perform a full reset.
    *
    * On any preparation or disposal failure the old scene and its state are
    * retained, session tick/time are left unchanged, and the original error is
    * rethrown after cleaning up any partially created target.
    */
-  const commitTransition = (intent: TransitionIntent, outgoingFinalState: unknown, advanceTimeTick: number | undefined) => {
+  const commitTransition = (
+    intent: TransitionIntent,
+    outgoingFinalState: unknown,
+    advanceTimeTick: number | undefined,
+    preserveActivePointers = false,
+  ) => {
     const targetName = intent.kind === 'restart' ? activeScene.name : intent.name;
     const targetDefinition = erasedSceneMap[targetName];
     if (targetDefinition === undefined) {
@@ -305,7 +312,11 @@ export function createGameSessionWithDriver<
     sceneName = targetName;
     currentSnapshot = targetSnapshot;
     previousSnapshot = targetSnapshot;
-    inputBuffer.reset();
+    if (preserveActivePointers) {
+      inputBuffer.resetForTransition(targetDefinition.actions);
+    } else {
+      inputBuffer.reset();
+    }
     // Keep the accumulated timing fraction: discarding it would make the tick
     // count depend on presentation rate (acceptance criterion 11). The hard cut
     // is still published with alpha 0 via `hardCutPending`.
@@ -452,7 +463,7 @@ export function createGameSessionWithDriver<
             // A transition requested during update commits after this update
             // completes successfully. The update consumed one fixed step; the
             // hard-cut frame publishes at the end of this presentation callback.
-            commitTransition(intent, nextState, nextTick);
+            commitTransition(intent, nextState, nextTick, true);
             accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
             break;
           }

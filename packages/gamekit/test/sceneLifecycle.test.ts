@@ -470,6 +470,60 @@ describe('transition ordering and failure semantics', () => {
     assert.equal(afterTransition.current.held, false, 'input reset after transition');
   });
 
+  it('continues an active pointer through an input-triggered scene transition', () => {
+    const game = defineGame({
+      viewport,
+      assets: [],
+      input: { primary: { type: 'pointer' } },
+      scenes: {
+        ready: defineScene({
+          actions: ['primary'],
+          transitions: ['play'],
+          create: () => ({}),
+          update: ({ state, input, transition }) => {
+            if (input.pointer('primary').pressed) {
+              transition.setScene('play');
+            }
+            return state;
+          },
+          snapshot: () => null,
+        }),
+        play: defineScene({
+          actions: ['primary'],
+          create: () => ({ active: false, x: 0 }),
+          update: ({ state, input }) => {
+            const pointer = input.pointer('primary');
+            return {
+              active: pointer.active,
+              x: pointer.position?.x ?? state.x,
+            };
+          },
+          snapshot: ({ state }) => state,
+        }),
+      },
+      initialScene: 'ready',
+    });
+    const driver = new ManualFrameDriver();
+    const session = createGameSessionWithDriver(game, { frameDriver: driver, fixedStepMs: 10 });
+    session.start();
+    driver.fireNext(0);
+
+    session.input.begin('primary', 7, { x: 20, y: 30 });
+    driver.fireNext(10);
+    assert.equal(session.scene, 'play');
+
+    // This is still pointer 7 from the same physical touch. Requiring a new
+    // begin here makes a swipe-to-start look like a paddle that froze.
+    session.input.move('primary', 7, { x: 80, y: 30 });
+    driver.fireNext(20);
+    const frame = session.getRenderFrame();
+    if (frame.scene !== 'play') {
+      assert.fail(`expected play scene, got ${String(frame.scene)}`);
+    }
+    assert.equal(frame.current.active, true);
+    assert.equal(frame.current.x, 80);
+  });
+
   it('keeps the old scene and pauses when target preparation fails', () => {
     const log: SceneLifecycleLog = { name: 'x', events: [] };
     let failPlayCreate = false;

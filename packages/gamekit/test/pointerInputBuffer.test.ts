@@ -190,6 +190,51 @@ describe('pointer input buffer', () => {
     assert.deepEqual(pointer.delta, { x: 0, y: 0 });
   });
 
+  it('preserves a physically active pointer across an update-scoped scene transition', () => {
+    const buffer = createBuffer();
+    buffer.controller.press('boost');
+    buffer.controller.begin('primary', 4, { x: 20, y: 30 });
+    buffer.controller.move('primary', 4, { x: 40, y: 50 });
+
+    // The outgoing scene consumes the press and movement edges before it asks
+    // to transition. The new scene should inherit only the physical pointer,
+    // never stale edges, deltas, or a held button.
+    buffer.sample();
+    buffer.resetForTransition(['primary']);
+
+    const inherited = buffer.sample();
+    assert.deepEqual(inherited.button('boost'), {
+      held: false,
+      pressed: false,
+      released: false,
+      cancelled: false,
+    });
+    assert.deepEqual(inherited.pointer('primary'), {
+      active: true,
+      pressed: false,
+      released: false,
+      cancelled: false,
+      pointerId: 4,
+      position: { x: 40, y: 50 },
+      delta: { x: 0, y: 0 },
+    });
+
+    buffer.controller.move('primary', 4, { x: 90, y: 70 });
+    assert.deepEqual(buffer.sample().pointer('primary').position, { x: 90, y: 70 });
+  });
+
+  it('does not preserve an active pointer when the target scene does not consume it', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 9, { x: 10, y: 20 });
+    buffer.sample();
+    buffer.resetForTransition([]);
+
+    const pointer = buffer.sample().pointer('primary');
+    assert.equal(pointer.active, false);
+    assert.equal(pointer.pointerId, undefined);
+    assert.equal(pointer.position, undefined);
+  });
+
   it('rejects unknown actions', () => {
     const buffer = createBuffer();
     assert.throws(() => buffer.controller.press('missing' as 'boost'), /Unknown input action: missing/);
