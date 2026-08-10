@@ -1,0 +1,213 @@
+---
+title: Create Your First Game
+description: Build and render a small interactive 2D scene with React Native GameKit.
+---
+
+# Create Your First Game
+
+This example creates one scene containing a circle that follows your finger.
+It covers the complete GameKit path: define the simulation, create a session,
+render it with Skia, and connect native pointer input.
+
+Complete [Installation](./installation) before starting. Your app must run as a
+native development build; Expo Go is not a supported requirement.
+
+## Create the game screen
+
+Add a screen such as `MyFirstGameScreen.tsx`:
+
+```tsx
+import { Circle, Fill, Group, select } from '@shopify/react-native-skia';
+import { useEffect, useState } from 'react';
+import { StyleSheet } from 'react-native';
+import { useDerivedValue } from 'react-native-reanimated';
+
+import {
+  createGameSession,
+  defineGame,
+  defineScene,
+} from 'react-native-gamekit';
+import {
+  GamePointerInput,
+  GameView,
+  type GameRendererProps,
+} from 'react-native-gamekit/react';
+
+const WORLD_WIDTH = 320;
+const WORLD_HEIGHT = 180;
+const PLAYER_RADIUS = 12;
+
+const playScene = defineScene({
+  actions: ['move'],
+
+  create: () => ({
+    x: WORLD_WIDTH / 2,
+    y: WORLD_HEIGHT / 2,
+  }),
+
+  update: ({ state, input }) => {
+    const pointer = input.pointer('move');
+    const position = pointer.position;
+
+    if (
+      !pointer.active ||
+      position === undefined ||
+      (position.x === state.x && position.y === state.y)
+    ) {
+      return state;
+    }
+
+    return { x: position.x, y: position.y };
+  },
+
+  snapshot: ({ state }) => state,
+});
+
+const gameDefinition = defineGame({
+  viewport: {
+    logicalSize: { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+    mode: 'fit',
+  },
+
+  input: {
+    move: { type: 'pointer' },
+  },
+
+  scenes: {
+    play: playScene,
+  },
+
+  initialScene: 'play',
+});
+
+type RendererProps = GameRendererProps<
+  typeof gameDefinition.scenes
+>;
+
+function GameRenderer({ frame, alpha, viewport }: RendererProps) {
+  const worldTransform = useDerivedValue(() => {
+    const surface = viewport.value;
+
+    return [
+      { translateX: surface?.offsetX ?? 0 },
+      { translateY: surface?.offsetY ?? 0 },
+      { scale: surface?.scale ?? 0 },
+    ];
+  });
+
+  const player = useDerivedValue(() => {
+    const commit = frame.value;
+
+    if (commit.scene !== 'play') {
+      return { x: 0, y: 0, radius: 0 };
+    }
+
+    return {
+      x:
+        commit.previous.x +
+        (commit.current.x - commit.previous.x) * alpha.value,
+      y:
+        commit.previous.y +
+        (commit.current.y - commit.previous.y) * alpha.value,
+      radius: PLAYER_RADIUS,
+    };
+  });
+
+  return (
+    <>
+      <Fill color="#0f172a" />
+      <Group transform={worldTransform}>
+        <Circle
+          cx={select(player, 'x')}
+          cy={select(player, 'y')}
+          r={select(player, 'radius')}
+          color="#a78bfa"
+        />
+      </Group>
+    </>
+  );
+}
+
+export function MyFirstGameScreen() {
+  const [session] = useState(() => createGameSession(gameDefinition));
+
+  useEffect(() => {
+    return () => session.dispose();
+  }, [session]);
+
+  return (
+    <GameView game={session} renderer={GameRenderer} style={styles.game}>
+      <GamePointerInput game={session} action="move" />
+    </GameView>
+  );
+}
+
+const styles = StyleSheet.create({
+  game: {
+    flex: 1,
+  },
+});
+```
+
+Mount `MyFirstGameScreen` from your app or navigation layer. Touch and drag
+inside the game surface to move the circle.
+
+## What each part owns
+
+### `defineScene`
+
+The scene owns the rules for one part of the game:
+
+- `create` returns its initial authoritative state;
+- `update` receives one immutable input snapshot per fixed simulation tick and
+  returns the next state;
+- `snapshot` exposes the compact data needed by the renderer.
+
+Return a new object when state changes. Returning the existing `state` object is
+the correct no-change path; never mutate it.
+
+### `defineGame`
+
+The game definition connects the logical viewport, semantic input actions, and
+named scenes. It is static configuration and does not start a game by itself.
+The `fit` viewport preserves the 320 × 180 world on phones and tablets while
+letterboxing when the surface has a different aspect ratio.
+
+### `createGameSession`
+
+The session is the live, stateful instance. This screen creates it once and
+owns its cleanup. `GameView` starts the session while mounted and pauses it when
+the app backgrounds or the view unmounts, but it deliberately does not dispose
+the externally owned session.
+
+### `GameRenderer`
+
+The renderer is a fixed Skia component tree. It receives shared values instead
+of React state:
+
+- `frame` contains the previous and current simulation snapshots;
+- `alpha` is the UI-runtime interpolation fraction between those snapshots;
+- `viewport` maps logical world coordinates onto the current phone or tablet
+  surface.
+
+The grouped `player` value and Skia `select()` calls keep the moving entity on
+one derived mapper. The entire world transform is applied once to the parent
+`Group`.
+
+### `GamePointerInput`
+
+The pointer adapter covers the game surface and forwards logical coordinates to
+the declared `move` action. The scene reads that action during its next fixed
+simulation tick. Drawing and hit testing use the same resolved viewport, so
+touches continue to line up after rotation and resizing.
+
+## The important boundary
+
+Do not put positions, velocities, timers, or tick counters in React state.
+React owns the screen, the session lifetime, and static overlays. The GameKit
+session owns simulation state, while Reanimated and Skia present committed
+snapshots on the UI runtime.
+
+Next, read [Game Definition and Session](../concepts/game-definition) for the
+full scene contract and [Scenes and Transitions](../concepts/scenes-and-transitions)
+when your game needs menus, levels, or game-over states.
