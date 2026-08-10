@@ -2,6 +2,7 @@ import { Canvas } from '@shopify/react-native-skia';
 import {
   createContext,
   useEffect,
+  useMemo,
   useRef,
   type ComponentType,
   type ReactNode,
@@ -87,6 +88,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   style,
   instrumentation,
 }: GameViewProps<TScenes, TInput>) {
+  const instrumentationRef = useRef(instrumentation);
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
   const running = useSharedValue(true);
@@ -102,12 +104,20 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
     bindingRef.current = new ViewportBinding(game.viewport);
   }
   const binding = bindingRef.current;
+  const viewportContext = useMemo<GameViewport>(
+    () => ({ binding, viewport: viewportValue }),
+    [binding, viewportValue],
+  );
+
+  useEffect(() => {
+    instrumentationRef.current = instrumentation;
+  }, [instrumentation]);
 
   useEffect(() => {
     epoch.value += 1;
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
-      instrumentation?.onPresentCommit?.(nextFrame.revision, Date.now());
+      instrumentationRef.current?.onPresentCommit?.(nextFrame.revision, Date.now());
     });
     const cleanupLifecycle = bindAppLifecycle(AppState, {
       getStatus: () => game.status,
@@ -127,9 +137,15 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
     return () => {
       cleanupLifecycle();
       cleanupBinding();
-      binding.dispose();
     };
-  }, [binding, epoch, frame, game, instrumentation, running]);
+  }, [epoch, frame, game, running]);
+
+  useEffect(
+    () => () => {
+      binding.dispose();
+    },
+    [binding],
+  );
 
   // UI-owned alpha clock: advances only while the session is running,
   // resets on every new commit, clamps at 1 and holds (no extrapolation).
@@ -159,7 +175,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   });
 
   return (
-    <GameViewportContext.Provider value={{ binding, viewport: viewportValue }}>
+    <GameViewportContext.Provider value={viewportContext}>
       <View
         style={[styles.surface, style]}
         onLayout={(event) => {
