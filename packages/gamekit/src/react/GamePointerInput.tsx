@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import {
   GestureDetector,
@@ -6,7 +6,7 @@ import {
   useManualGesture,
   type ManualGestureConfig,
 } from 'react-native-gesture-handler';
-import { useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import type { InputMap, PointerInputAction, SceneMap } from '../definition/types';
@@ -26,7 +26,7 @@ import {
   type PointerCoalescerInput,
   type PointerCoalescerState,
 } from './pointerCoalescer';
-import { PointerBinding } from './pointerBinding';
+import { PointerBinding, type PointerPacket } from './pointerBinding';
 
 /** Declared pointer action names of an input map. */
 type PointerActionName<TInput extends InputMap> = {
@@ -90,25 +90,60 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     createPointerCoalescerState(maxMoveIntervalMs),
   );
   const viewportBinding = viewportContext.binding;
+  // F6: the binding identity includes the declared action, the session input
+  // controller, and the viewport owner; changing any of them recreates it.
   const binding = useMemo(
     () => new PointerBinding(action, game.input, () => viewportBinding.resolved),
     [action, game, viewportBinding],
   );
+  // F6: UI-runtime mirror of the binding epoch. Every scheduled packet is
+  // stamped with the epoch it was scheduled under; packets that were already
+  // in flight when the epoch advanced are rejected on the RN runtime.
+  const bindingEpoch = useSharedValue(binding.epoch);
+  const bumpEpoch = useCallback(() => {
+    binding.invalidate();
+    bindingEpoch.value = binding.epoch;
+  }, [binding, bindingEpoch]);
 
-  // JS-thread handler (never captured by gesture worklets): dispatch one
-  // coalesced event into the binding, which re-validates against the viewport
-  // and forwards into the session input buffer.
-  const forwardEventOnJS = useCallback(
-    (event: CoalescedPointerEvent) => {
-      if (event.kind === 'begin') {
-        binding.handleTouchesDown(event.pointerId, event.x, event.y);
-      } else if (event.kind === 'move') {
-        binding.handleTouchesMove(event.pointerId, event.x, event.y);
-      } else if (event.kind === 'end') {
-        binding.handleTouchesUp(event.pointerId, event.x, event.y);
-      } else {
-        binding.handleTouchesCancelled();
+  // F2: one UI-owned sampler forwards a deferred trailing move from the
+  // frame clock while a pointer is active, so the paddle never trails after
+  // native touch movement pauses. The callback is registered only while a
+  // pointer is down (React state mirrors the coalescer's active pointer, set
+  // from the worklets on touch boundaries) — no permanent frame callback.
+  const [pointerActive, setPointerActive] = useState(false);
+  const reportPointerActive = useCallback((active: boolean) => {
+    setPointerActive(active);
+  }, []);
+
+  useFrameCallback(
+    () => {
+      'worklet';
+      if (coalescerState.value.active === undefined) {
+        return;
       }
+      const batch = advanceSharedCoalescer(coalescerState, {
+        kind: 'flush',
+        nowMs: Date.now(),
+      });
+      for (const forwarded of batch) {
+        instrumentation?.onForwarded?.(
+          forwarded.kind,
+          'pointerId' in forwarded ? forwarded.pointerId : -1,
+          Date.now(),
+        );
+        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+      }
+    },
+    pointerActive,
+  );
+
+  // JS-thread handler (never captured by gesture worklets): the binding
+  // rejects packets stamped with a stale epoch (layout revision, binding
+  // replacement, unmount) and re-validates the viewport before forwarding
+  // into the session input buffer.
+  const forwardEventOnJS = useCallback(
+    (packet: PointerPacket) => {
+      binding.dispatch(packet);
     },
     [binding],
   );
@@ -146,11 +181,12 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           'pointerId' in forwarded ? forwarded.pointerId : -1,
           Date.now(),
         );
-        scheduleOnRN(forwardEventOnJS, forwarded);
+        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
+      scheduleOnRN(reportPointerActive, true);
       GestureStateManager.activate(event.handlerTag);
     },
-    [coalescerState, forwardEventOnJS, instrumentation, viewportShared],
+    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive, viewportShared],
   );
 
   const handleTouchesMove = useCallback<ManualTouchHandler>(
@@ -171,11 +207,11 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
             'pointerId' in forwarded ? forwarded.pointerId : -1,
             Date.now(),
           );
-          scheduleOnRN(forwardEventOnJS, forwarded);
+          scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
         }
       }
     },
-    [coalescerState, forwardEventOnJS, instrumentation],
+    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation],
   );
 
   const handleTouchesUp = useCallback<ManualTouchHandler>(
@@ -196,14 +232,15 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
             'pointerId' in forwarded ? forwarded.pointerId : -1,
             Date.now(),
           );
-          scheduleOnRN(forwardEventOnJS, forwarded);
+          scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
         }
       }
+      scheduleOnRN(reportPointerActive, false);
       if (deactivateAfterUp(event.numberOfTouches)) {
         GestureStateManager.deactivate(event.handlerTag);
       }
     },
-    [coalescerState, forwardEventOnJS, instrumentation],
+    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
   );
 
   const handleTouchesCancel = useCallback<ManualTouchHandler>(
@@ -216,10 +253,11 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       });
       for (const forwarded of batch) {
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
-        scheduleOnRN(forwardEventOnJS, forwarded);
+        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
+      scheduleOnRN(reportPointerActive, false);
     },
-    [coalescerState, forwardEventOnJS, instrumentation],
+    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
   );
 
   const handleFinalize = useCallback<ManualFinalizeHandler>(
@@ -235,10 +273,11 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       });
       for (const forwarded of batch) {
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
-        scheduleOnRN(forwardEventOnJS, forwarded);
+        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
+      scheduleOnRN(reportPointerActive, false);
     },
-    [coalescerState, forwardEventOnJS, instrumentation],
+    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
   );
 
   // RNGH 3 re-registers its gesture callbacks whenever this config identity
@@ -264,16 +303,25 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   const gesture = useManualGesture(gestureConfig);
 
   useEffect(() => {
-    // PointerBinding reads the latest viewport lazily, so a layout revision
-    // should not cancel an in-flight drag. Cleanup still cancels on unmount.
+    // F6: a layout revision advances the epoch so queued packets from the
+    // old layout die on arrival, while the active gesture keeps flowing
+    // (the binding reads the viewport lazily and the coalescer state is
+    // preserved) — rotation and split-view resizing keep working mid-drag.
+    const unsubscribeLayout = viewportBinding.subscribe(() => {
+      bumpEpoch();
+    });
     return () => {
+      unsubscribeLayout();
+      // Unmount: bump the epoch BEFORE cancellation so packets already in
+      // flight become harmless no-ops, then release the recognizer state.
+      bumpEpoch();
       if (game.status !== 'disposed') {
         binding.cancel();
       }
       coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
       binding.dispose();
     };
-  }, [binding, coalescerState, game, maxMoveIntervalMs]);
+  }, [binding, bindingEpoch, bumpEpoch, coalescerState, game, maxMoveIntervalMs, viewportBinding]);
 
   return (
     <GestureDetector gesture={gesture}>

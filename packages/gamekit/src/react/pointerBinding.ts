@@ -1,6 +1,16 @@
 import type { InputController } from '../core/input/types';
 import type { Point2D } from '../geometry/types';
 import { containsSurfacePoint, surfaceToWorld, type ResolvedViewport2D } from '../viewport2d';
+import type { CoalescedPointerEvent } from './pointerCoalescer';
+
+/**
+ * A coalesced pointer event stamped with the binding epoch it was scheduled
+ * under (F6). Packets scheduled before a layout revision or binding
+ * replacement carry the old epoch and are rejected on the RN runtime, so a
+ * stale begin cannot reacquire input with old coordinates and a stale
+ * terminal edge cannot release a newer capture that reused the pointer id.
+ */
+export type PointerPacket = CoalescedPointerEvent & { readonly epoch: number };
 
 /** The identity a pointer binding is scoped to. */
 export interface PointerBindingIdentity<TName extends string> {
@@ -63,6 +73,7 @@ export class PointerBinding<TActionName extends string> {
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
   #disposed = false;
+  #epoch = 0;
 
   constructor(
     action: TActionName,
@@ -72,6 +83,48 @@ export class PointerBinding<TActionName extends string> {
     this.#action = action;
     this.#input = input;
     this.#getViewport = getViewport;
+  }
+
+  /**
+   * The current packet epoch. Packets scheduled under an older epoch are
+   * rejected; the epoch is bumped by `invalidate()` before cancellation or
+   * replacement so callbacks already in flight become harmless no-ops.
+   */
+  get epoch(): number {
+    return this.#epoch;
+  }
+
+  /** Bump the epoch, invalidating every packet scheduled so far. Idempotent. */
+  invalidate(): void {
+    this.#epoch += 1;
+  }
+
+  /**
+   * Dispatch a coalesced packet stamped with its scheduling epoch.
+   *
+   * Returns `false` (and forwards nothing) when the binding is disposed or
+   * the packet belongs to a stale epoch; the active gesture's newer packets
+   * keep flowing under the current epoch with the latest viewport.
+   */
+  dispatch(packet: PointerPacket): boolean {
+    if (this.#disposed || packet.epoch !== this.#epoch) {
+      return false;
+    }
+    switch (packet.kind) {
+      case 'begin':
+        this.handleTouchesDown(packet.pointerId, packet.x, packet.y);
+        break;
+      case 'move':
+        this.handleTouchesMove(packet.pointerId, packet.x, packet.y);
+        break;
+      case 'end':
+        this.handleTouchesUp(packet.pointerId, packet.x, packet.y);
+        break;
+      case 'cancel':
+        this.handleTouchesCancelled();
+        break;
+    }
+    return true;
   }
 
   /**

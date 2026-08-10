@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { InputController } from '../src/core/input/types.ts';
-import { createPointerBinding, PointerBinding } from '../src/react/pointerBinding.ts';
+import { createPointerBinding, PointerBinding, type PointerPacket } from '../src/react/pointerBinding.ts';
 import { bindAppLifecycle, type AppLifecycleSource } from '../src/react/bindAppLifecycle.ts';
 import { ViewportBinding } from '../src/react/viewportBinding.ts';
 import { resolveViewport2D, type ResolvedViewport2D } from '../src/viewport2d/index.ts';
@@ -101,6 +101,74 @@ describe('PointerBinding', () => {
     const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
     binding.begin(2, { x: 195, y: 400 });
     assert.match(input.events[0] ?? '', /^begin:primary:2:/);
+  });
+
+  it('dispatch routes packets stamped with the current epoch (F6)', () => {
+    const input = new RecordingInputController();
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const epoch = binding.epoch;
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 7, x: 195, y: 400, epoch }), true);
+    assert.equal(binding.dispatch({ kind: 'move', pointerId: 7, x: 195, y: 500, epoch }), true);
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 7, x: 195, y: 500, epoch }), true);
+    assert.deepEqual(input.events, [
+      'begin:primary:7:160.00:71.95',
+      // handleTouchesUp forwards the final position before releasing.
+      'move:primary:7:160.00:154.00',
+      'move:primary:7:160.00:154.00',
+      'end:primary:7',
+    ]);
+  });
+
+  it('rejects every packet kind from a stale epoch after invalidation (F6)', () => {
+    const input = new RecordingInputController();
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const oldEpoch = binding.epoch;
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: oldEpoch }), true);
+    binding.invalidate();
+    const stale: PointerPacket[] = [
+      { kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: oldEpoch },
+      { kind: 'move', pointerId: 1, x: 195, y: 500, epoch: oldEpoch },
+      { kind: 'end', pointerId: 1, x: 195, y: 500, epoch: oldEpoch },
+      { kind: 'cancel', epoch: oldEpoch },
+    ];
+    for (const packet of stale) {
+      assert.equal(binding.dispatch(packet), false, 'stale packet rejected');
+    }
+    assert.deepEqual(input.events, ['begin:primary:1:160.00:71.95'], 'no stale edge reached the buffer');
+  });
+
+  it('a stale terminal edge cannot release a newer capture reusing the pointer id (F6)', () => {
+    const input = new RecordingInputController();
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const firstEpoch = binding.epoch;
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: firstEpoch }), true);
+    // Layout revision invalidates the first gesture; its queued end is stale.
+    binding.invalidate();
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: firstEpoch }), false);
+    // A newer gesture reuses the same native pointer id under the new epoch.
+    const secondEpoch = binding.epoch;
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: secondEpoch }), true);
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: secondEpoch }), true);
+    assert.deepEqual(input.events, [
+      'begin:primary:4:160.00:71.95',
+      'begin:primary:4:160.00:71.95',
+      'move:primary:4:160.00:71.95',
+      'end:primary:4',
+    ], 'the stale end never released the newer capture');
+  });
+
+  it('invalidate and cancel are idempotent and ordering-safe (F6)', () => {
+    const input = new RecordingInputController();
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    binding.invalidate();
+    binding.invalidate();
+    binding.cancel();
+    binding.cancel();
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch }), true);
+    binding.invalidate();
+    binding.dispose();
+    binding.dispose();
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch }), false);
   });
 });
 
