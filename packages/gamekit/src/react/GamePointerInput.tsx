@@ -1,20 +1,40 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { GestureDetector, GestureStateManager, useManualGesture } from 'react-native-gesture-handler';
+import {
+  GestureDetector,
+  GestureStateManager,
+  useManualGesture,
+  type ManualGestureConfig,
+} from 'react-native-gesture-handler';
+import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import type { InputMap, PointerInputAction, SceneMap } from '../definition/types';
 import type { GameSession } from '../core/session/types';
 import { GameViewportContext } from './GameView';
+import {
+  canBeginPrimaryPointer,
+  cancelOnActiveFinalize,
+  deactivateAfterUp,
+} from './gestureLifecycle';
 import type { GamePointerInstrumentation } from './instrumentation';
 import { isBeginAllowed } from './pointerContainment';
-import { createPointerCoalescer, type CoalescedPointerEvent, type PointerCoalescer } from './pointerCoalescer';
-import { createPointerBinding, type PointerBindingEntry } from './pointerBinding';
+import {
+  createPointerCoalescerState,
+  reducePointerCoalescer,
+  type CoalescedPointerEvent,
+  type PointerCoalescerInput,
+  type PointerCoalescerState,
+} from './pointerCoalescer';
+import { PointerBinding } from './pointerBinding';
 
 /** Declared pointer action names of an input map. */
 type PointerActionName<TInput extends InputMap> = {
   [TName in Extract<keyof TInput, string>]: TInput[TName] extends PointerInputAction ? TName : never;
 }[Extract<keyof TInput, string>];
+
+type ManualTouchHandler = NonNullable<ManualGestureConfig['onTouchesDown']>;
+type ManualFinalizeHandler = NonNullable<ManualGestureConfig['onFinalize']>;
 
 /** Props for the pointer input adapter that covers the game surface. */
 export interface GamePointerInputProps<TScenes extends SceneMap, TInput extends InputMap> {
@@ -26,13 +46,14 @@ export interface GamePointerInputProps<TScenes extends SceneMap, TInput extends 
   readonly instrumentation?: GamePointerInstrumentation;
 }
 
-interface BindingEntry<TScenes extends SceneMap, TInput extends InputMap, TName extends string>
-  extends PointerBindingEntry<TName> {
-  readonly game: GameSession<TScenes, TInput>;
-  readonly viewportContext: unknown;
-  readonly coalescer: PointerCoalescer;
-  /** Bumped on layout revisions: the coalescer is recreated with fresh state. */
-  readonly layoutRevision: number;
+function advanceSharedCoalescer(
+  sharedState: SharedValue<PointerCoalescerState>,
+  input: PointerCoalescerInput,
+): readonly CoalescedPointerEvent[] {
+  'worklet';
+  const transition = reducePointerCoalescer(sharedState.value, input);
+  sharedState.value = transition.state;
+  return transition.events;
 }
 
 /**
@@ -47,8 +68,11 @@ interface BindingEntry<TScenes extends SceneMap, TInput extends InputMap, TName 
  * authoritative in the session input buffer, which re-validates every
  * forwarded event on the JS side.
  *
- * The binding and coalescer are recreated whenever the session, action, or
- * viewport context identity changes, and the previous binding is disposed.
+ * All separately registered touch-handler worklets share one explicit
+ * coalescer SharedValue; closure-local mutation is not used because each
+ * handler can receive its own serialized closure copy. The binding is stable
+ * across ordinary React renders and is recreated only when its semantic
+ * session, action, or viewport owner changes.
  */
 export function GamePointerInput<TScenes extends SceneMap, TInput extends InputMap>({
   game,
@@ -61,39 +85,15 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     throw new Error('GamePointerInput must be rendered inside a GameView');
   }
   const viewportShared = viewportContext.viewport;
-  // A layout revision invalidates the transform under an active gesture. The
-  // UI-side coalescer state cannot be reset from JS (the worklet holds its
-  // own snapshot), so the revision bumps this value and the coalescer is
-  // recreated with fresh state; the rebuilt gesture worklets capture it.
-  const [layoutRevision, setLayoutRevision] = useState(0);
-
-  const bindingRef = useRef<
-    BindingEntry<TScenes, TInput, Extract<keyof TInput, string>> | null
-  >(null);
-  let entry = bindingRef.current;
-  if (
-    entry === null ||
-    entry.game !== game ||
-    entry.viewportContext !== viewportContext ||
-    entry.layoutRevision !== layoutRevision
-  ) {
-    const result = createPointerBinding(
-      { input: game.input, action, viewport: viewportContext },
-      () => viewportContext.binding.resolved,
-      entry ?? undefined,
-    );
-    entry = {
-      ...result.entry,
-      game,
-      viewportContext,
-      // One fixed step: the default maximum coalescing delay (T7).
-      coalescer: createPointerCoalescer(game.getRenderFrame().stepMs),
-      layoutRevision,
-    };
-    bindingRef.current = entry;
-  }
-  const binding = entry.binding;
-  const coalescer = entry.coalescer;
+  const maxMoveIntervalMs = game.getRenderFrame().stepMs;
+  const coalescerState = useSharedValue<PointerCoalescerState>(() =>
+    createPointerCoalescerState(maxMoveIntervalMs),
+  );
+  const viewportBinding = viewportContext.binding;
+  const binding = useMemo(
+    () => new PointerBinding(action, game.input, () => viewportBinding.resolved),
+    [action, game, viewportBinding],
+  );
 
   // JS-thread handler (never captured by gesture worklets): dispatch one
   // coalesced event into the binding, which re-validates against the viewport
@@ -113,24 +113,33 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     [binding],
   );
 
-  // RNGH 3 hook API: the config object is rebuilt per render (the hooks diff
-  // it internally); the wrapped JS-thread handlers keep explicit 'worklet'
-  // directives because useCallback wrapping defeats auto-workletization.
-  const gesture = useManualGesture({
-    onTouchesDown: (event) => {
+  const handleTouchesDown = useCallback<ManualTouchHandler>(
+    (event) => {
       'worklet';
       const touch = event.changedTouches[0];
       if (touch === undefined) {
         return;
       }
       instrumentation?.onRawTouch?.('down', touch.id, Date.now());
+      // This adapter owns one primary pointer for the whole native gesture.
+      // If another touch is already present, it cannot replace a pointer that
+      // ended earlier while the manual recognizer is still active.
+      if (!canBeginPrimaryPointer(event.numberOfTouches)) {
+        return;
+      }
       // UI-side containment mirror: an invalid layout or `fit` letterbox
       // begin fails the gesture before it activates. JS re-validates.
       if (!isBeginAllowed(viewportShared.value, touch.x, touch.y)) {
         GestureStateManager.fail(event.handlerTag);
         return;
       }
-      const batch = coalescer.down(touch.id, touch.x, touch.y, Date.now());
+      const batch = advanceSharedCoalescer(coalescerState, {
+        kind: 'down',
+        pointerId: touch.id,
+        x: touch.x,
+        y: touch.y,
+        nowMs: Date.now(),
+      });
       for (const forwarded of batch) {
         instrumentation?.onForwarded?.(
           forwarded.kind,
@@ -141,11 +150,21 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       }
       GestureStateManager.activate(event.handlerTag);
     },
-    onTouchesMove: (event) => {
+    [coalescerState, forwardEventOnJS, instrumentation, viewportShared],
+  );
+
+  const handleTouchesMove = useCallback<ManualTouchHandler>(
+    (event) => {
       'worklet';
       for (const touch of event.changedTouches) {
         instrumentation?.onRawTouch?.('move', touch.id, Date.now());
-        const batch = coalescer.move(touch.id, touch.x, touch.y, Date.now());
+        const batch = advanceSharedCoalescer(coalescerState, {
+          kind: 'move',
+          pointerId: touch.id,
+          x: touch.x,
+          y: touch.y,
+          nowMs: Date.now(),
+        });
         for (const forwarded of batch) {
           instrumentation?.onForwarded?.(
             forwarded.kind,
@@ -156,11 +175,21 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         }
       }
     },
-    onTouchesUp: (event) => {
+    [coalescerState, forwardEventOnJS, instrumentation],
+  );
+
+  const handleTouchesUp = useCallback<ManualTouchHandler>(
+    (event) => {
       'worklet';
       for (const touch of event.changedTouches) {
         instrumentation?.onRawTouch?.('up', touch.id, Date.now());
-        const batch = coalescer.up(touch.id, touch.x, touch.y, Date.now());
+        const batch = advanceSharedCoalescer(coalescerState, {
+          kind: 'up',
+          pointerId: touch.id,
+          x: touch.x,
+          y: touch.y,
+          nowMs: Date.now(),
+        });
         for (const forwarded of batch) {
           instrumentation?.onForwarded?.(
             forwarded.kind,
@@ -170,36 +199,81 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           scheduleOnRN(forwardEventOnJS, forwarded);
         }
       }
+      if (deactivateAfterUp(event.numberOfTouches)) {
+        GestureStateManager.deactivate(event.handlerTag);
+      }
     },
-    onTouchesCancel: () => {
+    [coalescerState, forwardEventOnJS, instrumentation],
+  );
+
+  const handleTouchesCancel = useCallback<ManualTouchHandler>(
+    () => {
       'worklet';
       instrumentation?.onRawTouch?.('cancel', -1, Date.now());
-      const batch = coalescer.cancel(Date.now());
+      const batch = advanceSharedCoalescer(coalescerState, {
+        kind: 'cancel',
+        nowMs: Date.now(),
+      });
       for (const forwarded of batch) {
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
         scheduleOnRN(forwardEventOnJS, forwarded);
       }
     },
-  });
+    [coalescerState, forwardEventOnJS, instrumentation],
+  );
+
+  const handleFinalize = useCallback<ManualFinalizeHandler>(
+    () => {
+      'worklet';
+      if (!cancelOnActiveFinalize(coalescerState.value.active?.pointerId)) {
+        return;
+      }
+      instrumentation?.onRawTouch?.('cancel', -1, Date.now());
+      const batch = advanceSharedCoalescer(coalescerState, {
+        kind: 'cancel',
+        nowMs: Date.now(),
+      });
+      for (const forwarded of batch) {
+        instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
+        scheduleOnRN(forwardEventOnJS, forwarded);
+      }
+    },
+    [coalescerState, forwardEventOnJS, instrumentation],
+  );
+
+  // RNGH 3 re-registers its gesture callbacks whenever this config identity
+  // changes. Keep both the config and its worklets stable across unrelated
+  // React renders (for example, a score HUD update during a live drag).
+  const gestureConfig = useMemo<ManualGestureConfig>(
+    () => ({
+      shouldCancelWhenOutside: false,
+      onTouchesDown: handleTouchesDown,
+      onTouchesMove: handleTouchesMove,
+      onTouchesUp: handleTouchesUp,
+      onTouchesCancel: handleTouchesCancel,
+      onFinalize: handleFinalize,
+    }),
+    [
+      handleFinalize,
+      handleTouchesCancel,
+      handleTouchesDown,
+      handleTouchesMove,
+      handleTouchesUp,
+    ],
+  );
+  const gesture = useManualGesture(gestureConfig);
 
   useEffect(() => {
-    const unsubscribeLayout = viewportContext.binding.subscribe(() => {
-      // A layout revision invalidates the transform under an active gesture:
-      // cancel ownership here and recreate the coalescer (fresh UI state) —
-      // stale queued movement dies with the old worklet closures.
-      if (game.status !== 'disposed') {
-        binding.cancel();
-        setLayoutRevision((revision) => revision + 1);
-      }
-    });
+    // PointerBinding reads the latest viewport lazily, so a layout revision
+    // should not cancel an in-flight drag. Cleanup still cancels on unmount.
     return () => {
-      unsubscribeLayout();
       if (game.status !== 'disposed') {
         binding.cancel();
       }
+      coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
       binding.dispose();
     };
-  }, [binding, game, viewportContext]);
+  }, [binding, coalescerState, game, maxMoveIntervalMs]);
 
   return (
     <GestureDetector gesture={gesture}>

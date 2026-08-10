@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { createPointerCoalescer, type CoalescedPointerEvent } from '../src/react/pointerCoalescer';
+import {
+  createPointerCoalescer,
+  createPointerCoalescerState,
+  reducePointerCoalescer,
+  type CoalescedPointerEvent,
+  type PointerCoalescerInput,
+} from '../src/react/pointerCoalescer';
 import { isBeginAllowed } from '../src/react/pointerContainment';
 import { resolveViewport2D } from '../src/index';
 
@@ -10,6 +16,28 @@ const collect = (events: readonly CoalescedPointerEvent[]): readonly string[] =>
   events.map((event) => event.kind);
 
 describe('T7: pointer coalescer (pure state machine)', () => {
+  it('shares explicit state across separately registered worklet handlers', () => {
+    let sharedState = createPointerCoalescerState(INTERVAL);
+    const dispatch = (input: PointerCoalescerInput): readonly CoalescedPointerEvent[] => {
+      const transition = reducePointerCoalescer(sharedState, input);
+      sharedState = transition.state;
+      return transition.events;
+    };
+
+    // RNGH registers these as separate UI-runtime worklets. They cannot rely
+    // on a mutable object captured independently in each handler closure; the
+    // state passed through the shared-value seam must carry ownership across
+    // down, move, and up.
+    const onDown = () => dispatch({ kind: 'down', pointerId: 7, x: 10, y: 20, nowMs: 0 });
+    const onMove = () => dispatch({ kind: 'move', pointerId: 7, x: 90, y: 30, nowMs: 20 });
+    const onUp = () => dispatch({ kind: 'up', pointerId: 7, x: 100, y: 40, nowMs: 25 });
+
+    assert.deepEqual(collect(onDown()), ['begin']);
+    assert.deepEqual(collect(onMove()), ['move']);
+    assert.deepEqual(collect(onUp()), ['end']);
+    assert.equal(sharedState.active, undefined, 'the terminal handler releases ownership');
+  });
+
   it('forwards only the final move when hundreds arrive inside one interval', () => {
     const coalescer = createPointerCoalescer(INTERVAL);
     const forwarded: CoalescedPointerEvent[] = [];
@@ -54,7 +82,11 @@ describe('T7: pointer coalescer (pure state machine)', () => {
 
   it('down then up between ticks preserves both edges with the final coordinate', () => {
     const coalescer = createPointerCoalescer(INTERVAL);
-    const events = [...coalescer.down(1, 100, 200, 0), ...coalescer.up(1, 140, 220, 5)];
+    const events = [
+      ...coalescer.down(1, 100, 200, 0),
+      ...coalescer.move(1, 120, 210, 3),
+      ...coalescer.up(1, 140, 220, 5),
+    ];
     assert.deepEqual(collect(events), ['begin', 'end']);
     const end = events[1];
     assert.equal(end?.kind, 'end');
@@ -67,6 +99,7 @@ describe('T7: pointer coalescer (pure state machine)', () => {
   it('cancel neutralises exactly once', () => {
     const coalescer = createPointerCoalescer(INTERVAL);
     coalescer.down(1, 0, 0, 0);
+    coalescer.move(1, 20, 20, 5);
     assert.deepEqual(collect(coalescer.cancel(1)), ['cancel']);
     assert.deepEqual(collect(coalescer.cancel(2)), [], 'a second cancel is inert');
     assert.deepEqual(collect(coalescer.move(1, 5, 5, 5)), [], 'no movement survives the cancel');
