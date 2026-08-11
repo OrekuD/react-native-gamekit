@@ -1,3 +1,5 @@
+import type { CoalescedPointerEvent } from './pointerCoalescer';
+
 /**
  * Manual-gesture terminal lifecycle (F3).
  *
@@ -24,4 +26,30 @@ export function deactivateAfterUp(remainingTouches: number): boolean {
 export function cancelOnActiveFinalize(activePointerId: number | undefined): boolean {
   'worklet';
   return activePointerId !== undefined;
+}
+
+/**
+ * Sampler mirror for the F2 trailing flush (F2 lifecycle).
+ *
+ * The trailing-flush frame callback must stay active exactly while the
+ * coalescer owns a pointer. Returns `true` when a begin crossed (pointer
+ * owned), `false` when a terminal edge crossed (pointer released), and
+ * `undefined` for empty batches (secondary touches — never toggle the
+ * sampler) and flushed moves (the pointer stays owned).
+ */
+export function samplerMirrorFromBatch(
+  batch: readonly CoalescedPointerEvent[],
+): boolean | undefined {
+  'worklet';
+  if (batch.length === 0) {
+    return undefined;
+  }
+  const kind = batch[batch.length - 1]?.kind;
+  if (kind === 'begin') {
+    return true;
+  }
+  if (kind === 'end' || kind === 'cancel') {
+    return false;
+  }
+  return undefined;
 }

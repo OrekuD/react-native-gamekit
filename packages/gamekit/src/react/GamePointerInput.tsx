@@ -16,6 +16,7 @@ import {
   canBeginPrimaryPointer,
   cancelOnActiveFinalize,
   deactivateAfterUp,
+  samplerMirrorFromBatch,
 } from './gestureLifecycle';
 import type { GamePointerInstrumentation } from './instrumentation';
 import { isBeginAllowed } from './pointerContainment';
@@ -107,15 +108,16 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
 
   // F2: one UI-owned sampler forwards a deferred trailing move from the
   // frame clock while a pointer is active, so the paddle never trails after
-  // native touch movement pauses. The callback is registered only while a
-  // pointer is down (React state mirrors the coalescer's active pointer, set
-  // from the worklets on touch boundaries) — no permanent frame callback.
+  // native touch movement pauses. `autostart` is only consulted at creation,
+  // so the callback is created inactive and toggled at runtime with
+  // `setActive` whenever the React mirror of the coalescer's ownership
+  // changes — there is no permanent frame callback after the pointer exits.
   const [pointerActive, setPointerActive] = useState(false);
   const reportPointerActive = useCallback((active: boolean) => {
     setPointerActive(active);
   }, []);
 
-  useFrameCallback(
+  const frameCallback = useFrameCallback(
     () => {
       'worklet';
       if (coalescerState.value.active === undefined) {
@@ -134,8 +136,12 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
     },
-    pointerActive,
+    false,
   );
+
+  useEffect(() => {
+    frameCallback.setActive(pointerActive);
+  }, [frameCallback, pointerActive]);
 
   // JS-thread handler (never captured by gesture worklets): the binding
   // rejects packets stamped with a stale epoch (layout revision, binding
@@ -183,7 +189,10 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         );
         scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
-      scheduleOnRN(reportPointerActive, true);
+      const nextActive = samplerMirrorFromBatch(batch);
+      if (nextActive !== undefined) {
+        scheduleOnRN(reportPointerActive, nextActive);
+      }
       GestureStateManager.activate(event.handlerTag);
     },
     [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive, viewportShared],
@@ -217,6 +226,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   const handleTouchesUp = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
+      let nextActive: boolean | undefined;
       for (const touch of event.changedTouches) {
         instrumentation?.onRawTouch?.('up', touch.id, Date.now());
         const batch = advanceSharedCoalescer(coalescerState, {
@@ -234,8 +244,14 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           );
           scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
         }
+        const mirror = samplerMirrorFromBatch(batch);
+        if (mirror !== undefined) {
+          nextActive = mirror;
+        }
       }
-      scheduleOnRN(reportPointerActive, false);
+      if (nextActive !== undefined) {
+        scheduleOnRN(reportPointerActive, nextActive);
+      }
       if (deactivateAfterUp(event.numberOfTouches)) {
         GestureStateManager.deactivate(event.handlerTag);
       }
@@ -255,7 +271,10 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
         scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
-      scheduleOnRN(reportPointerActive, false);
+      const nextActive = samplerMirrorFromBatch(batch);
+      if (nextActive !== undefined) {
+        scheduleOnRN(reportPointerActive, nextActive);
+      }
     },
     [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
   );
@@ -275,7 +294,10 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
         scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
       }
-      scheduleOnRN(reportPointerActive, false);
+      const nextActive = samplerMirrorFromBatch(batch);
+      if (nextActive !== undefined) {
+        scheduleOnRN(reportPointerActive, nextActive);
+      }
     },
     [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
   );
