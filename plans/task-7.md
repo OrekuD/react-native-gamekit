@@ -1325,3 +1325,298 @@ still remain governed by the T7.1 fixtures.
 Official documentation and the installed dependency types/source are the
 authority for implementation details. If they disagree, record the exact
 installed-version behaviour and do not silently code to a different release.
+
+---
+
+## Feedback — T7.0 follow-up review
+
+**Review status (2026-08-11):** the first follow-up fixed the original inactive
+trailing-flush callback, the array-owned deep-freeze traversal, duplicate
+latency samples, the obvious binding-epoch mismatch, and the earlier plan
+checkbox contradictions. The implementation is substantially stronger, but
+T7.0 should be treated as **reopened** until the items below are resolved. T7.1
+must not use the current latency numbers as an accepted input-to-visible
+baseline.
+
+Work in the listed order. F1 defines whether the native-input measurement is
+valid; F2 and F3 close remaining pointer lifecycle races; F4 makes the
+performance gate auditable; F5 reconciles the plan only after the code and
+evidence are correct.
+
+### F1 — Measure an input-bearing presentation, not an unrelated commit
+
+**Priority:** Important · **Blocks:** T7.0 baseline acceptance and performance
+conclusions
+
+**Problem:** sequence numbers now prevent the same retained forward timestamp
+from being sampled repeatedly, but they do not establish causality. The UI
+runtime records a forward before `scheduleOnRN` necessarily delivers it to the
+session. `GameView` then invokes `onPresentCommit` when a new commit is assigned
+to its frame shared value on the RN runtime. That callback does not prove that:
+
+- the forwarded event reached the input buffer before the fixed step;
+- the commit contains the sampled input;
+- the UI runtime observed that commit; or
+- Skia presented the resulting frame.
+
+`latestForwarded` also retains only one value. When multiple forwards occur
+between presentation observations, earlier sequences can be overwritten. The
+current implementation therefore provides deduplicated latest-event sampling,
+not “each forwarded input consumed exactly once,” and the recorded 15/16/16 ms
+must remain labelled as a development-simulator proxy.
+
+#### Required approach
+
+1. Define the exact metric before changing code. Prefer distinct stages rather
+   than one ambiguous number:
+   - native/UI touch timestamp -> RN binding dispatch;
+   - accepted input -> first simulation commit that sampled it; and
+   - that commit -> first UI frame callback that observes its revision.
+2. Carry a monotonic forward sequence and timestamp with the pointer packet
+   across `scheduleOnRN`. Do not infer packet delivery by reading a separate
+   “latest” shared value later.
+3. Acknowledge the sequence only after `PointerBinding.dispatch()` accepts the
+   packet. Stale or rejected packets must never become latency samples.
+4. Associate the accepted sequence with the first fixed-step commit that
+   samples it. Preserve that association through the commit instrumentation so
+   an unrelated commit cannot consume the sequence.
+5. Observe the associated revision from the UI runtime on the first display
+   frame that sees it. If the available Skia API cannot prove actual GPU
+   presentation, name the metric honestly (for example,
+   `input-to-ui-observed`) and reserve `input-to-visible`/`input-to-present` for
+   a presentation primitive that provides that guarantee.
+6. Use a bounded, constant-space pending structure. Do not append an unbounded
+   per-input history to a shared value. If several inputs are intentionally
+   represented by one fixed-step commit, document whether the metric samples
+   the newest accepted input, the oldest, or one aggregate for that commit.
+7. Keep the existing engine-input enqueue -> commit measurement separate. It
+   must not be silently combined with native/UI pipeline latency.
+
+#### RED-first tests
+
+- [ ] A presentation callback that occurs before RN dispatch records no sample.
+- [ ] A commit that did not sample the forwarded input records no sample.
+- [ ] A rejected stale-epoch packet records no latency sample.
+- [ ] The first UI observation of the matching input-bearing revision records
+  exactly one sample; later observations of that revision record none.
+- [ ] Multiple forwards between commits follow the documented aggregation rule
+  without duplicate or falsely attributed samples.
+- [ ] Pending forwards at run end remain explicitly unmatched and do not become
+  fabricated samples.
+- [ ] Run replacement/reset clears every sequence, pending association, and
+  accumulator so a late event from the previous run cannot contaminate the
+  next result.
+
+#### Acceptance evidence
+
+- [ ] The result schema reports matched, unmatched, rejected, and superseded
+  forward counts so sample loss is explainable.
+- [ ] Simulator output is labelled as a proxy.
+- [ ] Release-like physical-device capture records the exact device, refresh
+  rate, build mode, run count, thermal state, and p50/p95/p99.
+
+### F2 — Deactivate the trailing-flush sampler on binding replacement
+
+**Priority:** Important · **Blocks:** pointer lifecycle correctness and the
+“no idle sampler” performance contract
+
+**Problem:** normal `up`, cancel, and finalization paths mirror the coalescer's
+terminal event into `pointerActive`. Binding cleanup instead resets the shared
+coalescer directly without clearing that React mirror. If `game`, `action`, or
+viewport-owner identity changes during an active touch, the sampler can remain
+mounted after the coalescer no longer owns a pointer and run an empty frame
+callback indefinitely. A later `up` can also produce an empty coalescer batch,
+so it is not guaranteed to repair the stale React state.
+
+#### Required approach
+
+1. Make sampler ownership belong to a specific binding generation, not to an
+   unqualified boolean that survives prop replacement. A state value such as
+   `{ bindingGeneration, active }` or an equivalent keyed owner makes a new
+   binding inactive by construction.
+2. During replacement, invalidate the old generation before accepting packets
+   for the new one, neutralize old input ownership exactly once, reset the
+   coalescer, and remove the old sampler.
+3. Do not rely on a future touch edge to perform cleanup. Replacement, unmount,
+   cancellation, and final pointer exit must each reach a complete terminal
+   state independently.
+4. Keep sampler mounting outside the per-frame React path. React state may
+   change on pointer/binding boundaries only; it must never mirror move events
+   or display frames.
+5. Retain the conditional-mount strategy unless device evidence shows a safer
+   supported Reanimated lifecycle. The previously attempted runtime
+   `setActive()` path crashed in this exact dependency stack and must not be
+   restored without a focused reproduction and dependency-source justification.
+
+#### RED-first tests
+
+- [ ] Active pointer -> replace `game` -> old sampler unmounts and old input is
+  neutralized exactly once.
+- [ ] Active pointer -> replace `action` -> no empty frame sampler remains.
+- [ ] Active pointer -> replace viewport owner -> old terminal callbacks are
+  harmless and the new binding starts inactive.
+- [ ] A late `up`, cancel, or finalize from the old generation cannot alter the
+  new generation's sampler state.
+- [ ] A fresh pointer on the replacement binding activates one sampler and its
+  terminal edge removes it.
+- [ ] Repeated replacement/unmount is idempotent and leaves no frame callback,
+  scheduled callback, binding, or input ownership behind.
+
+#### Acceptance evidence
+
+- [ ] Add a mounted adapter test or a narrow injected frame-sampler seam; pure
+  reducer tests alone do not prove React mount/unmount lifecycle.
+- [ ] Instrument active sampler count in the Performance Lab and prove it is
+  zero after pointer exit, replacement, close, and reopen.
+
+### F3 — Remove the post-commit/pre-effect epoch synchronization window
+
+**Priority:** Important · **Blocks:** immediate input after session/action/
+viewport-owner replacement
+
+**Problem:** the replacement binding starts at epoch zero while the shared
+epoch can still contain the previous binding's value. A passive `useEffect`
+re-synchronizes them after commit. New gesture callbacks can therefore be
+installed before synchronization finishes; an immediate touch can be stamped
+with the stale shared epoch and rejected by the fresh binding. The current
+“adapter-level” test manually copies `replacement.epoch` into a local value and
+does not mount the component or exercise React effect ordering.
+
+#### Required approach
+
+1. Prefer a monotonic adapter-owned binding generation that never resets to
+   zero. Stamp it directly into each worklet packet and make the RN binding
+   validate the same generation. Keep layout revision invalidation separate if
+   that makes ownership clearer.
+2. Do not repair mismatched owners after commit with a passive synchronization
+   effect. The packet producer and consumer must agree before the replacement
+   gesture can receive native events.
+3. If a layout-phase synchronization is used as an interim fix, prove from the
+   installed React/RNGH/Reanimated lifecycle that native input cannot arrive in
+   between. Do not assume `useLayoutEffect` is sufficient without the mounted
+   regression test.
+4. Preserve stale-packet rejection: delayed packets from the previous binding
+   or layout revision must remain rejected, including terminal packets using a
+   reused native pointer id.
+5. Ensure generation changes and sampler cleanup form one replacement
+   transition. Avoid independent effects whose ordering is the correctness
+   mechanism.
+
+#### RED-first tests
+
+- [ ] Invalidate the old binding, replace it, and dispatch a begin immediately
+  after the new commit but before passive effects; the begin is accepted.
+- [ ] A delayed packet from the old binding is rejected after replacement.
+- [ ] A stale terminal packet cannot release a new capture that reuses the same
+  native pointer id.
+- [ ] Replacement after one or more layout-epoch increments still accepts the
+  first new pointer without waiting for another render or layout event.
+- [ ] Game, action, and viewport-owner replacement each exercise the mounted
+  adapter path rather than only constructing two `PointerBinding` instances.
+
+#### Acceptance evidence
+
+- [ ] Run the immediate-touch replacement case repeatedly on the connected
+  iPhone development build and record the build/dependency versions.
+- [ ] Rotation and iPad split-view validation remain part of F7; simulator
+  tests cannot close those device gates.
+
+### F4 — Make the deep-freeze benchmark gate auditable and stable
+
+**Priority:** Important · **Blocks:** trusting the T3/F5 performance gate
+
+**Problem:** the benchmark prints one measurement for every size and then
+re-measures the 32- and 1,000-entity cases for its pass/fail gate. A single run
+during review printed 1.9x at 32 entities (below the documented 2.5x floor),
+then re-measured 3.4x and passed. The visible table and final verdict can thus
+contradict each other. The `iterations` parameter is also currently unused, so
+the smallest case measures only microseconds and is dominated by noise.
+
+#### Required approach
+
+1. Measure each configured size once per benchmark invocation, retain the
+   result object, print it, and gate that exact same result. Never run a hidden
+   second measurement for acceptance.
+2. Make each timed sample long enough to rise above timer and scheduler noise.
+   Use batched snapshot operations per sample, honor an explicit iteration
+   count, warm both implementations consistently, and report per-operation
+   time from the batch.
+3. Use several batches and a documented robust statistic such as the median.
+   Record dispersion or the observed range so an unstable threshold is visible.
+4. Keep the compared workloads equivalent. Both legacy and cached paths must
+   build the same logical frames and perform the same number of operations.
+5. If the result is too noisy to decide, fail or report the gate as
+   inconclusive; do not pass using a lucky second sample.
+6. Recalibrate floors only from recorded repeated runs on the documented Node
+   version and hardware. Preserve the complete floor history and explain why a
+   new floor still catches the legacy full-walk regression class.
+
+#### Tests and acceptance
+
+- [ ] Extract the gate decision into a pure helper and test values immediately
+  above and below each floor.
+- [ ] Prove the printed rows and gated values come from the same retained
+  measurement objects.
+- [ ] Run the benchmark at least five times; no invocation may print a failing
+  gated row and then report success.
+- [ ] Record Node version, CPU/device, iteration count, batch count, statistic,
+  corrected ranges, and final floors in the benchmark header and plan.
+- [ ] Retain tests for non-enumerable own values, inherited values, symbols,
+  canonical indices, numeric-looking non-indices, sparse arrays, cycles, and
+  getter failures.
+
+### F5 — Reconcile Task 7 and performance documentation with final evidence
+
+**Priority:** Important · **Depends on:** F1-F4
+
+**Problem:** the code and several tests are newer than the status prose. The F5
+performance entry still describes the rejected allocation-free `for-in` scan
+and the old 4x/8x floors; the F2 status omits the final conditional-sampler
+commit (`76908aa`); the latency prose overstates latest-event deduplication as
+consuming every forwarded input; and T7.0 checks off an open/close baseline
+without recording matching post-fix results.
+
+#### Required changes
+
+1. Update the F2 evidence to include the final conditional-sampler commit and
+   the mounted lifecycle tests introduced by F2/F3 above. Do not use raw ->
+   forwarded reduction alone as proof that the trailing frame flush ran.
+2. Rewrite the F5 status to describe `Object.getOwnPropertyNames` plus symbol
+   traversal, own/non-enumerable behaviour, canonical array-index handling,
+   and the final benchmark implementation and floors from F4.
+3. Replace “each forwarded input consumed exactly once” with the precise metric
+   semantics established in F1. Report matched and unmatched counts next to
+   latency percentiles.
+4. Either capture and archive the promised post-fix open/close lifecycle
+   baseline or reopen that T7.0 checkbox. Keep F7's 50-cycle Instruments/
+   Perfetto leak gate separate and open until the physical run exists.
+5. Record physical-device claims with the device model, OS, build mode,
+   dependency versions, exact scenario, and result. Do not let a dev simulator
+   proxy approve a hardware/release gate.
+6. Reconcile commit SHAs only after the final fixes land. Each status block must
+   point to the commit that contains the implementation currently described.
+7. Update the T7.0 status and completion date only when every reopened item has
+   direct evidence. F7 must remain open and device-gated.
+
+#### Final re-verification checklist
+
+- [ ] Focused RED/GREEN tests for F1-F4 pass.
+- [ ] Full GameKit and Playground test suites pass.
+- [ ] GameKit, Playground, and docs lint/typechecks pass.
+- [ ] GameKit build, Playground iOS export, and docs production build pass.
+- [ ] `pnpm test:coverage:gate` remains at or above 80% for the covered engine
+  modules.
+- [ ] `git diff --check` passes.
+- [ ] The committed plan contains no checked item whose required evidence is
+  absent or explicitly deferred.
+
+#### Review verification already completed
+
+The follow-up review itself made no runtime-code changes. It verified 184
+GameKit tests and 65 Playground tests, all three workspace lint/typecheck
+stages, the GameKit build, Playground iOS export, and the docs production
+build. The root `pnpm check --force` wrapper could not run in the review sandbox
+because its nested command expected a bare `pnpm` binary; the equivalent
+workspace stages were invoked individually through Corepack. The working tree
+also contained unrelated pre-existing skill, research, and temporary files;
+those are not part of this feedback.

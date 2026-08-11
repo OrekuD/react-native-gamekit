@@ -1,5 +1,11 @@
 import type { CoalescedPointerEvent } from './pointerCoalescer';
 
+/** RN-side mirror of whether the trailing-flush sampler should be mounted. */
+export interface SamplerMirrorState {
+  readonly generation: number;
+  readonly active: boolean;
+}
+
 /**
  * Manual-gesture terminal lifecycle (F3).
  *
@@ -52,4 +58,16 @@ export function samplerMirrorFromBatch(
     return false;
   }
   return undefined;
+}
+
+/**
+ * Apply a UI-originated sampler update only when it belongs to the current
+ * binding generation.
+ */
+export function reduceSamplerMirrorState(
+  currentGeneration: number,
+  previous: SamplerMirrorState,
+  next: SamplerMirrorState,
+): SamplerMirrorState {
+  return next.generation === currentGeneration ? next : previous;
 }

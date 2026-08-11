@@ -8,13 +8,14 @@ import {
 import { StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { PLAYGROUND_GAMES } from "../catalog/games";
-import { usePlaygroundStore } from "../state/playgroundStore";
+import { PLAYGROUND_GAMES, type PlaygroundGameId } from "../catalog/games";
 
 /** Catalog surface for the playground examples. */
-export default function HomeScreen() {
-  const openGame = usePlaygroundStore((state) => state.openGame);
-
+export default function HomeScreen({
+  onOpenGame,
+}: {
+  readonly onOpenGame: (gameId: PlaygroundGameId) => void;
+}) {
   return (
     <SafeAreaView edges={["bottom"]} style={styles.safeArea}>
       <Host
@@ -47,7 +48,7 @@ export default function HomeScreen() {
           {PLAYGROUND_GAMES.map((game) => (
             <ListItem
               key={game.id}
-              onPress={() => openGame(game.id)}
+              onPress={() => onOpenGame(game.id)}
               supportingText={game.description}
               testID={`game-row-${game.id}`}
               trailing={

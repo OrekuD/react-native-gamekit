@@ -1,16 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { PlaygroundGameScreenProps } from '../shell/PlaygroundGameScreenProps';
-import { usePlaygroundStore } from '../state/playgroundStore';
+import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
+import type { RunSurfaceEvent } from '../shell/runSurfaceState';
 import LabHost from './LabHost';
 import { LabRunController, issueRunId, type PerfScenarioId, type ScenarioResult } from './labRun';
 import { runOpenCloseCycles } from './scenarios';
 import { PerfSummary, type SeriesSnapshot } from './summary';
 
 const SCENARIO_DURATION_MS = 5_000;
-/** The mounted game pipeline occupies the top 55% of the screen. */
-const GAME_AREA_RATIO = 0.55;
 
 /** Module-level controller and results so the lab survives remounts. */
 const controller = new LabRunController({ onComplete: (result) => onCompleteRef.current?.(result) });
@@ -20,6 +19,8 @@ const moduleResults: ScenarioResult[] = [];
 const onCompleteRef: { current: ((result: ScenarioResult) => void) | undefined } = {
   current: undefined,
 };
+
+const ignoreRunSurfaceEvent = (_event: RunSurfaceEvent) => {};
 
 function formatSeries(snapshot: SeriesSnapshot): string {
   return `${snapshot.count} · p50 ${snapshot.p50.toFixed(2)} · p95 ${snapshot.p95.toFixed(2)} · p99 ${snapshot.p99.toFixed(2)} ms`;
@@ -66,19 +67,19 @@ function formatResult(result: ScenarioResult): string {
 }
 
 /**
- * Performance Lab — F1: scenarios run against the **mounted** game pipeline.
+ * Performance Lab content (F1): scenarios run against the shell's persistent
+ * mounted game pipeline.
  *
- * The host surface (top of the screen) mounts the same GameView, Skia
- * renderer, and pointer surface the catalog game uses; engine scenarios
- * script deterministic input into the session input buffer, the native-drag
- * scenario measures real RNGH touches, and UI frame deltas aggregate in
- * constant space on the UI runtime with at most one transfer per second.
- * The overlay can be hidden for Instruments/Maestro captures.
+ * The shell's single GameView/Skia renderer/pointer surface renders the run
+ * session; this content provides the run controls, the result cards, and
+ * the scenario host that drives each run. The overlay can be hidden for
+ * Instruments/Maestro captures.
  */
-export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenProps) {
-  const { height } = useWindowDimensions();
-  const openGame = usePlaygroundStore((state) => state.openGame);
-  const closeGame = usePlaygroundStore((state) => state.closeGame);
+export default function LabContent({
+  onExit,
+  onOpenGame,
+  onRunSurfaceEvent,
+}: PlaygroundGameContentProps) {
   const [results, setResults] = useState<readonly ScenarioResult[]>(() => [...moduleResults]);
   const [activeRun, setActiveRun] = useState<{ runId: number; scenario: PerfScenarioId } | null>(null);
   const [overlayHidden, setOverlayHidden] = useState(false);
@@ -101,7 +102,7 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
   };
 
   const runCycles = async () => {
-    const result = await runOpenCloseCycles(6, openGame, closeGame);
+    const result = await runOpenCloseCycles(6, onOpenGame, onExit);
     moduleResults.unshift({
       runId: issueRunId(),
       scenario: 'idle-active',
@@ -129,28 +130,12 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
     setResults([]);
   };
 
-  const gameAreaHeight = Math.round(height * GAME_AREA_RATIO);
-
   return (
-    <View style={styles.screen}>
-      <View style={[styles.gameArea, { height: gameAreaHeight }]}>
-        {activeRun === null ? (
-          <View style={styles.gamePlaceholder}>
-            <Text style={styles.gamePlaceholderText}>
-              Game pipeline idle — start a scenario to mount GameView + renderer + pointer surface
-            </Text>
-          </View>
-        ) : (
-          <LabHost
-            key={activeRun.runId}
-            runId={activeRun.runId}
-            scenario={activeRun.scenario}
-            durationMs={SCENARIO_DURATION_MS}
-            controller={controller}
-          />
-        )}
-      </View>
-
+    <SafeAreaView
+      edges={['top', 'right', 'bottom', 'left']}
+      pointerEvents="box-none"
+      style={styles.screen}
+    >
       <View style={styles.header}>
         <Pressable
           accessibilityLabel="Back to playground"
@@ -171,7 +156,7 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
         </Text>
       </View>
 
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+      <View style={styles.overlay}>
         {!overlayHidden ? (
           <>
             <View style={styles.buttons}>
@@ -200,123 +185,131 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
 
             {activeRun !== null ? (
               <Text style={styles.running}>
-                running: {activeRun.scenario} #{activeRun.runId} — the game pipeline above is live.
-                {'\n'}Native drag: touch and drag inside the game area.
+                running: {activeRun.scenario} #{activeRun.runId} — the game pipeline is live on this
+                surface. Native drag: touch and drag inside the game area.
               </Text>
             ) : null}
 
-            {results.map((result, index) => (
-              <View key={`${result.runId}-${result.scenario}-${index}`} style={styles.card}>
-                <Text style={styles.cardTitle}>
-                  #{result.runId} {result.scenario} · {result.game} · {result.durationMs} ms
-                </Text>
-                <Text style={styles.mono}>{formatResult(result)}</Text>
-              </View>
-            ))}
+            <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+              {results.map((result, index) => (
+                <View key={`${result.runId}-${result.scenario}-${index}`} style={styles.card}>
+                  <Text style={styles.cardTitle}>
+                    #{result.runId} {result.scenario} · {result.game} · {result.durationMs} ms
+                  </Text>
+                  <Text style={styles.mono}>{formatResult(result)}</Text>
+                </View>
+              ))}
+            </ScrollView>
           </>
         ) : (
           <Text style={styles.meta}>
             Overlay hidden for external captures. Tap Reset to restore controls.
           </Text>
         )}
-      </ScrollView>
-    </View>
+      </View>
+
+      {activeRun !== null ? (
+        <LabHost
+          key={activeRun.runId}
+          runId={activeRun.runId}
+          scenario={activeRun.scenario}
+          durationMs={SCENARIO_DURATION_MS}
+          controller={controller}
+          onRunSurfaceEvent={onRunSurfaceEvent ?? ignoreRunSurfaceEvent}
+        />
+      ) : null}
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
-    backgroundColor: '#080b12',
-  },
-  gameArea: {
-    backgroundColor: '#0f1420',
-    overflow: 'hidden',
-  },
-  gamePlaceholder: {
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  gamePlaceholderText: {
-    color: '#52525b',
-    fontSize: 12,
-    textAlign: 'center',
   },
   header: {
-    paddingHorizontal: 24,
-    paddingTop: 16,
+    backgroundColor: 'rgba(8, 11, 18, 0.92)',
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
   backButton: {
     alignSelf: 'flex-start',
-    marginBottom: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 999,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   backLabel: {
-    color: '#a78bfa',
-    fontSize: 15,
+    color: '#e2e8f0',
+    fontSize: 14,
     fontWeight: '600',
   },
   title: {
-    color: '#f4f4f5',
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: -0.4,
+    color: '#f8fafc',
+    fontSize: 22,
+    fontWeight: '800',
   },
   meta: {
-    color: '#71717a',
+    color: '#94a3b8',
     fontSize: 12,
-    fontVariant: ['tabular-nums'],
-    marginTop: 6,
+    marginBottom: 8,
+    marginTop: 4,
   },
-  body: {
+  overlay: {
+    backgroundColor: 'rgba(8, 11, 18, 0.94)',
     flex: 1,
-  },
-  bodyContent: {
-    padding: 24,
-    paddingBottom: 80,
+    marginTop: 'auto',
+    maxHeight: '58%',
+    paddingHorizontal: 16,
+    paddingTop: 8,
   },
   buttons: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-    marginBottom: 16,
   },
   button: {
-    backgroundColor: '#7c3aed',
-    borderRadius: 10,
+    backgroundColor: '#0ea5e9',
+    borderRadius: 999,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 8,
   },
   buttonGhost: {
-    backgroundColor: '#27272a',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   buttonLabel: {
-    color: '#ffffff',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  running: {
-    color: '#facc15',
-    fontSize: 13,
-    marginBottom: 12,
-  },
-  card: {
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    marginBottom: 12,
-    padding: 14,
-  },
-  cardTitle: {
-    color: '#e4e4e7',
+    color: '#082f49',
     fontSize: 13,
     fontWeight: '700',
-    marginBottom: 8,
+  },
+  running: {
+    color: '#fbbf24',
+    fontSize: 12,
+    marginTop: 10,
+  },
+  body: {
+    flex: 1,
+    marginTop: 10,
+  },
+  bodyContent: {
+    gap: 10,
+    paddingBottom: 24,
+  },
+  card: {
+    backgroundColor: '#0f172a',
+    borderRadius: 12,
+    padding: 12,
+  },
+  cardTitle: {
+    color: '#7dd3fc',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
   },
   mono: {
-    color: '#a1a1aa',
-    fontFamily: 'Menlo',
-    fontSize: 11,
-    lineHeight: 17,
+    color: '#cbd5e1',
+    fontFamily: 'Courier',
+    fontSize: 10,
+    lineHeight: 14,
   },
 });

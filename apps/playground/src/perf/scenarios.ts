@@ -13,9 +13,9 @@ export interface OpenCloseResult {
 /**
  * Measure repeated shell open/close cycles.
  *
- * Drives the real shell store so game screens mount and dispose their
- * sessions; the lab screen itself is replaced during each open, so results
- * are reported through a callback once the final close lands.
+ * Drives the shell's explicit navigation boundary. Each open creates a fresh
+ * session and each close hides and pauses it; replacement disposal is owned
+ * by the shell and occurs only after the new surface binding commits.
  */
 export async function runOpenCloseCycles(
   cycles: number,

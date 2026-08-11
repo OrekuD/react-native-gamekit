@@ -1,6 +1,7 @@
 import { Canvas } from '@shopify/react-native-skia';
 import {
   createContext,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,6 +16,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 
 import type { InputMap, SceneMap } from '../definition/types';
 import type { CommitFrame, GameSession } from '../core/session/types';
@@ -151,6 +153,13 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
     [binding],
   );
 
+  // F1: the first UI frame that sees a new commit revision is reported back
+  // to the RN runtime through scheduleOnRN — never by calling the JS hook
+  // directly from the UI worklet (cross-runtime calls crash the app).
+  const reportUiObserved = useCallback((revision: number, atMs: number) => {
+    instrumentationRef.current?.onUiRevisionObserved?.(revision, atMs);
+  }, []);
+
   // UI-owned alpha clock: advances only while the session is running,
   // resets on every new commit, clamps at 1 and holds (no extrapolation).
   useFrameCallback((frameInfo) => {
@@ -162,7 +171,7 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
     if (observedEpoch.value !== epoch.value || observedRevision.value !== envelope.revision) {
       observedEpoch.value = epoch.value;
       observedRevision.value = envelope.revision;
-      instrumentationRef.current?.onUiRevisionObserved?.(envelope.revision, Date.now());
+      scheduleOnRN(reportUiObserved, envelope.revision, Date.now());
     }
     const previousState = {
       epoch: clockEpoch.value,

@@ -16,7 +16,9 @@ import {
   canBeginPrimaryPointer,
   cancelOnActiveFinalize,
   deactivateAfterUp,
+  reduceSamplerMirrorState,
   samplerMirrorFromBatch,
+  type SamplerMirrorState,
 } from './gestureLifecycle';
 import type { GamePointerInstrumentation } from './instrumentation';
 import { isBeginAllowed } from './pointerContainment';
@@ -182,17 +184,17 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // replacement binding is inactive by construction and a stale terminal
   // edge from an older generation can never alter the current generation's
   // sampler state.
-  const [samplerState, setSamplerState] = useState<{ generation: number; active: boolean }>({
+  const [samplerState, setSamplerState] = useState<SamplerMirrorState>({
     generation: -1,
     active: false,
   });
   const reportSamplerState = useCallback(
-    (next: { generation: number; active: boolean }) => {
+    (next: SamplerMirrorState) => {
       setSamplerState((previous) =>
-        previous.generation === next.generation ? next : previous,
+        reduceSamplerMirrorState(generation, previous, next),
       );
     },
-    [],
+    [generation],
   );
 
   // F2 review: `autostart` is only consulted at creation (changing it later
@@ -459,17 +461,18 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
 
   return (
     <GestureDetector gesture={gesture}>
-      <View style={StyleSheet.absoluteFill} />
-      {samplerState.active && samplerState.generation === generation ? (
-        <TrailingFlushSampler
-          coalescerState={coalescerState}
-          forwardEventOnJS={forwardEventOnJS}
-          instrumentation={instrumentation}
-          layoutEpoch={layoutEpoch}
-          forwardSeq={forwardSeq}
-          generation={generation}
-        />
-      ) : null}
+      <View style={StyleSheet.absoluteFill}>
+        {samplerState.active && samplerState.generation === generation ? (
+          <TrailingFlushSampler
+            coalescerState={coalescerState}
+            forwardEventOnJS={forwardEventOnJS}
+            instrumentation={instrumentation}
+            layoutEpoch={layoutEpoch}
+            forwardSeq={forwardSeq}
+            generation={generation}
+          />
+        ) : null}
+      </View>
     </GestureDetector>
   );
 }

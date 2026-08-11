@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { samplerMirrorFromBatch } from '../src/react/gestureLifecycle';
+import {
+  reduceSamplerMirrorState,
+  samplerMirrorFromBatch,
+} from '../src/react/gestureLifecycle';
 import { createPointerCoalescer, type CoalescedPointerEvent } from '../src/react/pointerCoalescer';
 
 const INTERVAL = 16.7;
@@ -74,6 +77,28 @@ describe('sampler mirror (F2 lifecycle)', () => {
       samplerMirrorFromBatch([{ kind: 'move', pointerId: 1, x: 0, y: 0 }]),
       undefined,
       'a flushed move keeps the pointer owned',
+    );
+  });
+
+  it('accepts the first active update for the current generation', () => {
+    const previous = { generation: -1, active: false };
+    const next = { generation: 12, active: true };
+
+    assert.deepEqual(
+      reduceSamplerMirrorState(12, previous, next),
+      next,
+      'the initial begin must mount the sampler for the active generation',
+    );
+  });
+
+  it('rejects stale sampler updates from replaced generations', () => {
+    const previous = { generation: 12, active: true };
+    const stale = { generation: 11, active: false };
+
+    assert.deepEqual(
+      reduceSamplerMirrorState(12, previous, stale),
+      previous,
+      'old terminal edges must not unmount the current sampler',
     );
   });
 });
