@@ -315,6 +315,98 @@ describe('asset store ownership (T7.4)', () => {
     store.dispose();
   });
 
+  it('abort during an unshared decode disposes the late handle exactly once (RF5)', async () => {
+    const fakes = fakePipelines({ gated: true });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    const controller = new AbortController();
+    const pending = store.acquire({ groups: ['boot'], signal: controller.signal });
+    // Let the decode actually start (it is gated) before aborting.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+    await assert.rejects(() => pending, /ASSET_ABORTED/);
+    releaseGate(fakes.decodeGate);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(fakes.disposedHandles.length, 1, 'late handle disposed exactly once');
+    store.dispose();
+  });
+
+  it('abort one of two shared waiters; the survivor owns the handle (RF5)', async () => {
+    const fakes = fakePipelines({ gated: true });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    const aborter = new AbortController();
+    const first = store.acquire({ groups: ['boot'], signal: aborter.signal });
+    const second = store.acquire({ groups: ['boot'] });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    aborter.abort();
+    await assert.rejects(() => first, /ASSET_ABORTED/);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (fakes.decodeGate.length > 0) {
+        releaseGate(fakes.decodeGate);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const lease = await second;
+    assert.equal(lease.assets.get(manifest.boot.logo).width, 64, 'survivor resolves');
+    assert.equal(fakes.disposedHandles.length, 0, 'handle alive for the survivor');
+    lease.dispose();
+    assert.equal(fakes.disposedHandles.length, 2, 'final survivor release disposes');
+    store.dispose();
+  });
+
+  it('a shared decode rejection releases every waiter and leaves no references (RF5)', async () => {
+    const fakes = fakePipelines({
+      decodeError: (uri) => (uri.includes('/1.png') ? new Error('shared boom') : undefined),
+    });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    const first = store.acquire({ groups: ['boot'] });
+    const second = store.acquire({ groups: ['boot'] });
+    await assert.rejects(() => first, /shared boom/);
+    await assert.rejects(() => second, /shared boom/);
+    assert.equal(fakes.disposedHandles.length, 0, 'no handle ever owned');
+    store.dispose();
+  });
+
+  it('duplicate and reordered groups acquire each logical asset once (RF5)', async () => {
+    const fakes = fakePipelines();
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    const progress: number[] = [];
+    const lease = await store.acquire({
+      groups: ['boot', 'boot'],
+      onProgress: (p) => progress.push(p),
+    });
+    assert.equal(fakes.decodeCounts.get('file:///assets/1.png'), 1, 'one decode');
+    assert.equal(fakes.decodeCounts.get('file:///assets/2.png'), 1, 'one decode');
+    assert.deepEqual(progress, [0.5, 1], 'normalized progress');
+    lease.dispose();
+    assert.equal(fakes.disposedHandles.length, 2, 'each logical asset released once');
+    store.dispose();
+  });
+
+  it('store disposal eventually disposes every in-flight native handle (RF5)', async () => {
+    const fakes = fakePipelines({ gated: true });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    const controller = new AbortController();
+    const pending = store.acquire({ groups: ['boot'], signal: controller.signal });
+    // Let the first decode start (it is gated), then dispose the store.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    store.dispose();
+    // Attach the rejection handler before releasing the gate so the late
+    // rejection is never unhandled.
+    const rejection = assert.rejects(() => pending);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (fakes.decodeGate.length > 0) {
+        releaseGate(fakes.decodeGate);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await rejection;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // The started decode's late handle is disposed; no asset is acquired
+    // after disposal.
+    assert.equal(fakes.disposedHandles.length, 1, 'late in-flight handle disposed once');
+    void controller;
+  });
+
   it('lookup is descriptor-reference membership, not manifest identity (R9)', async () => {
     const sharedDescriptor = image(42);
     const first = defineAssets({ boot: { logo: sharedDescriptor } });

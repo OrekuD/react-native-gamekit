@@ -20,14 +20,20 @@ const TRACKED_MODULES = [
   'pointerCoalescer.ts',
   'pointerContainment.ts',
   'deepFreeze.ts',
-  // Task 7 executable modules (R8): the asset manifest/validation, the
-  // animation sampler/state, the sprite transform math, and the store.
+  // Task 7 executable modules (R8/RF9): the asset manifest/validation, the
+  // animation sampler/state, the sprite transform math, the store, the hook
+  // lifecycle, and the batch policy coordinator. Native components
+  // (Sprite/GameSprite/SpriteBatch/GameWorld2D) cannot run headlessly; their
+  // pure coordinators are gated here and mounted/native acceptance is
+  // recorded separately.
   'defineAssets.ts',
   'validation.ts',
   'sampleSpriteClip.ts',
   'spriteAnimationState.ts',
   'spriteTransform.ts',
   'createGameAssetStore.ts',
+  'useGameAssets.ts',
+  'spriteBatchPolicy.ts',
   // diagnostics.ts is intentionally excluded: it is a type-only interface
   // (F4 gating) with no runtime statements; its contract is enforced by the
   // session's zero-read tests, not by line coverage.

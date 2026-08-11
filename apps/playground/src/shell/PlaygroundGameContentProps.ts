@@ -1,5 +1,6 @@
 import type { GameSession } from 'react-native-gamekit';
 import type { GameAssetsState } from 'react-native-gamekit/react';
+import type { ReactNode } from 'react';
 import type { PlaygroundGameId } from '../catalog/games';
 import type { RunSurfaceEvent } from './runSurfaceState';
 
@@ -24,4 +25,6 @@ export interface PlaygroundGameContentProps {
   readonly assetState?: GameAssetsState<
     import('react-native-gamekit').AssetGroupMap
   >;
+  /** The shell-mounted asset controller for asset-backed games (RF2). */
+  readonly assetController?: ReactNode;
 }

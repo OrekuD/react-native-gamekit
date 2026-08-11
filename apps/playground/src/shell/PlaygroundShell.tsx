@@ -41,6 +41,30 @@ import { SpriteFieldRenderer } from '../renderers/SpriteFieldRenderer';
 /** The GameView's scene-map parameter when the surface treats games opaquely. */
 type SceneDefinitionMarkerMap = Record<string, SceneDefinitionMarker>;
 
+/**
+ * One immutable surface slot (RF2/RF3): the single binding unit for the
+ * renderer, content, pointer, and frame. A slot is either a loading slot
+ * (neutral canvas session, no assets, pointer disabled) or a complete ready
+ * slot (real session + the exact loaded lease). Ready assets are never
+ * paired with the neutral session, and the generation is allocated when the
+ * slot is constructed — never through a follow-up effect.
+ */
+interface SurfaceSlot {
+  readonly generation: number;
+  readonly gameId: PlaygroundGameId;
+  readonly status: 'loading' | 'ready';
+  /** Neutral canvas session while loading; the real gameplay session when ready. */
+  readonly session: GameSession;
+  readonly renderer: ComponentType<GameRendererProps<never>>;
+  readonly content: ComponentType<PlaygroundGameContentProps>;
+  /** Present exactly when ready (the exact lease the renderer borrows). */
+  readonly assets?: import('react-native-gamekit').LoadedAssets<never>;
+  /** Pointer active only when the real session is published. */
+  readonly pointer: boolean;
+  /** Sessions retired by this slot's construction, disposed after commit. */
+  readonly retiring: readonly GameSession[];
+}
+
 
 
 const FADE_DURATION_MS = 180;
@@ -54,6 +78,52 @@ const FADE_DURATION_MS = 180;
  * replacement binding. Game content supplies HUD and controls without owning
  * or disposing the native surface.
  */
+/**
+ * RF2: the asset controller mounts only while a Sprite Field request is
+ * active. It owns the asset acquisition, publishes the readiness lease, and
+ * reports its status to the shell; other games never mount it and therefore
+ * never acquire the manifest.
+ */
+function SpriteFieldAssetController({
+  onReady,
+  onStateChange,
+}: {
+  readonly onReady: (assets: never) => void;
+  readonly onStateChange: (state: unknown) => void;
+}) {
+  const state = useGameAssets(spriteFieldAssets, { groups: ['boot', 'gameplay'] });
+  useEffect(() => {
+    console.log('[rf-controller] state', state.status, state.status === 'loading' ? state.progress : '');
+    onStateChange(state);
+    if (state.status === 'ready') {
+      onReady(state.assets as never);
+    }
+  }, [onReady, onStateChange, state]);
+  return null;
+}
+
+/** A fresh loading slot: neutral canvas session, pointer disabled. */
+function makeLoadingSlot(
+  gameId: PlaygroundGameId,
+  session: GameSession,
+  retiring: readonly GameSession[] = [],
+): SurfaceSlot {
+  const entry = GAME_CONTENTS[gameId];
+  return {
+    generation: 0,
+    gameId,
+    status: 'loading',
+    session,
+    renderer: entry.renderer,
+    content: entry.component,
+    // RF2: only the Sprite Field's loading slot disables the pointer (its
+    // neutral session declares no input actions); every other game keeps its
+    // pointer active from the first render.
+    pointer: hasPointerAction(gameId) && gameId !== 'sprite-field',
+    retiring,
+  };
+}
+
 export function PlaygroundShell() {
   const currentGameId = usePlaygroundStore((state) => state.currentGameId);
   const openGame = usePlaygroundStore((state) => state.openGame);
@@ -190,6 +260,48 @@ function GameSurface({
   // The lab transfers run sessions to the shell. A detached/replaced session
   // remains alive until the render without it commits, then this owner
   // disposes it. Child cleanup never disposes a still-bound surface.
+  // RF3: one immutable surface slot; the session/lease/generation are
+  // published together on readiness and retired only after the committed
+  // render no longer references them. Game switches adjust the slot during
+  // render (the sanctioned pattern) and carry the retired session in the
+  // slot itself — no refs, no passive-effect correctness barrier.
+  const [slot, setSlot] = useState<SurfaceSlot>(() => makeLoadingSlot(gameId, game));
+  if (gameId !== slot.gameId) {
+    setSlot(makeLoadingSlot(gameId, game, [slot.session, ...slot.retiring]));
+  }
+
+  useEffect(() => {
+    for (const retired of slot.retiring) {
+      disposeSession(retired);
+    }
+  }, [slot]);
+
+  const publishReady = useCallback((assets: never) => {
+    setSlot((previous) => {
+      const session = createSpriteFieldSession() as unknown as GameSession;
+      return {
+        generation: previous.generation + 1,
+        gameId: previous.gameId,
+        status: 'ready',
+        session,
+        renderer: previous.renderer,
+        content: previous.content,
+        assets,
+        pointer: true,
+        retiring: [previous.session, ...previous.retiring],
+      };
+    });
+  }, []);
+
+  const [assetState, setAssetState] = useState<
+    | { readonly status: 'loading'; readonly progress: number; readonly retry: () => void; readonly requestKey: string }
+    | { readonly status: 'error'; readonly error: import('react-native-gamekit').GameAssetError; readonly retry: () => void; readonly requestKey: string }
+    | { readonly status: 'ready'; readonly assets: import('react-native-gamekit').LoadedAssets<import('react-native-gamekit').AssetGroupMap>; readonly requestKey: string }
+    | undefined
+  >(undefined);
+  const handleAssetState = useCallback((state: unknown) => {
+    setAssetState(state as never);
+  }, []);
   const [runSurface, setRunSurface] = useState(EMPTY_RUN_SURFACE_STATE);
   const ownedRunSessionsRef = useRef<readonly GameSession[]>([]);
 
@@ -243,49 +355,11 @@ function GameSurface({
     opacity.value = withTiming(hidden ? 0 : 1, { duration: FADE_DURATION_MS });
   }, [opacity, reduceMotion, hidden]);
 
-  // R2: asset-backed games create an asset-load request at the shell level,
-  // not a running session. The immutable attachment — one generation, one
-  // session, the exact loaded lease — is published on readiness only; the
-  // loading/error UI is representable before any gameplay session exists.
   const assetBacked = gameId === 'sprite-field';
-  const assetState = useGameAssets(
-    spriteFieldAssets,
-    { groups: ['boot', 'gameplay'] },
-  );
-  const [attachment, setAttachment] = useState<{
-    readonly generation: number;
-    readonly session: GameSession;
-    readonly assets: import('react-native-gamekit').LoadedAssets<typeof spriteFieldAssets>;
-  } | null>(null);
-  const attachmentGenerationRef = useRef(0);
-  // R5: a monotonic binding generation for the pointer adapter — never derive
-  // identity through object stringification (sessions stringify identically).
-  const [bindingGeneration, setBindingGeneration] = useState(0);
-  const bindingGenerationRef = useRef(0);
-
-  useEffect(() => {
-    if (!assetBacked || assetState.status !== 'ready') {
-      return;
-    }
-    attachmentGenerationRef.current += 1;
-    const generation = attachmentGenerationRef.current;
-    const session = createSpriteFieldSession() as unknown as GameSession;
-    setAttachment({ generation, session, assets: assetState.assets });
-  }, [assetBacked, assetState]);
-
-  const content = GAME_CONTENTS[gameId];
-  const Content = content.component;
-  const Renderer = content.renderer;
   const activeRunSurface = gameId === 'perf-lab' ? runSurface.current : undefined;
-  const renderedGame =
-    activeRunSurface?.session ?? (assetBacked ? (attachment?.session ?? game) : game);
-  // R5: bump the binding generation whenever the rendered session identity
-  // changes (lab runs, asset readiness, and game switches).
-  useEffect(() => {
-    bindingGenerationRef.current += 1;
-    setBindingGeneration(bindingGenerationRef.current);
-  }, [renderedGame]);
-  const assets = assetBacked ? (assetState.status === 'ready' ? assetState.assets : undefined) : undefined;
+  const Renderer = slot.renderer;
+  const Content = slot.content;
+  const renderedGame = activeRunSurface?.session ?? slot.session;
 
   useEffect(() => {
     if (hidden) {
@@ -310,28 +384,38 @@ function GameSurface({
     >
       <GameView
         game={renderedGame}
-        assets={assets as never}
+        presentationKey={slot.generation}
+        assets={slot.assets as never}
         renderer={Renderer as unknown as ComponentType<GameRendererProps<SceneDefinitionMarkerMap>>}
         instrumentation={activeRunSurface?.view}
         style={StyleSheet.absoluteFill}
       >
-        {showPointer ? (
+        {slot.pointer ? (
           <GamePointerInput
-            // Each binding generation gets a fresh RNGH detector: recognizer
-            // delivery proved unreliable across in-place session swaps while
-            // the canvas itself stays mounted (the one-canvas invariant).
-            key={bindingGeneration}
+            // RF2/RF6: the pointer mounts only when the ready slot published
+            // the real session — never against the neutral canvas session —
+            // and each binding generation gets a fresh RNGH detector keyed by
+            // the slot generation (never object stringification).
+            key={slot.generation}
             game={renderedGame as GameSession<SceneDefinitionMarkerMap, Record<string, PointerInputAction>>}
             action="primary"
             instrumentation={activeRunSurface?.pointer}
           />
         ) : null}
         <Content
-          game={game}
+          game={slot.session}
           onExit={onExit}
           onOpenGame={onOpenGame}
           onRunSurfaceEvent={handleRunSurfaceEvent}
           assetState={assetBacked ? assetState : undefined}
+          assetController={
+            assetBacked ? (
+              <SpriteFieldAssetController
+                onReady={publishReady}
+                onStateChange={handleAssetState}
+              />
+            ) : null
+          }
         />
       </GameView>
     </Animated.View>

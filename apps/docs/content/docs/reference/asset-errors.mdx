@@ -26,7 +26,7 @@ absolute machine paths. Check the code, fix the path, retry.
 | Code | Meaning | Fix |
 | --- | --- | --- |
 | `ASSET_UNKNOWN_GROUP` | A requested group does not exist in the manifest. | Request only declared groups (the type layer rejects unknown names). |
-| `ASSET_UNKNOWN_ASSET` | A descriptor lookup does not belong to the manifest or the selected groups. | Retrieve only descriptors from the same manifest that were loaded in the acquisition. |
+| `ASSET_UNKNOWN_ASSET` | A descriptor lookup is not one of the descriptor references this manifest declared and this acquisition loaded. | Retrieve only the exact descriptor references from this manifest's declared groups. Note: an identically shaped descriptor object from elsewhere compiles (the type brand is structural) but fails this runtime reference-membership check; reusing the same declared reference in two manifests is accepted. |
 | `ASSET_RESOLVE_FAILED` | The static module could not be resolved. | Check that the module handle exists and is bundled; verify the asset is packaged. |
 | `ASSET_DECODE_FAILED` | Decoding produced no image. | The file may be corrupt or an unsupported format. |
 | `ASSET_FRAME_OUT_OF_BOUNDS` | A frame rectangle exceeds the decoded image dimensions. | Fix the rectangle or replace the image. |

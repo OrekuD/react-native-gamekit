@@ -17,30 +17,47 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
 import { type SpriteFieldSession, type PlaySnapshot } from '../games/spriteFieldGame';
 
-export default function SpriteFieldContent({ game, onExit, assetState }: PlaygroundGameContentProps) {
-  const session = game as SpriteFieldSession;
-  // R2: the shell owns the asset load; the content consumes the status.
+export default function SpriteFieldContent({
+  game,
+  onExit,
+  assetState,
+  assetController,
+}: PlaygroundGameContentProps) {
+  // RF2: the shell owns the asset load; the content consumes the status. The
+  // loading/error branch never reads a gameplay snapshot or casts the neutral
+  // canvas session — the real Sprite Field session is used only when ready.
   const state = assetState ?? { status: 'loading' as const, progress: 0, retry: () => undefined };
-  const [hud, setHud] = useState<{ score: number; clip: string }>(() => {
-    const play = session.getRenderFrame().current as PlaySnapshot;
-    return { score: play.score, clip: play.animation.clip };
-  });
+  const ready = state.status === 'ready';
+  const session = ready ? (game as SpriteFieldSession) : null;
+  const [hud, setHud] = useState<{ score: number; clip: string } | null>(null);
 
-  // Low-frequency overlay: the commit listener pushes only visible
-  // score/clip changes into React state.
+  // Render-phase: initialize the HUD from the real session exactly when it
+  // becomes available (the sanctioned adjust-during-render pattern).
+  if (session !== null && hud === null) {
+    const play = session.getRenderFrame().current as PlaySnapshot;
+    setHud({ score: play.score, clip: play.animation.clip });
+  }
+
+  // Low-frequency overlay: subscribed only to the real session's commits.
   useEffect(() => {
+    if (session === null) {
+      return;
+    }
     return session.addCommitListener((frame) => {
-      const play = frame.current as PlaySnapshot;
+      const snapshot = frame.current as PlaySnapshot;
       setHud((previous) =>
-        previous.score === play.score && previous.clip === play.animation.clip
+        previous !== null &&
+        previous.score === snapshot.score &&
+        previous.clip === snapshot.animation.clip
           ? previous
-          : { score: play.score, clip: play.animation.clip },
+          : { score: snapshot.score, clip: snapshot.animation.clip },
       );
     }).remove;
   }, [session]);
 
   return (
     <SafeAreaView pointerEvents="box-none" edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>
+      {assetController}
       <View style={styles.topBar}>
         <Pressable
           accessibilityLabel="Back to playground"
@@ -57,7 +74,9 @@ export default function SpriteFieldContent({ game, onExit, assetState }: Playgro
             ? `loading ${Math.round(state.progress * 100)}%`
             : state.status === 'error'
               ? 'load failed'
-              : `score ${hud.score} · ${hud.clip}`}
+              : hud === null
+                ? 'ready'
+                : `score ${hud.score} · ${hud.clip}`}
         </Text>
       </View>
 

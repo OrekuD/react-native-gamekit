@@ -45,11 +45,13 @@ function defaultStoreFactory<TManifest extends AssetGroupMap>(
   return createGameAssetStore(manifest);
 }
 
-/** The discriminated loading state machine. */
+/** The discriminated loading state machine. Every state carries the
+ * normalized request key (RF7) so a rendered request that differs from the
+ * state's request can never expose a stale lease. */
 export type GameAssetsState<TManifest extends AssetGroupMap> =
-  | { readonly status: 'loading'; readonly progress: number; readonly retry: () => void }
-  | { readonly status: 'error'; readonly error: GameAssetError; readonly retry: () => void }
-  | { readonly status: 'ready'; readonly assets: LoadedAssets<TManifest> };
+  | { readonly status: 'loading'; readonly progress: number; readonly retry: () => void; readonly requestKey: string }
+  | { readonly status: 'error'; readonly error: GameAssetError; readonly retry: () => void; readonly requestKey: string }
+  | { readonly status: 'ready'; readonly assets: LoadedAssets<TManifest>; readonly requestKey: string };
 
 /** Deduplicate and sort groups so equivalent reordered/duplicated arrays
  * map to one key and one acquisition (R6). */
@@ -73,6 +75,7 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
     status: 'loading',
     progress: 0,
     retry: () => undefined,
+    requestKey: groupsKey,
   });
   const storeRef = useRef<HookStore<TManifest> | undefined>(undefined);
   const leaseRef = useRef<GameAssetLease<TManifest> | undefined>(undefined);
@@ -86,6 +89,14 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
   // after a retry re-renders with a higher attempt.
   const attemptRef = useRef(attempt);
   attemptRef.current = attempt;
+
+  // RF7: if the rendered request differs from the state's request, expose
+  // loading synchronously instead of the previous ready lease — the old
+  // lease is disposed by the effect cleanup, so no consumer can observe it
+  // under the new request.
+  if (state.requestKey !== groupsKey && state.status === 'ready') {
+    return { status: 'loading', progress: 0, retry, requestKey: groupsKey };
+  }
 
   useEffect(() => {
     const store = (storeFactory ?? defaultStoreFactory)(manifest);
@@ -107,6 +118,7 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
       status: 'loading',
       progress: 0,
       retry: retry,
+      requestKey: groupsKey,
     });
 
     store
@@ -127,7 +139,7 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
         }
         leaseRef.current?.dispose();
         leaseRef.current = lease;
-        setState({ status: 'ready', assets: lease.assets });
+        setState({ status: 'ready', assets: lease.assets, requestKey: groupsKey });
       })
       .catch((error: unknown) => {
         if (disposed || !isCurrent()) {
@@ -137,7 +149,7 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
           error instanceof GameAssetError
             ? error
             : new GameAssetError('ASSET_DECODE_FAILED', [], error instanceof Error ? error.message : String(error));
-        setState({ status: 'error', error: structured, retry });
+        setState({ status: 'error', error: structured, retry, requestKey: groupsKey });
       });
 
     return () => {

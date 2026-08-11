@@ -54,6 +54,10 @@ export interface GameViewProps<
 > {
   /** Externally owned headless game session. */
   readonly game: GameSession<TScenes, TInput>;
+  /** Explicit presentation key (RF6): remounts the per-session presentation
+   * when the session changes. Never derive identity from object
+   * stringification. */
+  readonly presentationKey?: string | number;
   /** The stable loaded asset lease; shape-only games omit it. */
   readonly assets?: LoadedAssets<TAssets>;
   /** Stable Skia renderer component for the session's scene snapshots. */
@@ -95,19 +99,32 @@ export const GameViewportContext = createContext<GameViewport | null>(null);
  * and app backgrounding, and is never disposed by this component — the
  * creator owns disposal.
  */
-export function GameView<
+/**
+ * Per-session presentation binding (RF6).
+ *
+ * Keyed by the session so the frame, alpha, epoch, and clock initialize from
+ * the new session BEFORE its renderer can execute — a replacement renderer
+ * never observes the previous session's frame, even when both scenes are
+ * named the same.
+ */
+function GamePresentation<
   TScenes extends SceneMap,
   TInput extends InputMap,
-  TAssets extends AssetGroupMap = AssetGroupMap,
+  TAssets extends AssetGroupMap,
 >({
   game,
   assets,
-  renderer: Renderer,
-  children,
-  style,
-  instrumentation,
-}: GameViewProps<TScenes, TInput, TAssets>) {
-  const instrumentationRef = useRef(instrumentation);
+  renderer,
+  viewportValue,
+  instrumentationRef,
+}: {
+  readonly game: GameSession<TScenes, TInput>;
+  readonly assets: LoadedAssets<TAssets> | undefined;
+  readonly renderer: ComponentType<GameRendererProps<TScenes, TAssets>>;
+  readonly viewportValue: SharedValue<ResolvedViewport2D | undefined>;
+  readonly instrumentationRef: { readonly current: GameViewInstrumentation | undefined };
+}) {
+  const Renderer = renderer;
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
   const running = useSharedValue(true);
@@ -116,31 +133,15 @@ export function GameView<
   const epoch = useSharedValue(0);
   const clockEpoch = useSharedValue(0);
   const clockRevision = useSharedValue(-1);
-  const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
   // F1: last revision/epoch the UI clock observed, so the instrumentation can
   // report the FIRST UI frame that saw a new commit.
   const observedRevision = useSharedValue(-1);
   const observedEpoch = useSharedValue(-1);
 
-  const bindingRef = useRef<ViewportBinding | null>(null);
-  if (bindingRef.current === null || bindingRef.current.config !== game.viewport) {
-    bindingRef.current = new ViewportBinding(game.viewport);
-  }
-  const binding = bindingRef.current;
-  const viewportContext = useMemo<GameViewport>(
-    () => ({ binding, viewport: viewportValue }),
-    [binding, viewportValue],
-  );
-
-  useEffect(() => {
-    instrumentationRef.current = instrumentation;
-  }, [instrumentation]);
-
   useEffect(() => {
     epoch.value += 1;
-    // Session swaps (the playground's persistent surface) must not keep a
-    // stale frame from the previous session: re-seed the shared frame with
-    // the new session's render frame before the first commit arrives.
+    // RF6: the frame is seeded at mount from this session; the keyed remount
+    // guarantees the renderer below never reads the previous session's frame.
     frame.value = game.getRenderFrame();
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
@@ -167,19 +168,13 @@ export function GameView<
     };
   }, [epoch, frame, game, running]);
 
-  useEffect(
-    () => () => {
-      binding.dispose();
-    },
-    [binding],
-  );
-
   // F1: the first UI frame that sees a new commit revision is reported back
   // to the RN runtime through scheduleOnRN — never by calling the JS hook
   // directly from the UI worklet (cross-runtime calls crash the app).
   const reportUiObserved = useCallback((revision: number, atMs: number) => {
     instrumentationRef.current?.onUiRevisionObserved?.(revision, atMs);
   }, []);
+
 
   // UI-owned alpha clock: advances only while the session is running,
   // resets on every new commit, clamps at 1 and holds (no extrapolation).
@@ -214,6 +209,53 @@ export function GameView<
   });
 
   return (
+    <Renderer
+      frame={frame}
+      alpha={alpha}
+      viewport={viewportValue}
+      {...(assets === undefined ? {} : { assets })}
+    />
+  );
+}
+
+export function GameView<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TAssets extends AssetGroupMap = AssetGroupMap,
+>({
+  game,
+  presentationKey,
+  assets,
+  renderer: Renderer,
+  children,
+  style,
+  instrumentation,
+}: GameViewProps<TScenes, TInput, TAssets>) {
+  const instrumentationRef = useRef(instrumentation);
+
+  const bindingRef = useRef<ViewportBinding | null>(null);
+  if (bindingRef.current === null || bindingRef.current.config !== game.viewport) {
+    bindingRef.current = new ViewportBinding(game.viewport);
+  }
+  const binding = bindingRef.current;
+  const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
+  const viewportContext = useMemo<GameViewport>(
+    () => ({ binding, viewport: viewportValue }),
+    [binding, viewportValue],
+  );
+
+  useEffect(() => {
+    instrumentationRef.current = instrumentation;
+  }, [instrumentation]);
+
+  useEffect(
+    () => () => {
+      binding.dispose();
+    },
+    [binding],
+  );
+
+  return (
     <GameViewportContext.Provider value={viewportContext}>
       <View
         style={[styles.surface, style]}
@@ -224,11 +266,15 @@ export function GameView<
         }}
       >
         <Canvas style={StyleSheet.absoluteFill}>
-          <Renderer
-            frame={frame}
-            alpha={alpha}
-            viewport={viewportValue}
-            {...(assets === undefined ? {} : { assets })}
+          {/* RF6: the per-session presentation is keyed by the session so the
+              frame/alpha/epoch initialize before the renderer can run. */}
+          <GamePresentation
+            key={presentationKey ?? String(game)}
+            game={game}
+            assets={assets}
+            renderer={Renderer}
+            viewportValue={viewportValue}
+            instrumentationRef={instrumentationRef}
           />
         </Canvas>
         {children === undefined ? null : (

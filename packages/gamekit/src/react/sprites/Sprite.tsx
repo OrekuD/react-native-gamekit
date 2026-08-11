@@ -11,7 +11,7 @@
  */
 import { useMemo } from 'react';
 import { Atlas, Group, type SkImage, type SamplingOptions } from '@shopify/react-native-skia';
-import type { SharedValue } from 'react-native-reanimated';
+import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 
 import type { LoadedImage, LoadedSpriteSheet, SpriteFrameRect } from '../../assets/types';
@@ -28,8 +28,9 @@ export type SpriteAnimatableString = string | SharedValue<string>;
 export interface SpriteProps {
   /** The loaded asset; the renderer borrows and never disposes it. */
   readonly source: LoadedImage | LoadedSpriteSheet;
-  /** Frame name for sprite sheets; ignored for full images. */
-  readonly frame?: SpriteAnimatableString;
+  /** Frame name for sprite sheets; ignored for full images. A shared value
+   * may carry undefined while the selection has not been published. */
+  readonly frame?: SpriteAnimatableString | SharedValue<string | undefined>;
   /** Clip name for sprite sheets; the frame is selected from it. */
   readonly clip?: SpriteAnimatableString;
   /** Elapsed milliseconds within the clip (frame selection). */
@@ -126,6 +127,12 @@ export function Sprite({
           ? undefined
           : (source as LoadedSpriteSheet).frames[name];
     if (frameRect === undefined) {
+      if (name === undefined) {
+        // RF4: the selection has not been published yet (scene mismatch or a
+        // shared frame before its first value): present nothing, never throw.
+        rect.setXYWH(0, 0, 0, 0);
+        return;
+      }
       throw new Error(
         `frame ${JSON.stringify(name)} does not belong to this sprite sheet (loaded frames: ${Object.keys((source as LoadedSpriteSheet).frames).join(', ')})`,
       );
@@ -151,7 +158,23 @@ export function Sprite({
   const rects = useRectBuffer(1, resolveFrameRectWorklet);
   const xforms = useRSXformBuffer(1, (xform) => {
     'worklet';
-    const result = computeSpriteRsxform(input);
+    // RF4: resolve the selected frame's rectangle and dimensions in the same
+    // worklet update so the anchor math always uses the current frame size.
+    const name = typeof frame === 'string' ? frame : frame?.value;
+    let width = frameSize.width;
+    let height = frameSize.height;
+    if (name !== undefined && source.descriptor.kind === 'sprite-sheet') {
+      const rect = (source as LoadedSpriteSheet).frames[name];
+      if (rect !== undefined) {
+        width = rect.width;
+        height = rect.height;
+      }
+    }
+    const result = computeSpriteRsxform({
+      ...input,
+      frameWidth: width,
+      frameHeight: height,
+    });
     xform.set(result.scos, result.ssin, result.tx, result.ty);
   });
   const groupTransform = useMemo(
@@ -164,18 +187,17 @@ export function Sprite({
 
   // The Skia Group has no `visible` prop: hiding is expressed as a combined
   // opacity so the component stays mounted (topology is never remounted per
-  // frame) while the draw is fully transparent.
-  const effectiveOpacity = useMemo(() => {
-    if (typeof opacity === 'number' && typeof visible === 'boolean') {
-      return visible ? opacity : 0;
-    }
-    return opacity;
+  // frame) while the draw is fully transparent. RF4: derived on the UI
+  // runtime for every static/shared combination of opacity and visible.
+  const effectiveOpacity = useDerivedValue(() => {
+    'worklet';
+    const o = typeof opacity === 'number' ? opacity : opacity.value;
+    const v = typeof visible === 'boolean' ? visible : visible.value;
+    return v ? o : 0;
   }, [opacity, visible]);
-  const groupOpacity =
-    typeof effectiveOpacity === 'number' ? effectiveOpacity : (effectiveOpacity as never);
 
   return (
-    <Group transform={groupTransform as never} opacity={groupOpacity}>
+    <Group transform={groupTransform as never} opacity={effectiveOpacity}>
       <Atlas
         image={image}
         sprites={rects}

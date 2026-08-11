@@ -2,8 +2,13 @@
 
 ## Status
 
-**In progress — T7.1–T7.9 implemented; the T7.1–T7.10 implementation review
-(R1–R9) fixed and re-verified; T7.10 device remainder device-gated.**
+**In progress — the implementation review (R1–R9) and the follow-up audit
+(RF1–RF9) are fixed: the asset-backed surface slot, sprite runtime, store
+ownership, atomic swap, hook lifecycle, and batch contract are repaired with
+executable tests and the automated gates pass. T7.10's physical-device
+remainder stays independently open (device matrix, retained-vs-batch device
+benchmarks, the 50-cycle leak gate, and the RNGH in-place-swap delivery
+observation).**
 
 T7.0 (baseline, feedback reconciliation F1–F7, and the pointer lifecycle
 checkpoint) is complete; T7.1–T7.9 landed in attributable commits with the
@@ -2139,3 +2144,390 @@ blur the claim that a descriptor from "any other manifest" is rejected.
    wording and remove the stronger nominal-brand assertion.
 4. Add compile fixtures for two identically shaped manifests and a runtime test
    for a deliberately reused descriptor object so the chosen rule is exact.
+
+## Follow-up feedback — audit of resolution commit `dcd8975`
+
+**Review date:** 2026-08-11
+
+Do not mark R1–R9 resolved from this commit. The surface opacity change repairs
+the original visible back-button failure in source, and the lockfile update is
+present, but the remaining changes below are required before the implementation
+review can close.
+
+### RF1 — Add the missing mounted proof for surface dismissal
+
+**Priority:** High · **Scope:** R1 evidence
+
+The wrapper now applies animated opacity and disables pointer/accessibility
+ownership while hidden, but no mounted shell test was added. The existing test
+suite still verifies the Zustand selection independently from the actual
+surface stack, which is how the original opaque-surface regression passed.
+
+#### Required changes
+
+1. Add a mounted `PlaygroundShell` seam with injectable session factories,
+   reduced-motion value, and animation completion. Do not assert only on the
+   store or a standalone reducer.
+2. Open every catalog game, invoke the same callback used by its visible back
+   button, and assert that Home is both visible and pressable while the retained
+   game surface has opacity zero and `pointerEvents="none"`.
+3. Cover reduced-motion snap and normal fade completion. Define whether Home
+   becomes interactive immediately or only at fade completion and test that
+   policy explicitly.
+4. Reopen the same and a different game and prove the first input is accepted.
+5. Run the Android hardware-back and accessibility-escape callbacks through the
+   same contract.
+
+#### Done when
+
+- [ ] The mounted regression fails if the animated style is removed or opacity
+  is left at one.
+- [ ] One back action exposes an interactive Home screen for every game.
+- [ ] The promised simulator/device recording is attached; physical matrix
+  coverage remains separately device-gated.
+
+### RF2 — Remove the idle-session type confusion from Sprite Field
+
+**Priority:** High · **Blocks:** opening Sprite Field
+
+`createSessionFor('sprite-field')` returns an empty idle session, but the shell
+passes that object to `SpriteFieldContent` as `game`. The content immediately
+casts the empty snapshot to `PlaySnapshot` and reads `play.animation.clip`, so
+the first render can throw before loading UI appears. Its commit listener also
+stays attached to the placeholder rather than the real Sprite Field session.
+The pointer adapter is mounted during loading with `action="primary"` even
+though the idle session declares no such action; a loading-screen touch can
+therefore reach an unknown input action.
+
+The asset hook is also invoked unconditionally for every game mounted in
+`GameSurface`. Opening Bootstrap or Brick Breaker eagerly starts the Sprite
+Field load, so navigation to Sprite Field is not actually the request boundary
+claimed by R2.
+
+#### Required approach
+
+1. Represent asset-game navigation as a typed loading request that does not
+   masquerade as a Sprite Field session. A neutral canvas session may remain an
+   internal presentation detail, but it must never be cast or delivered to
+   Sprite Field content/input.
+2. Mount a dedicated asset controller only while a Sprite Field request is
+   active. It may call `useGameAssets`, render loading/error chrome, and publish
+   readiness, but other games must not acquire the manifest.
+3. Disable the Sprite Field pointer adapter until the real session is published.
+4. Deliver the real attachment session to the HUD/content. Initialize and
+   subscribe to HUD state only in the ready branch; the loading/error branch
+   must not read `PlaySnapshot`.
+5. Keep loading/error UI able to close without creating a gameplay session.
+
+#### RED-first tests
+
+- [ ] First render with a pending load shows loading UI and reads no gameplay
+  snapshot or input action.
+- [ ] Opening a non-asset game performs zero Sprite Field resolves/decodes.
+- [ ] Touching during loading cannot dispatch `primary` to the idle session.
+- [ ] Readiness gives both renderer and content the same real session.
+- [ ] The HUD observes score/clip commits from that real session.
+- [ ] Close during loading creates zero Sprite Field gameplay sessions and
+  suppresses late publication.
+
+### RF3 — Make the asset attachment genuinely atomic and owned
+
+**Priority:** High · **Scope:** R2/R5 ownership
+
+The new `attachment` is not the surface's binding unit. `assets` are read
+directly from `assetState` instead of `attachment.assets`, and the renderer can
+receive ready assets for one render while `renderedGame` is still the idle
+session because the real session is created in a passive effect. Both scenes
+are named `play`, so the Sprite Field renderer can read the empty snapshot as
+its own shape before the effect runs.
+
+Attachment sessions are also never placed in either session-retirement owner.
+Closing pauses them through the hidden-surface effect but does not dispose them;
+reopening briefly reuses the previous attachment, then creates another session
+without retiring the old one. The top-level shell retires only the placeholder
+stored in `sessionBundle`.
+
+#### Required approach
+
+1. Replace the independent `assetState`, `attachment`, renderer, content, and
+   pointer decisions with one immutable surface slot such as
+   `{ generation, gameId, status, session, renderer, assets, content, pointer }`.
+2. Publish the ready session and exact lease in the same state transition. The
+   renderer must see either a non-gameplay loading slot or the complete ready
+   slot—never ready assets paired with the idle frame.
+3. Use `slot.assets`, not the hook's concurrently changing state, as the
+   `GameView` prop. Use `slot.session` for renderer, content, HUD, and pointer.
+4. Give one controller ownership of every real and placeholder session plus the
+   lease. Record the current slot and a retiring set; no session created inside
+   an effect may exist outside those owners.
+5. On close/replacement, cancel input and pause the old slot, commit a slot that
+   no longer references it, wait for presentation/pointer acknowledgement, then
+   dispose its session and release its lease exactly once.
+6. Reopen must never present or restart the previous Sprite Field session while
+   a fresh request/session is being prepared.
+
+#### RED-first tests
+
+- [ ] The transition into ready publishes one generation containing matching
+  session, renderer, content, pointer, and exact asset identity.
+- [ ] No committed combination contains idle frame + Sprite Field renderer +
+  ready assets.
+- [ ] Ready -> close -> reopen produces a fresh session and disposes the old
+  session/lease exactly once after unbinding.
+- [ ] Rapid Sprite -> Brick -> Sprite replacement leaves no orphan attachment,
+  listener, pointer capture, or lease.
+- [ ] Fifty headless controller cycles have bounded owner collections before
+  the physical Instruments/Perfetto gate is attempted.
+
+### RF4 — Finish the retained sprite runtime instead of only correcting clip lookup
+
+**Priority:** High · **Scope:** R3
+
+The clip map now comes from `descriptor.animations`, but the main runtime path
+still fails. `GameSprite` passes a shared `frameName`; `Sprite` converts that to
+`staticFrame = undefined` and immediately calls
+`resolveSpriteFrameRect(source, undefined)`. Sprite-sheet sources reject an
+undefined frame, so the retained player can throw before the rect-buffer
+worklet unwraps the shared value.
+
+Dynamic frame dimensions are still not fed into transform/anchor math, shared
+`visible` remains ignored whenever opacity is shared, the `as never`/whole-prop
+cast remains in `GameSprite`, and there is still no actual Skia composition
+test for scale/flip/anchor order.
+
+#### Required approach
+
+1. Remove render-time frame resolution for a shared frame. Resolve the frame
+   name, rectangle, dimensions, effective visibility/opacity, and transform in
+   one coherent UI-runtime update or supported buffer coordinator.
+2. For a plain static frame, validate once. For a shared frame/clip, validate
+   each selected name in the worklet-safe path without using `undefined` as a
+   placeholder lookup.
+3. Use the selected frame's current width/height for anchor correction on the
+   same presented frame; differently sized clip frames must not drift.
+4. Derive `visible ? opacity : 0` for all four static/shared combinations. The
+   `GameSprite` path uses shared opacity and shared visibility, so this is not an
+   edge case.
+5. Remove the public-path type escapes. Make the plain/shared frame contract
+   compile directly.
+6. Reuse the deterministic sampler or one shared worklet-safe primitive rather
+   than keeping a second clip timeline formula.
+
+#### RED-first tests
+
+- [ ] Rendering a sprite sheet with a shared frame does not call
+  `resolveSpriteFrameRect` with undefined and does not throw.
+- [ ] Static frame, shared frame, loop clip, and once clip select exact rects.
+- [ ] Differently sized frames preserve centre and bottom-centre anchors.
+- [ ] Shared visibility suppresses and restores a `GameSprite` whose opacity is
+  also shared.
+- [ ] Scene mismatch hides without reading the wrong snapshot.
+- [ ] A Skia picture/mounted visual seam verifies rotation, scale, flip, tint,
+  opacity, sampling, and anchor composition.
+
+### RF5 — Complete per-waiter asset-store ownership
+
+**Priority:** High · **Scope:** R4
+
+Removing the singleton `pendingAttempt` fixes one attribution error, but it does
+not implement the required ownership model:
+
+- if abort wins `Promise.race`, `acquireOne` throws before its later
+  `signal.aborted` branch can drop the resource reference, and the attempt has
+  not recorded that reference yet;
+- an imperative abort without immediate store disposal can therefore leave the
+  late decoded handle cached with a positive reference;
+- an in-flight cache hit increments `refCount` and returns the shared promise
+  before entering the local decrementing `try/catch`, so shared rejection leaks
+  that waiter's reference;
+- duplicated groups passed directly to `store.acquire` acquire the same logical
+  keys multiple times but the lease releases each mapped key once; and
+- successful abort races retain event listeners because `abortPromise` removes
+  them only when an abort actually fires.
+
+The existing abort test explicitly expects zero disposed handles after late
+decode completion and never asserts disposal after `store.dispose`, so it still
+approves the original leak.
+
+#### Required approach
+
+1. Create one idempotent ownership token/release closure for every waiter before
+   its cancellable await. Record that token directly on the attempt.
+2. Route cache misses and in-flight/cache-hit waiters through the same
+   `try/finally` accounting. A waiter either commits its reference to a lease or
+   releases it exactly once.
+3. Remove abort listeners on resolve, reject, and abort. An abort detaches only
+   that caller; the underlying decode may continue for surviving owners.
+4. Normalize groups inside the imperative store boundary, not only in the React
+   hook.
+5. Define store-dispose behavior for live leases and in-flight decodes, then
+   assert eventual disposal rather than only immediate counts.
+
+#### RED-first tests
+
+- [ ] Abort one unshared decode, release the gate, and observe one handle
+  disposal without requiring an unrelated lease action.
+- [ ] Abort one of two shared waiters; the survivor resolves and owns the handle
+  until its final release.
+- [ ] Reject a shared decode; every waiter rejects and the resource entry has
+  zero retained references.
+- [ ] Overlapping attempts for different groups cannot claim or release each
+  other's references.
+- [ ] Direct `store.acquire({ groups: ['boot', 'boot'] })` acquires/releases each
+  logical resource once and reports normalized progress.
+- [ ] Store disposal before and after late completion disposes each native
+  handle exactly once.
+
+### RF6 — Finish atomic GameView/pointer replacement
+
+**Priority:** High · **Scope:** R5
+
+Changing the pointer key from object stringification to a number fixes the
+literal key collision, but it is still updated in a passive effect. The first
+commit after a session change therefore renders the new `game` under the old
+key and remounts again later. More importantly, `GameView` still swaps the
+renderer during render and re-seeds its shared frame only in a passive effect.
+A new renderer can observe the old session's `play` snapshot before re-seeding.
+The new attachment generation is otherwise unused and session/assets/content
+are not one generation.
+
+#### Required approach
+
+1. Allocate the monotonic generation when constructing the immutable surface
+   slot, not through a follow-up React effect.
+2. Bind pointer identity directly to that slot generation on the first render
+   of the new session. Avoid an initial render under a stale key.
+3. Introduce an inner presentation binding whose shared frame is initialized
+   from the slot session before the slot renderer can execute. Keeping the
+   outer Canvas mounted does not require a new renderer to read an old frame.
+4. Reset alpha, viewport owner, instrumentation, and input ownership as one
+   generation transition. Late callbacks must carry and fail the old
+   generation.
+5. Add an explicit acknowledgement/retirement handshake instead of assuming a
+   zero-delay timer is equivalent to both GameView and RNGH rebinding.
+
+#### RED-first tests
+
+- [ ] Swap two `play` sessions with incompatible snapshot shapes; neither
+  renderer observes the other's frame.
+- [ ] The first pointer adapter render after replacement already has the new
+  generation; there is no second corrective remount.
+- [ ] Session, renderer, assets, content, pointer, frame, and instrumentation
+  always report one generation.
+- [ ] Rapid A -> B -> C replacement rejects late commits/input and disposes A/B
+  only after C acknowledges binding.
+
+### RF7 — Complete the hook lifecycle and its tests
+
+**Priority:** Important · **Scope:** R6
+
+The hook now supplies an `AbortController`, deduplicates groups, and returns the
+same `retry` function in new states. It still renders an old ready state once
+when manifest/groups/retry change, then effect cleanup disposes that lease
+before the subsequent loading update. There is no configuration key in state
+and no render/retirement boundary preventing a consumer from observing disposed
+assets under the new request.
+
+The test named “error state exposes ... stable retry” still uses a fake that
+never fails, asserts that the final state is ready, and never compares retry
+identity. No test was added for AbortSignal delivery, duplicate groups, config
+replacement, or the stale-ready disposal window.
+
+#### Required approach
+
+1. Store the normalized request identity with each loading/error/ready state.
+   If the rendered request differs, synchronously expose loading rather than the
+   previous ready lease.
+2. Retire the old ready lease only after a committed render no longer references
+   it, or enforce a keyed consumer boundary that proves this order.
+3. Abort the previous attempt before release and prove the signal reaches the
+   store. Do not rely only on a local `disposed` boolean.
+4. Use a rejecting fake and assert strict retry-function identity across
+   loading/progress/error renders. One invocation must start one attempt.
+5. Test reordered and duplicated groups against the actual groups passed to the
+   store, not only `stableGroupsKey` output.
+
+### RF8 — Finish or narrow `SpriteBatch`; throwing on the UI runtime is not a production policy
+
+**Priority:** Important · **Scope:** R7
+
+Capacity validation and the hoisted coordinator are partial improvements, but
+the checked contract is still broader than the implementation. Tint/opacity
+buffers and diagnostics remain absent. Overflow now throws from a UI-runtime
+derived value in every build, while the docs promise a development diagnostic
+and safe hidden production slots. A scene mismatch returns before clearing
+previously active rects, so sprites from the old scene can remain visible.
+There are still no executable SpriteBatch tests.
+
+#### Required approach
+
+1. Define separate development and production overflow behavior. Development
+   may report a structured diagnostic; production must safely clamp/hide or
+   follow another documented non-crashing policy. Do not throw an uncaught UI
+   worklet error for ordinary data growth.
+2. Clear all active slots when the scene does not match or the current snapshot
+   is not valid for this batch.
+3. Either implement aligned color/tint/opacity buffers and diagnostics or
+   uncheck/narrow those public-plan and docs claims and mark the API
+   experimental.
+4. Prove the memoized coordinator is worklet-shareable in the installed
+   Reanimated/Skia stack and that parent rerenders/capacity changes follow the
+   fixed-mount contract.
+5. Add an injectable/pure coordinator seam for capacity, overflow, active-slot,
+   alignment, and cleanup tests before relying on device measurement.
+
+#### RED-first tests
+
+- [ ] Invalid capacity, 1/max capacity, overflow, shrink, regrow, and scene exit.
+- [ ] Scene exit clears all rects; re-entry repopulates them without stale data.
+- [ ] Frame/transform/color arrays stay aligned and inactive slots are hidden.
+- [ ] Production overflow does not crash the UI runtime.
+- [ ] Parent rerender preserves buffers and unmount never disposes the
+  lease-owned image.
+
+### RF9 — Correct the verification/status record and finish R9 documentation
+
+**Priority:** Important · **Scope:** R8/R9
+
+Only `assetStore.test.ts` gained a test in `dcd8975`. No mounted shell,
+renderer-assets, Sprite, SpriteBatch, atomic-swap, or new hook lifecycle test
+was added. The coverage command now executes `.tsx` tests, but the gate does
+not track `useGameAssets.ts`, `GameSprite.tsx`, `Sprite.tsx`, or
+`SpriteBatch.tsx`; high line coverage for the store also does not exercise the
+missing abort/concurrency branches above. The original feedback checklists
+remain unchecked while the header claims they were re-verified.
+
+R9 selected descriptor-reference membership, but nearby public comments still
+claim the compile-time brand rejects descriptors from any other manifest, and
+the error reference still says a descriptor must come from the same manifest.
+The batch documentation also promises development-only overflow and safe
+production slots, which the implementation does not provide.
+
+#### Required changes
+
+1. Keep the Task 7 header reopened until RF1–RF8 have direct tests and evidence.
+   Do not use aggregate test count or coverage percentage as a substitute for
+   the named acceptance cases.
+2. Add executable seams for the new React/Skia modules to the 80% gate. If a
+   native component cannot run headlessly, extract and gate its pure coordinator
+   plus add mounted/native acceptance separately.
+3. Check each original R1–R9 box only after its corresponding regression exists
+   and passes. Record focused test names and commit SHAs.
+4. Update every exported type comment, error table, guide, and compile fixture
+   to the selected descriptor-reference rule. Explicitly explain that an
+   identical-shape twin can compile but fails runtime reference membership, and
+   that reusing the same descriptor reference in two manifests is accepted.
+5. Reconcile SpriteBatch docs with the final development/production policy.
+6. Rerun the clean frozen install, lint, typecheck, tests, expanded coverage,
+   package build/inspection, root import, docs build, Expo export, and diff
+   check after the fixes; the physical matrix remains open.
+
+#### Follow-up acceptance
+
+- [ ] The current idle-content, ready-assets/idle-frame, shared-frame, abort
+  leak, stale-frame swap, stale-ready hook, scene-exit batch, and production
+  overflow cases each have a RED test before implementation changes.
+- [ ] The automated gate contains mounted/integration evidence capable of
+  catching the two original user-visible regressions.
+- [ ] The status summary distinguishes completed automated work from sandbox-
+  blocked checks and physical-device-only evidence.
