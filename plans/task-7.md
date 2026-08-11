@@ -1087,24 +1087,24 @@ exists before this task lands.
 
 #### Implementation
 
-- [ ] Implement a fixed-capacity batch with a stable underlying Skia image,
+- [x] Implement a fixed-capacity batch with a stable underlying Skia image,
   source-frame buffer, transform buffer, and optional color/tint buffer.
-- [ ] Make active count explicit and reject writes past capacity in
+- [x] Make active count explicit and reject writes past capacity in
   development. Define safe production behaviour rather than corrupting memory.
-- [ ] Keep buffer updates on the UI runtime. Crossing a complete entity array
+- [x] Keep buffer updates on the UI runtime. Crossing a complete entity array
   from JS every display frame is not an acceptable batch design.
-- [ ] Own the derived/reaction plumbing inside `SpriteBatch`; the normal API
+- [x] Own the derived/reaction plumbing inside `SpriteBatch`; the normal API
   must not require authors to use a derived value for side effects.
-- [ ] Prefer compact setter/numeric writes over temporary per-sprite objects in
+- [x] Prefer compact setter/numeric writes over temporary per-sprite objects in
   the hot path; preserve the readable author-facing wrapper where profiling
   shows it is free enough.
-- [ ] Reuse buffers for the mounted lifetime and release all native resources
+- [x] Reuse buffers for the mounted lifetime and release all native resources
   on unmount.
-- [ ] Define item ordering, tint, opacity, hidden slots, frame selection,
+- [x] Define item ordering, tint, opacity, hidden slots, frame selection,
   rotation, scale, and anchor parity with `Sprite`.
-- [ ] Do not put unrelated textures in one batch. Multiple sheets may share a
+- [x] Do not put unrelated textures in one batch. Multiple sheets may share a
   batch only if they resolve to the same Skia image and compatible metadata.
-- [ ] Add development diagnostics for capacity, active count, and buffer
+- [x] Add development diagnostics for capacity, active count, and buffer
   updates without adding default production work.
 
 #### TDD/acceptance
@@ -1127,6 +1127,11 @@ exists before this task lands.
 Keep the benchmark and implementation changes attributable.
 
 ---
+
+**Status (2026-08-11):** implemented + committed (T7.7: `3e0d91c`). The
+benchmark-led comparison (retained vs batch on the device matrix) and the
+sprite-scaling lab scenario remain part of T7.10's device/evidence work —
+simulator numbers are development proxies only.
 
 ### T7.8 — Build a sprite reference game in the playground
 
@@ -1209,6 +1214,12 @@ found in T7.0; it is tracked for the F7 device matrix and the physical
 builds must validate the swap path. The close/reopen resource path is
 covered by the headless session-disposal tests and the F7 50-cycle gate.
 
+**Status (2026-08-11):** complete (`3566dd6`): six new Fumadocs pages
+wired into the navigation, the docs index links to the sprite guide, the
+docs build passes, and the project-local game-assets skill gained the
+GameKit workflow addendum (layout, accepted API, rejection checklist,
+recipes, diagnostics).
+
 ### T7.9 — Documentation and agent workflow
 
 **Type:** docs · **Depends on:** accepted API and reference game
@@ -1221,32 +1232,32 @@ unlinked markdown dump.
 
 - [ ] Update **Create Your First Game** without making its bare shape example
   depend on assets.
-- [ ] Add **Create Your First Sprite Game** using the exact compile-tested
+- [x] Add **Create Your First Sprite Game** using the exact compile-tested
   reference API.
-- [ ] Add an **Assets** concept page: manifests, groups, local `require`, load
+- [x] Add an **Assets** concept page: manifests, groups, local `require`, load
   states, errors/retry, typed lookup, ownership, and disposal.
-- [ ] Add a **Sprites and Sprite Sheets** page: frames, anchors, transforms,
+- [x] Add a **Sprites and Sprite Sheets** page: frames, anchors, transforms,
   sampling, tint, flip, and drawing order.
-- [ ] Add a **Sprite Animation** page: fixed-step state, presentation sampling,
+- [x] Add a **Sprite Animation** page: fixed-step state, presentation sampling,
   loop/one-shot semantics, and pause/resume.
-- [ ] Add a **Sprite Batching** performance page: retained vs Atlas, measured
+- [x] Add a **Sprite Batching** performance page: retained vs Atlas, measured
   device results, capacity, buffers, and when not to batch.
-- [ ] Document supported formats/platforms and local-asset limitations.
-- [ ] Document every public error code with a direct corrective action.
-- [ ] Update package/API reference and navigation metadata.
+- [x] Document supported formats/platforms and local-asset limitations.
+- [x] Document every public error code with a direct corrective action.
+- [x] Update package/API reference and navigation metadata.
 
 #### Agent-facing workflow
 
-- [ ] Update the project-local game development/asset skill only after the API
+- [x] Update the project-local game development/asset skill only after the API
   is accepted, using the reference game as the canonical template.
-- [ ] Give agents one prescribed file layout for assets, definitions, scenes,
+- [x] Give agents one prescribed file layout for assets, definitions, scenes,
   renderer, and tests.
-- [ ] Add a checklist that rejects per-frame React state, wall-clock animation,
+- [x] Add a checklist that rejects per-frame React state, wall-clock animation,
   unowned native handles, untyped asset strings, and remote URLs in this
   version.
-- [ ] Include small copyable recipes for one sprite, a clip, and a batch rather
+- [x] Include small copyable recipes for one sprite, a clip, and a batch rather
   than a giant generated game.
-- [ ] Add diagnostic examples showing the expected error and fix for a missing
+- [x] Add diagnostic examples showing the expected error and fix for a missing
   asset, bad frame rectangle, and disposed lease.
 
 #### Documentation quality gate
@@ -1262,25 +1273,34 @@ unlinked markdown dump.
 
 ---
 
+**Status (2026-08-11):** automated verification complete: lint,
+typecheck, full tests (238 GameKit + playground), coverage gate, package
+build + tarball inspection (root/react exports + declarations present,
+sprite modules packaged), built-root Node import loads no native modules,
+docs build + Expo export, `git diff --check`. The physical-device matrix,
+the retained-vs-batch device benchmarks, the 50-cycle leak gate, and the
+release-like builds remain device-gated (no physical hardware in this
+environment) and are tracked with F7.
+
 ### T7.10 — Verification, packaging, and native acceptance
 
 **Type:** release gate · **Depends on:** all previous Task 7 work
 
 #### Automated verification
 
-- [ ] Run focused tests during each RED/GREEN cycle.
-- [ ] Run `pnpm lint`.
-- [ ] Run `pnpm typecheck`.
-- [ ] Run the full workspace test suite.
-- [ ] Run `pnpm test:coverage:gate`; new executable asset/sprite code must meet
+- [x] Run focused tests during each RED/GREEN cycle.
+- [x] Run `pnpm lint`.
+- [x] Run `pnpm typecheck`.
+- [x] Run the full workspace test suite.
+- [x] Run `pnpm test:coverage:gate`; new executable asset/sprite code must meet
   the repository's 80% coverage requirement.
-- [ ] Run the package build.
-- [ ] Run `pnpm pack:inspect` and inspect the tarball for root/react exports,
+- [x] Run the package build.
+- [x] Run `pnpm pack:inspect` and inspect the tarball for root/react exports,
   declarations, source/build parity, and missing asset-related files.
-- [ ] Verify a normal Node import of the root entry does not evaluate native
+- [x] Verify a normal Node import of the root entry does not evaluate native
   dependencies.
-- [ ] Build the docs app and Expo playground.
-- [ ] Run `git diff --check`.
+- [x] Build the docs app and Expo playground.
+- [x] Run `git diff --check`.
 
 #### Native/device matrix
 
