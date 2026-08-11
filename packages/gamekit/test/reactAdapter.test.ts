@@ -157,6 +157,34 @@ describe('PointerBinding', () => {
     ], 'the stale end never released the newer capture');
   });
 
+  it('re-synchronizes the packet epoch when the binding is replaced (F6 review)', () => {
+    // Adapter-level replacement sequence: the old binding is invalidated
+    // (bumping the shared epoch to 1) and a fresh binding starts at 0. The
+    // adapter must re-sync the UI shared epoch to the replacement binding's
+    // epoch, otherwise every new packet is stamped 1 and rejected.
+    const input = new RecordingInputController();
+    const first = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const sharedEpoch = first.epoch; // 0
+    assert.equal(first.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: sharedEpoch }), true);
+
+    // Replacement: cleanup invalidates the old binding and bumps the mirror.
+    first.invalidate();
+    const bumped = first.epoch; // 1
+    assert.equal(bumped, sharedEpoch + 1);
+
+    // The new binding starts at epoch 0; the adapter syncs the mirror.
+    const replacement = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const synced = replacement.epoch;
+    assert.equal(synced, 0, 'replacement binding starts fresh');
+    assert.equal(synced, sharedEpoch, 'adapter must re-sync the shared epoch to the replacement');
+
+    // Input continues immediately under the synced epoch.
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: synced }), true);
+    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 1, x: 195, y: 400, epoch: synced }), true);
+    // A packet stamped with the pre-replacement epoch is still rejected.
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: bumped }), false);
+  });
+
   it('invalidate and cancel are idempotent and ordering-safe (F6)', () => {
     const input = new RecordingInputController();
     const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));

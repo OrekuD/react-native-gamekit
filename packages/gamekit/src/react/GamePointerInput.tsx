@@ -345,6 +345,16 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     };
   }, [binding, bindingEpoch, bumpEpoch, coalescerState, game, maxMoveIntervalMs, viewportBinding]);
 
+  // F6 review: when the binding is replaced (session, action, or viewport
+  // owner changed), the replacement starts at epoch 0 while this cleanup's
+  // bump left the shared mirror at 1. Re-sync the mirror to the replacement
+  // binding — declared after the lifecycle effect so it runs after the
+  // previous binding's cleanup — otherwise every new packet is stamped 1
+  // and rejected, killing pointer input until the next layout revision.
+  useEffect(() => {
+    bindingEpoch.value = binding.epoch;
+  }, [binding, bindingEpoch]);
+
   return (
     <GestureDetector gesture={gesture}>
       <View style={StyleSheet.absoluteFill} />
