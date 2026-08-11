@@ -1186,6 +1186,29 @@ source/license. Do not copy copyrighted game art from an existing title.
 
 ---
 
+#### T7.8 simulator verification (2026-08-11)
+
+Verified on the iPhone 17 Pro Max simulator (dev build): the Sprite Field
+game opens with an honest loading boundary (progress 0 -> ready), the
+renderer draws the retained player sprite and the Atlas enemy field from
+the public surface, and pointer-following movement accumulates score from
+deterministic scene state (measured score 143 over a 2.5 s drag; idle/run
+clip selection switches with movement). The mounted pointer pipeline is
+also healthy: the lab's native-drag run records raw 70 / forwarded 56,
+paddle-x p99 187.64, input→commit p50 16 ms, input→ui-observed p50 33 ms,
+samplers-at-end 0 (after the content roots were fixed to pass touches
+through — the full-screen content views were intercepting every touch
+before the RNGH surface).
+
+Known stack limitation (recorded for F7): RNGH recognizer delivery dies
+after the first in-place session swap on the persistent surface — the
+first game's touches work; after switching games, subsequent detectors do
+not begin gestures (reproduced with and without detector remount keys and
+with frame re-seeding). This is the same upstream RNGH/Skia remount class
+found in T7.0; it is tracked for the F7 device matrix and the physical
+builds must validate the swap path. The close/reopen resource path is
+covered by the headless session-disposal tests and the F7 50-cycle gate.
+
 ### T7.9 — Documentation and agent workflow
 
 **Type:** docs · **Depends on:** accepted API and reference game
