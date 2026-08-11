@@ -109,6 +109,11 @@ export function GameSprite<
       return undefined;
     }
     const current = envelope.current as never as SceneSnapshot<TScenes[TSceneName]>;
+    if (current === undefined) {
+      // The frame has not been seeded for this session yet (session swap on
+      // the persistent surface): present nothing until the first commit.
+      return undefined;
+    }
     const context = {
       // The first commit has no previous snapshot; the current one stands in
       // so the initial presentation interpolates from itself (alpha 0).
