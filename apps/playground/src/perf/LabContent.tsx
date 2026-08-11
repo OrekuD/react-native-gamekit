@@ -131,9 +131,8 @@ export default function LabContent({
   };
 
   return (
-    <SafeAreaView
+    <SafeAreaView pointerEvents="box-none"
       edges={['top', 'right', 'bottom', 'left']}
-      pointerEvents="box-none"
       style={styles.screen}
     >
       <View style={styles.header}>

@@ -47,9 +47,8 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
   }, [session]);
 
   return (
-    <SafeAreaView
+    <SafeAreaView pointerEvents="box-none"
       edges={['top', 'right', 'bottom', 'left']}
-      pointerEvents="box-none"
       style={styles.screen}
     >
       <View style={styles.topBar}>
