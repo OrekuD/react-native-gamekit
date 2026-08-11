@@ -39,7 +39,7 @@ export default function SpriteFieldContent({ game, onExit }: PlaygroundGameConte
   }, [session]);
 
   return (
-    <SafeAreaView edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>
+    <SafeAreaView pointerEvents="box-none" edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>
       <View style={styles.topBar}>
         <Pressable
           accessibilityLabel="Back to playground"

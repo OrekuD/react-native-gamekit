@@ -254,13 +254,13 @@ function GameSurface({
   }, [hidden, renderedGame]);
 
   return (
-    <Animated.View
+    <View
       accessibilityElementsHidden={hidden}
       accessibilityViewIsModal={!hidden}
       importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
       onAccessibilityEscape={onExit}
       pointerEvents={hidden ? 'none' : 'auto'}
-      style={[styles.gameSurface, { opacity: hidden ? 0 : opacity }]}
+      style={styles.gameSurface}
     >
       <GameView
         game={renderedGame}
@@ -282,7 +282,7 @@ function GameSurface({
           onRunSurfaceEvent={handleRunSurfaceEvent}
         />
       </GameView>
-    </Animated.View>
+    </View>
   );
 }
 

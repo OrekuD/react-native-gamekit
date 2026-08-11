@@ -7,7 +7,7 @@
  * React state; the select mappers run on the UI runtime.
  */
 import { GameSprite, GameWorld2D, SpriteBatch, type GameRendererProps } from 'react-native-gamekit/react';
-import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import type { SharedValue } from 'react-native-reanimated';
 
 import type { PlaySnapshot, SpriteFieldDefinition } from '../games/spriteFieldGame';
 
@@ -16,13 +16,6 @@ type RendererProps = GameRendererProps<SpriteFieldDefinition['scenes'], typeof s
 import { spriteFieldAssets } from '../games/spriteFieldGame';
 
 export function SpriteFieldRenderer({ frame, alpha, viewport, assets }: RendererProps) {
-  const playerClip = useDerivedValue(() => {
-    'worklet';
-    const play = frame.value.current as PlaySnapshot;
-    return play.animation.clip;
-  });
-  void playerClip;
-
   if (assets === undefined) {
     return null;
   }
