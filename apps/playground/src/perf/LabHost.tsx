@@ -186,10 +186,15 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
     // native input → presented path. One sample per scripted event, measured
     // on the RN runtime through the session's own commit listener.
     let lastEnqueueAt: number | undefined;
-    const subscription = session.addCommitListener(() => {
+    const subscription = session.addCommitListener((frame) => {
       if (lastEnqueueAt !== undefined) {
         summary.record('input-to-commit-ms', Date.now() - lastEnqueueAt);
         lastEnqueueAt = undefined;
+      }
+      // Direct paddle-tracking evidence for native-input runs.
+      const play = frame.current as { paddle?: { x: number } } | undefined;
+      if (play?.paddle !== undefined) {
+        summary.record('paddle-x', play.paddle.x);
       }
     });
     const enqueue = (event: ScriptedPointerEvent) => {
