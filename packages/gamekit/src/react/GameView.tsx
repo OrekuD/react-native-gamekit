@@ -138,6 +138,10 @@ export function GameView<
 
   useEffect(() => {
     epoch.value += 1;
+    // Session swaps (the playground's persistent surface) must not keep a
+    // stale frame from the previous session: re-seed the shared frame with
+    // the new session's render frame before the first commit arrives.
+    frame.value = game.getRenderFrame();
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
       instrumentationRef.current?.onPresentCommit?.(nextFrame.revision, Date.now());
