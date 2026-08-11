@@ -1110,7 +1110,7 @@ coalescer, UI→RN crossings, or true input-to-visible latency.
 - [x] The JS-stall probe observes alpha and presentation state from the mounted
   `GameView`, not from the lab controls.
 
-**Status: DONE (commit `239b03e` + follow-ups).** The lab mounts the real
+**Status: DONE (commits `239b03e`, `47799d6`, latency-dedup fix).** The lab mounts the real
 GameView/Skia renderer/pointer surface (visually isolated), runs are id-bounded
 with the controller guarding attachment (`labRun.ts`), UI frame deltas aggregate
 in constant space in scalar shared values with elapsed-time transfers (≤1/s,
@@ -1161,7 +1161,7 @@ can leave the visible paddle behind the finger.
 - [x] The mounted native-input scenario shows fewer UI→RN move crossings
   without regressing device input-to-visible p95/p99.
 
-**Status: DONE (commit `cb25a2e` + `47799d6` wiring).** The coalescer is a
+**Status: DONE (commits `cb25a2e`, `63fe69a`, `9d71347`).** The coalescer is a
 pure reducer over an explicit state object in one UI-runtime shared value
 (closure-captured state was not reliably shared between RNGH handler worklets —
 the original silent-move-drop). `flush(nowMs)` forwards a deferred trailing
@@ -1246,7 +1246,7 @@ disabled.
 - [x] A release-like microbenchmark shows the disabled path is allocation-free
   and does not regress the pre-diagnostics session baseline beyond noise.
 
-**Status: DONE (commit `fbe1fbf`-era F4 commit).** `diagnostics` stays
+**Status: DONE (commit `9c76add`).** `diagnostics` stays
 optional (the NOOP sink is deleted); every measurement block is guarded so a
 session without a sink performs zero timing reads, zero callbacks, and no
 wrapper allocation (proven by a patched-clock node test). A
@@ -1283,7 +1283,7 @@ legal JavaScript arrays.
 - [x] Numeric-only arrays retain the trusted-cache fast path and show no
   material device/profile regression.
 
-**Status: DONE.** The array fast path keeps the numeric loop and adds an
+**Status: DONE (commits `05815c8`, `c77edf2`).** The array fast path keeps the numeric loop and adds an
 allocation-free `for-in` scan (dense-array fast discriminator) plus a symbol
 probe, freezing values on non-index string and symbol keys before the array is
 promoted into the trusted set; sparse, cyclic, and getter-throwing arrays keep
@@ -1321,7 +1321,7 @@ previous viewport. The binding reuse check also omits the `action` prop.
 - [x] Rotation and iPad split-view resizing preserve hit testing, coordinate
   transforms, and capture state during active and inactive touches.
 
-**Status: DONE (commit `47799d6`).** Every scheduled packet carries the
+**Status: DONE (commits `63fe69a` + `f919baf`).** Every scheduled packet carries the
 binding epoch (shared-value mirror of a monotonic counter on the binding);
 packets are rejected on the RN runtime unless they match. Layout revisions bump
 the epoch before anything else (active drags keep flowing with the lazily-read
@@ -1357,16 +1357,16 @@ work is complete.
 6. Update the results and compatibility docs with measured tables. Separate
    implementation facts, simulator proxies, and physical-device conclusions.
 
-**Final acceptance:**
+**Final acceptance (reopened — device-gated, see Status above):**
 
-- [x] Global acceptance criteria 14–18 are satisfied on recorded hardware.
-- [x] Android debug and release builds succeed.
-- [x] No unexplained UI or RN frame-drop cluster remains in idle or native drag.
-- [x] Input-to-visible p95/p99 stays within the threshold established by the
+- [ ] Global acceptance criteria 14–18 are satisfied on recorded hardware.
+- [ ] Android debug and release builds succeed.
+- [ ] No unexplained UI or RN frame-drop cluster remains in idle or native drag.
+- [ ] Input-to-visible p95/p99 stays within the threshold established by the
   corrected F1 baseline.
-- [x] Fifty open/close cycles show no retained session, listener, gesture,
+- [ ] Fifty open/close cycles show no retained session, listener, gesture,
   Canvas, or unbounded memory growth.
-- [x] Only after these checks pass may the status change from **implementation
+- [ ] Only after these checks pass may the status change from **implementation
   complete, device validation incomplete** to **performance work accepted**.
 
 **Status: OPEN — device-gated.** Android debug/release builds, the physical

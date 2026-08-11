@@ -622,30 +622,30 @@ or performance-feedback changes into the asset implementation commits.
 
 #### Work
 
-- [ ] Review the current dirty tree and split the already completed work into
+- [x] Review the current dirty tree and split the already completed work into
   attributable commits before Task 7 implementation begins.
-- [ ] Reconcile the F1–F7 feedback checkboxes in
+- [x] Reconcile the F1–F7 feedback checkboxes in
   `plans/performance-tasks.md` with the code and recorded evidence. A checked
   box without the required implementation/device evidence must be reopened or
   explicitly qualified.
-- [ ] Re-run the trailing-flush cases: a deferred final move reaches the
+- [x] Re-run the trailing-flush cases: a deferred final move reaches the
   session without another native move, terminal edges stay ordered, and no
   sampler stays active after the final pointer exits.
-- [ ] Re-run consecutive/cancelled manual-gesture lifecycle cases and prove
+- [x] Re-run consecutive/cancelled manual-gesture lifecycle cases and prove
   pointer ownership releases exactly once before the next gesture begins.
-- [ ] Prove the disabled diagnostics path performs no timing reads, callbacks,
+- [x] Prove the disabled diagnostics path performs no timing reads, callbacks,
   or wrapper allocation during a normal fixed step.
-- [ ] Prove nested values stored on non-index string and symbol properties of
+- [x] Prove nested values stored on non-index string and symbol properties of
   arrays are included in the deep-immutability contract.
-- [ ] Prove stale layout/binding packets cannot acquire or release pointer
+- [x] Prove stale layout/binding packets cannot acquire or release pointer
   ownership after the epoch changes.
-- [ ] Confirm the fixed paddle drag on a clean iPhone development build after a
+- [x] Confirm the fixed paddle drag on a clean iPhone development build after a
   Metro restart, since package source-vs-built resolution was part of the bug.
-- [ ] Run the currently implemented mounted Performance Lab scenarios and
+- [x] Run the currently implemented mounted Performance Lab scenarios and
   archive a post-fix baseline for idle, native drag, and open/close lifecycle.
   Sprite-count scaling is introduced later in T7.7, after the sprite renderer
   and Atlas batch exist.
-- [ ] Record exact RN, Expo, Skia, Reanimated, Worklets, RNGH, `expo-asset`, iOS,
+- [x] Record exact RN, Expo, Skia, Reanimated, Worklets, RNGH, `expo-asset`, iOS,
   and Android versions that Task 7 starts from.
 - [x] Confirm root imports remain headless and React Native resolves package
   source while default Node/package resolution uses built output.
