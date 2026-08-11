@@ -19,6 +19,7 @@ import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native
 import { scheduleOnRN } from 'react-native-worklets';
 
 import type { InputMap, SceneMap } from '../definition/types';
+import type { AssetGroupMap, LoadedAssets } from '../assets/types';
 import type { CommitFrame, GameSession } from '../core/session/types';
 import type { ResolvedViewport2D } from '../viewport2d';
 import { advanceAlpha } from './alphaClock';
@@ -28,7 +29,10 @@ import type { GameViewInstrumentation } from './instrumentation';
 import { ViewportBinding } from './viewportBinding';
 
 /** Stable imperative values supplied to a Skia renderer component. */
-export interface GameRendererProps<TScenes extends SceneMap> {
+export interface GameRendererProps<
+  TScenes extends SceneMap,
+  TAssets extends AssetGroupMap = AssetGroupMap,
+> {
   /** Latest simulation commit, updated at commit frequency only. */
   readonly frame: SharedValue<CommitFrame<TScenes>>;
   /**
@@ -38,14 +42,22 @@ export interface GameRendererProps<TScenes extends SceneMap> {
   readonly alpha: SharedValue<number>;
   /** Latest resolved viewport shared with the input adapter. */
   readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
+  /** The stable loaded asset lease (T7.5); shape-only renderers omit it. */
+  readonly assets?: LoadedAssets<TAssets>;
 }
 
 /** Props for the Skia-backed GameKit view. */
-export interface GameViewProps<TScenes extends SceneMap, TInput extends InputMap> {
+export interface GameViewProps<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TAssets extends AssetGroupMap = AssetGroupMap,
+> {
   /** Externally owned headless game session. */
   readonly game: GameSession<TScenes, TInput>;
+  /** The stable loaded asset lease; shape-only games omit it. */
+  readonly assets?: LoadedAssets<TAssets>;
   /** Stable Skia renderer component for the session's scene snapshots. */
-  readonly renderer: ComponentType<GameRendererProps<TScenes>>;
+  readonly renderer: ComponentType<GameRendererProps<TScenes, TAssets>>;
   /** Optional measurement callbacks for the Performance Lab (F1). */
   readonly instrumentation?: GameViewInstrumentation;
   /** Static React HUD and controls mounted above the canvas. */
@@ -83,13 +95,18 @@ export const GameViewportContext = createContext<GameViewport | null>(null);
  * and app backgrounding, and is never disposed by this component — the
  * creator owns disposal.
  */
-export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
+export function GameView<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TAssets extends AssetGroupMap = AssetGroupMap,
+>({
   game,
+  assets,
   renderer: Renderer,
   children,
   style,
   instrumentation,
-}: GameViewProps<TScenes, TInput>) {
+}: GameViewProps<TScenes, TInput, TAssets>) {
   const instrumentationRef = useRef(instrumentation);
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
@@ -203,7 +220,12 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
         }}
       >
         <Canvas style={StyleSheet.absoluteFill}>
-          <Renderer frame={frame} alpha={alpha} viewport={viewportValue} />
+          <Renderer
+            frame={frame}
+            alpha={alpha}
+            viewport={viewportValue}
+            {...(assets === undefined ? {} : { assets })}
+          />
         </Canvas>
         {children === undefined ? null : (
           <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>

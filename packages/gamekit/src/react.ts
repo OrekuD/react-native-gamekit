@@ -1,5 +1,7 @@
 export { GameView } from './react/GameView';
 export { createGameAssetStore } from './react/assets/decodeSkiaImage';
+export { useGameAssets, stableGroupsKey } from './react/assets/useGameAssets';
+export type { GameAssetsState } from './react/assets/useGameAssets';
 export { createGameAssetStoreCore } from './react/assets/createGameAssetStore';
 export type {
   AcquireOptions,

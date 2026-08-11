@@ -12,10 +12,8 @@
  * stable loaded lease and the renderer looks frames up through the
  * manifest-typed `GameRendererProps` generic.
  */
-import { defineGame, defineScene, type GameDefinition } from '../../src/index';
-import { GameView, type GameRendererProps } from '../../src/react';
-import { useGameAssets } from '../../src/react';
-import type { GameAssetsError, LoadedAssets } from '../../src/react';
+import { defineGame, defineScene, type GameAssetError, type GameDefinition, type LoadedAssets } from '../../src/index';
+import { GameView, useGameAssets, type GameRendererProps } from '../../src/react';
 
 import { gameAssets } from '../api/assetsManifest.types';
 
@@ -63,7 +61,7 @@ export function SpriteGameScreen() {
   }
 
   if (state.status === 'error') {
-    const error: GameAssetsError = state.error;
+    const error: GameAssetError = state.error;
     const retry: () => void = state.retry;
     void error;
     void retry;
