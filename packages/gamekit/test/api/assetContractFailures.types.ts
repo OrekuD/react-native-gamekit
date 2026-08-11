@@ -18,7 +18,7 @@
 import { defineGame, defineScene, image, spriteSheet, startSpriteAnimation } from '../src/index';
 import { useGameAssets } from '../src/react';
 
-import { gameAssets, otherAssets } from './assetsManifest.types';
+import { gameAssets, otherAssets } from '../api/assetsManifest.types';
 
 const handle = 42; // static require(...) module handle
 

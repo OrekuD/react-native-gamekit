@@ -12,7 +12,7 @@ import {
   type SpriteAnimationState,
 } from '../src/index';
 
-import { gameAssets } from './assetsManifest.types';
+import { gameAssets } from '../api/assetsManifest.types';
 
 const player = gameAssets.gameplay.player;
 

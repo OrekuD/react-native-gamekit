@@ -44,7 +44,8 @@
     "prepack": "bob build",
     "pack:inspect": "pnpm pack --dry-run",
     "bench:deepfreeze": "node --import tsx bench/deepFreeze.bench.ts",
-    "test:coverage:gate": "node scripts/coverage-gate.mjs"
+    "test:coverage:gate": "node scripts/coverage-gate.mjs",
+    "typecheck:assets": "tsc -p tsconfig.assets.json"
   },
   "peerDependencies": {
     "@shopify/react-native-skia": "2.11.0",

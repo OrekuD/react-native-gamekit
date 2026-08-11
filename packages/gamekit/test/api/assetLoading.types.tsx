@@ -17,7 +17,7 @@ import { GameView, type GameRendererProps } from '../src/react';
 import { useGameAssets } from '../src/react';
 import type { GameAssetsError, LoadedAssets } from '../src/react';
 
-import { gameAssets } from './assetsManifest.types';
+import { gameAssets } from '../api/assetsManifest.types';
 
 const viewport = {
   logicalSize: { width: 320, height: 480 },

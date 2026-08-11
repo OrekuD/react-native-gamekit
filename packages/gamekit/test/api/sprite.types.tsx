@@ -15,7 +15,7 @@ import { GameWorld2D, GameSprite, Sprite } from '../src/react';
 import type { GameRendererProps } from '../src/react';
 import type { SharedValue } from 'react-native-reanimated';
 
-import { gameAssets } from './assetsManifest.types';
+import { gameAssets } from '../api/assetsManifest.types';
 
 type Scenes = {
   play: unknown;

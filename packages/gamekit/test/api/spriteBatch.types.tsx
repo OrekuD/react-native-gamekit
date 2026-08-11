@@ -14,7 +14,7 @@
 import { GameWorld2D, SpriteBatch } from '../src/react';
 import type { GameRendererProps } from '../src/react';
 
-import { gameAssets } from './assetsManifest.types';
+import { gameAssets } from '../api/assetsManifest.types';
 
 type Scenes = {
   play: unknown;

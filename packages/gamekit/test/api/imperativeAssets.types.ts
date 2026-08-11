@@ -12,7 +12,7 @@
  */
 import { createGameAssetStore, type GameAssetLease } from '../src/index';
 
-import { gameAssets } from './assetsManifest.types';
+import { gameAssets } from '../api/assetsManifest.types';
 
 export async function loadBootAndGameplay(
   abortController: AbortController,
