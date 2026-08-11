@@ -60,6 +60,31 @@ const state = useGameAssets(assets, { groups: ['gameplay'] });
 - [ ] No remote URLs: sources are static `require(...)` module handles only.
 - [ ] Sessions are created only after assets are ready and disposed once on
       close.
+
+## Surface ownership contract (Task 8 — agents adding games)
+
+The playground shell owns every session through one `SurfaceController`
+(`apps/playground/src/shell/surfaceController.ts`); content, `GameView`, and
+`GamePointerInput` only borrow the published slot:
+
+- Navigation creates a **unique request id** and a **fresh binding
+  generation** every time, even for the same catalog id. Never key anything
+  by `gameId` or `String(game)`.
+- All consumers bind from the one immutable slot (`surfaceSlot.ts`):
+  `game`, `renderer`, `content`, `assets`, and the pointer all come from the
+  same published value. The `presentationKey` and pointer key are the slot
+  generation.
+- A session superseded by a new binding is **retired, not disposed**: it
+  stays in the slot's `retiring` list until the replacement generation is
+  acknowledged (the surface's post-commit effect), then it is disposed
+  exactly once. Never dispose a session from content or a child cleanup.
+- Closing publishes the neutral Home binding first; the closed game is
+  disposed only after the neutral binding commits.
+- The Sprite Field asset controller is keyed by the request id; late
+  readiness from a superseded request is ignored and its lease released.
+- The header/back control of a game screen must be a separate layout region
+  from the gameplay stage; a full-stage start surface must be absolutely
+  filled inside the stage only, never the whole screen.
 - [ ] Content roots are `pointerEvents="box-none"` so touches reach the
       pointer surface.
 

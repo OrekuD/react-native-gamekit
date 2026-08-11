@@ -21,7 +21,6 @@ export default function SpriteFieldContent({
   game,
   onExit,
   assetState,
-  assetController,
 }: PlaygroundGameContentProps) {
   // RF2: the shell owns the asset load; the content consumes the status. The
   // loading/error branch never reads a gameplay snapshot or casts the neutral
@@ -57,7 +56,6 @@ export default function SpriteFieldContent({
 
   return (
     <SafeAreaView pointerEvents="box-none" edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>
-      {assetController}
       <View style={styles.topBar}>
         <Pressable
           accessibilityLabel="Back to playground"

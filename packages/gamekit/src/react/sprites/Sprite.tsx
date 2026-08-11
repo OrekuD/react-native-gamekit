@@ -14,12 +14,15 @@ import { Atlas, Group, type SkImage, type SamplingOptions } from '@shopify/react
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 
-import type { LoadedImage, LoadedSpriteSheet, SpriteFrameRect } from '../../assets/types';
+import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
 import {
   computeSpriteRsxform,
+  resolveSpriteFrameRect,
   spriteGroupCorrection,
   type SpriteTransformInput,
 } from './spriteTransform';
+
+export { resolveSpriteFrameRect, type SpriteFrameRect } from './spriteTransform';
 
 export type SpriteAnimatable = number | SharedValue<number>;
 export type SpriteAnimatableBoolean = boolean | SharedValue<boolean>;
@@ -55,25 +58,6 @@ export interface SpriteProps {
   readonly sampling?: SamplingOptions;
   /** Hide the sprite without unmounting it. */
   readonly visible?: SpriteAnimatableBoolean;
-}
-
-/** Resolve the source rectangle for a frame selection. */
-export function resolveSpriteFrameRect(
-  source: LoadedImage | LoadedSpriteSheet,
-  frame: string | undefined,
-): SpriteFrameRect {
-  if (source.descriptor.kind === 'image') {
-    const image = source as LoadedImage;
-    return { x: 0, y: 0, width: image.width, height: image.height };
-  }
-  const sheet = source as LoadedSpriteSheet;
-  const rect = frame === undefined ? undefined : sheet.frames[frame];
-  if (rect === undefined) {
-    throw new Error(
-      `frame ${JSON.stringify(frame)} does not belong to this sprite sheet (loaded frames: ${Object.keys(sheet.frames).join(', ')})`,
-    );
-  }
-  return rect;
 }
 
 export function Sprite({

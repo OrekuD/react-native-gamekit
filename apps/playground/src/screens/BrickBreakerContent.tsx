@@ -4,6 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { BrickBreakerSession } from '../games/brickBreakerGame';
 import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
+import { BRICK_BREAKER_LAYOUT } from './brickBreakerLayout';
 import { hudEqual, selectHud, type HudState } from './brickBreakerHud';
 import { createHudObserver } from './hudObserver';
 
@@ -27,7 +28,13 @@ function useHudValue(
 }
 
 /**
- * Brick Breaker content: the HUD, the back bar, and the start surface.
+ * Brick Breaker content (T8.1): two sibling interaction regions.
+ *
+ * The safe-area top bar (back control + centered title) and the gameplay
+ * stage are separate layout regions; the full-stage start/restart surface is
+ * absolutely filled INSIDE the stage only, so the header is structurally
+ * outside the gameplay hit surface and the back control can never be
+ * intercepted by the start overlay.
  *
  * Rendered inside the shell's single persistent GameView surface — this
  * content never mounts a GameView or pointer surface itself.
@@ -51,37 +58,40 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
       edges={['top', 'right', 'bottom', 'left']}
       style={styles.screen}
     >
-      <View style={styles.topBar}>
+      <View style={styles.topBar} testID={BRICK_BREAKER_LAYOUT.topBar.testID}>
         <Pressable
           accessibilityLabel="Back to playground"
           accessibilityRole="button"
           hitSlop={8}
           onPress={onExit}
           style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
+          testID={BRICK_BREAKER_LAYOUT.topBar.back.testID}
         >
           <Text style={styles.backIcon}>‹</Text>
         </Pressable>
         <Text numberOfLines={1} style={styles.title}>
-          Brick Breaker
+          {BRICK_BREAKER_LAYOUT.topBar.title}
         </Text>
         <View aria-hidden style={styles.topBarSide} />
       </View>
 
-      <GameHud hud={hud} />
+      <View style={styles.stage} testID={BRICK_BREAKER_LAYOUT.stage.testID}>
+        <GameHud hud={hud} />
 
-      {hud.awaitingStart ? (
-        <Pressable
-          accessibilityHint="Starts or restarts Brick Breaker"
-          accessibilityLabel={hud.prompt}
-          accessibilityRole="button"
-          onPress={startOrRestart}
-          style={({ pressed }) => [
-            StyleSheet.absoluteFill,
-            pressed && styles.startSurfacePressed,
-          ]}
-          testID="brick-breaker-start-surface"
-        />
-      ) : null}
+        {hud.awaitingStart ? (
+          <Pressable
+            accessibilityHint="Starts or restarts Brick Breaker"
+            accessibilityLabel={hud.prompt}
+            accessibilityRole="button"
+            onPress={startOrRestart}
+            style={({ pressed }) => [
+              StyleSheet.absoluteFill,
+              pressed && styles.startSurfacePressed,
+            ]}
+            testID={BRICK_BREAKER_LAYOUT.stage.startSurface.testID}
+          />
+        ) : null}
+      </View>
     </SafeAreaView>
   );
 }
@@ -95,12 +105,6 @@ function GameHud({ hud }: { readonly hud: HudState }) {
       </View>
 
       {hud.awaitingStart ? (
-        <View style={styles.promptWrap}>
-          <Text style={styles.prompt}>{hud.prompt}</Text>
-        </View>
-      ) : null}
-
-      {hud.prompt === 'Game over — tap to play again' ? (
         <View style={styles.promptWrap}>
           <Text style={styles.prompt}>{hud.prompt}</Text>
         </View>
@@ -146,6 +150,9 @@ const styles = StyleSheet.create({
     height: 44,
     width: 44,
   },
+  stage: {
+    flex: 1,
+  },
   score: {
     alignItems: 'center',
     alignSelf: 'center',
@@ -169,7 +176,7 @@ const styles = StyleSheet.create({
     left: 0,
     position: 'absolute',
     right: 0,
-    top: 400,
+    top: 360,
   },
   prompt: {
     color: '#f8fafc',

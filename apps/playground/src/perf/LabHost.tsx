@@ -38,7 +38,7 @@ import {
   uiBucketIndex,
   type UiTransfer,
 } from './uiMetrics';
-import type { RunSurfaceEvent } from '../shell/runSurfaceState';
+import type { RunSurfaceEvent } from '../shell/surfaceSlot.ts';
 
 /** Let the mounted pipeline settle before scripted engine input begins. */
 const INPUT_AT_MS = 300;

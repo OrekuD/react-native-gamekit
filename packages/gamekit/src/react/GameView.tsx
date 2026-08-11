@@ -54,9 +54,12 @@ export interface GameViewProps<
 > {
   /** Externally owned headless game session. */
   readonly game: GameSession<TScenes, TInput>;
-  /** Explicit presentation key (RF6): remounts the per-session presentation
-   * when the session changes. Never derive identity from object
-   * stringification. */
+  /**
+   * Explicit presentation key (RF6): remounts the per-session presentation
+   * when the session changes. The fallback is a stable per-session identity
+   * allocated from a WeakMap (T8.6) — never object stringification, which
+   * maps every session to the same value.
+   */
   readonly presentationKey?: string | number;
   /** The stable loaded asset lease; shape-only games omit it. */
   readonly assets?: LoadedAssets<TAssets>;
@@ -218,6 +221,22 @@ function GamePresentation<
   );
 }
 
+// Stable per-session fallback identity (T8.6): one incrementing id per
+// session object for the life of the module. A replaced session is a new
+// object and therefore a new id; the same session keeps its id across
+// renders so the presentation never remounts spuriously.
+const sessionPresentationIds = new WeakMap<object, number>();
+let nextSessionPresentationId = 1;
+function sessionPresentationId(game: object): number {
+  let id = sessionPresentationIds.get(game);
+  if (id === undefined) {
+    id = nextSessionPresentationId;
+    nextSessionPresentationId += 1;
+    sessionPresentationIds.set(game, id);
+  }
+  return id;
+}
+
 export function GameView<
   TScenes extends SceneMap,
   TInput extends InputMap,
@@ -266,10 +285,12 @@ export function GameView<
         }}
       >
         <Canvas style={StyleSheet.absoluteFill}>
-          {/* RF6: the per-session presentation is keyed by the session so the
+          {/* RF6/T8.6: the per-session presentation is keyed by an explicit
+              presentation key when provided, otherwise by a stable
+              per-session identity — never object stringification — so the
               frame/alpha/epoch initialize before the renderer can run. */}
           <GamePresentation
-            key={presentationKey ?? String(game)}
+            key={presentationKey ?? sessionPresentationId(game)}
             game={game}
             assets={assets}
             renderer={Renderer}
