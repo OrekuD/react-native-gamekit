@@ -270,6 +270,10 @@ function GameSurface({
       >
         {showPointer ? (
           <GamePointerInput
+            // Each binding generation gets a fresh RNGH detector: recognizer
+            // delivery proved unreliable across in-place session swaps while
+            // the canvas itself stays mounted (the one-canvas invariant).
+            key={String(renderedGame)}
             game={renderedGame as GameSession<SceneDefinitionMarkerMap, Record<string, PointerInputAction>>}
             action="primary"
             instrumentation={activeRunSurface?.pointer}
