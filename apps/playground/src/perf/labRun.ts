@@ -82,7 +82,7 @@ export class LabRunController {
   #completed = false;
   #inputStages: { raw: number; forwarded: number } | undefined;
   #presentedCount = 0;
-  #pendingForwardedAtMs: number | undefined;
+  #lastConsumedSeq = 0;
   readonly #inputToPresent = new CounterSeries();
 
   constructor(options: LabRunControllerOptions) {
@@ -128,7 +128,7 @@ export class LabRunController {
     this.#completed = false;
     this.#inputStages = undefined;
     this.#presentedCount = 0;
-    this.#pendingForwardedAtMs = undefined;
+    this.#lastConsumedSeq = 0;
     this.#inputToPresent.reset();
   }
 
@@ -161,21 +161,28 @@ export class LabRunController {
   }
 
   /**
-   * A commit was presented (RN runtime). `forwardedAtMs` is the UI-runtime
-   * timestamp of the most recent forwarded pointer event, read from a shared
-   * value; when present and strictly older than the presentation, it yields
-   * one input-to-present latency sample.
+   * A commit was presented (RN runtime). `forwarded` carries the monotonically
+   * increasing input sequence and UI-runtime timestamp of the most recent
+   * forwarded pointer event; each sequence is consumed exactly once on its
+   * first corresponding presentation, so one input event can never be
+   * attributed to multiple commits.
    */
-  onPresentCommit(revision: number, atMs: number, forwardedAtMs: number | undefined): void {
+  onPresentCommit(
+    revision: number,
+    atMs: number,
+    forwarded: { readonly seq: number; readonly atMs: number } | undefined,
+  ): void {
     if (this.#completed) {
       return;
     }
     void revision;
     this.#presentedCount += 1;
-    if (forwardedAtMs !== undefined && atMs >= forwardedAtMs) {
-      this.#inputToPresent.record(atMs - forwardedAtMs);
+    if (forwarded !== undefined && forwarded.seq > this.#lastConsumedSeq) {
+      this.#lastConsumedSeq = forwarded.seq;
+      if (atMs >= forwarded.atMs) {
+        this.#inputToPresent.record(atMs - forwarded.atMs);
+      }
     }
-    this.#pendingForwardedAtMs = undefined;
   }
 
   /** Drop the active run without emitting a result. */

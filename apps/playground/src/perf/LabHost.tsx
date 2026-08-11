@@ -63,10 +63,13 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
   );
 
   // Native-input stage counters (written by UI-runtime worklets, read on
-  // the RN runtime at run end).
+  // the RN runtime at run end). `latestForwarded` carries a monotonically
+  // increasing input sequence alongside the timestamp so the RN side can
+  // consume each forwarded event exactly once on its first presentation.
   const rawCount = useSharedValue(0);
   const forwardedCount = useSharedValue(0);
-  const latestForwardedAt = useSharedValue<number | undefined>(undefined);
+  const forwardSeq = useSharedValue(0);
+  const latestForwarded = useSharedValue<{ seq: number; atMs: number } | undefined>(undefined);
 
   // Worklet-safe instrumentation callbacks: the UI-runtime closures mutate
   // shared values only; the RNGH gesture config is diffed per render, so
@@ -79,13 +82,14 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
     onForwarded: (_kind: unknown, _pointerId: number, atMs: number) => {
       'worklet';
       forwardedCount.value += 1;
-      latestForwardedAt.value = atMs;
+      forwardSeq.value += 1;
+      latestForwarded.value = { seq: forwardSeq.value, atMs };
     },
   };
 
   const viewInstrumentation = {
     onPresentCommit: (revision: number, atMs: number) => {
-      controller.onPresentCommit(revision, atMs, latestForwardedAt.value);
+      controller.onPresentCommit(revision, atMs, latestForwarded.value);
     },
   };
 

@@ -98,7 +98,7 @@ describe('Performance Lab run controller (F1)', () => {
     const controller = new LabRunController({ onComplete: (result) => completed.push(result) });
     controller.attachHost();
     controller.start({ scenario: 'native-drag', durationMs: 1000 }, 3);
-    controller.onPresentCommit(5, 2000, 1990); // presented 10 ms after the last forwarded move
+    controller.onPresentCommit(5, 2000, { seq: 3, atMs: 1990 }); // presented 10 ms after the last forwarded move
     controller.onPresentCommit(6, 3000, undefined); // no pending forward: no sample
     const summary = new PerfSummary();
     summary.count('commits', 12);
@@ -124,6 +124,30 @@ describe('Performance Lab run controller (F1)', () => {
     });
     assert.equal(result.inputToPresentMs.count, 1);
     assert.equal(result.inputToPresentMs.p50, 10);
+  });
+
+  it('consumes each forwarded input exactly once across presentations (F1 review)', () => {
+    const completed: unknown[] = [];
+    const controller = new LabRunController({ onComplete: (result) => completed.push(result) });
+    controller.attachHost();
+    controller.start({ scenario: 'native-drag', durationMs: 1000 }, 5);
+    // Forward seq 1 at t=990; the first commit after it samples once.
+    controller.onPresentCommit(1, 1000, { seq: 1, atMs: 990 });
+    controller.onPresentCommit(2, 1016, undefined); // no new forward: no sample
+    controller.onPresentCommit(3, 1033, undefined); // still no new forward: no sample
+    // Forward seq 2 at t=2000; exactly one more sample.
+    controller.onPresentCommit(4, 2000, { seq: 2, atMs: 1980 });
+    controller.onPresentCommit(5, 2016, undefined);
+    const summary = new PerfSummary();
+    controller.finishHost(summary, 1000, 'brick-breaker');
+    const accumulator = createUiAggregator();
+    accumulator.begin(5);
+    accumulator.record(16.7);
+    controller.onUiTransfer(accumulator.flush()!);
+    const result = completed[0] as { inputToPresentMs: { count: number; p50: number; p95: number } };
+    assert.equal(result.inputToPresentMs.count, 2, 'one sample per consumed forward');
+    assert.equal(result.inputToPresentMs.p50, 10);
+    assert.equal(result.inputToPresentMs.p95, 20);
   });
 
   it('aborts a run on detach and never completes it', () => {
