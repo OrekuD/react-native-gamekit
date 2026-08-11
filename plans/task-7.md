@@ -2,7 +2,16 @@
 
 ## Status
 
-**Proposed — not started.**
+**In progress — T7.0 complete; T7.1 next.**
+
+T7.0 (baseline, feedback reconciliation F1–F7, and the pointer lifecycle
+checkpoint) is complete: the dirty tree was split into attributable commits,
+the F1–F7 feedback items are implemented with tests and simulator evidence
+(recorded in `plans/performance-tasks.md`), and the playground now runs one
+long-lived game surface with explicit session ownership transfers
+(`ecf5b86`). F7's physical-device matrix remains open and device-gated.
+T7.1 freezes the assets/sprites API contract with type fixtures and
+representative call sites before any runtime loading lands.
 
 Task 7 is the next product milestone after the core runtime, viewport/input
 work, and the performance programme. It turns GameKit from a shape-based game
