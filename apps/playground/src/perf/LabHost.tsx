@@ -70,6 +70,7 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
   const forwardedCount = useSharedValue(0);
   const forwardSeq = useSharedValue(0);
   const latestForwarded = useSharedValue<{ seq: number; atMs: number } | undefined>(undefined);
+  const samplerCount = useSharedValue(0);
 
   // Worklet-safe instrumentation callbacks: the UI-runtime closures mutate
   // shared values only; the RNGH gesture config is diffed per render, so
@@ -89,6 +90,10 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
     // at dispatch time so the commit association is causal.
     onDispatchResult: (seq: number, atMs: number, accepted: boolean) => {
       controller.onForwardResult(seq, atMs, session.input.acceptedCount, accepted);
+    },
+    onSamplerChanged: (mounted: boolean) => {
+      'worklet';
+      samplerCount.value += mounted ? 1 : -1;
     },
   };
 

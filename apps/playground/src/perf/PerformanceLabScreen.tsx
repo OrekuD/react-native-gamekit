@@ -55,6 +55,7 @@ function formatResult(result: ScenarioResult): string {
   if (result.inputToUiObservedMs !== undefined) {
     lines.push(`input→ui-observed ${formatSeries(result.inputToUiObservedMs)}`);
   }
+  lines.push(`samplers-at-end ${result.samplersAtEnd}`);
   if (result.latencyCounters !== undefined) {
     const counters = result.latencyCounters;
     lines.push(
@@ -117,6 +118,7 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
       inputToCommitMs: undefined,
       inputToUiObservedMs: undefined,
       latencyCounters: undefined,
+      samplersAtEnd: 0,
     });
     setResults([...moduleResults]);
   };

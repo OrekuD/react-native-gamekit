@@ -37,6 +37,8 @@ export interface GamePointerInstrumentation {
    * counted but never sampled.
    */
   readonly onDispatchResult?: (seq: number, atMs: number, accepted: boolean) => void;
+  /** The trailing-flush sampler mounted (true) or unmounted (false). */
+  readonly onSamplerChanged?: (mounted: boolean) => void;
 }
 
 /** GameView presentation instrumentation (RN runtime callback). */

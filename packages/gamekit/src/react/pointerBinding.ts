@@ -11,12 +11,18 @@ import type { CoalescedPointerEvent } from './pointerCoalescer';
  * terminal edge cannot release a newer capture that reused the pointer id.
  */
 export type PointerPacket = CoalescedPointerEvent & {
-  readonly epoch: number;
+  /** Monotonic adapter-owned binding generation (F3 follow-up). */
+  readonly generation: number;
+  /** Adapter-owned layout epoch; bumped on layout revisions and unmount. */
+  readonly layoutEpoch: number;
   /** Monotonic UI-runtime forward sequence (F1 latency causality). */
   readonly seq: number;
   /** UI-runtime timestamp of the forward (F1 latency causality). */
   readonly atMs: number;
 };
+
+/** Monotonic generation source for factory-created bindings (F3). */
+let nextFactoryGeneration = 1;
 
 /** The identity a pointer binding is scoped to. */
 export interface PointerBindingIdentity<TName extends string> {
@@ -56,7 +62,12 @@ export function createPointerBinding<TName extends string>(
   }
   return {
     entry: {
-      binding: new PointerBinding(identity.action, identity.input, getViewport),
+      binding: new PointerBinding(
+        identity.action,
+        identity.input,
+        getViewport,
+        nextFactoryGeneration++,
+      ),
       identity,
     },
     created: true,
@@ -78,42 +89,42 @@ export class PointerBinding<TActionName extends string> {
   readonly #action: TActionName;
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
+  readonly #generation: number;
   #disposed = false;
-  #epoch = 0;
 
   constructor(
     action: TActionName,
     input: InputController<TActionName>,
     getViewport: () => ResolvedViewport2D | undefined,
+    generation: number,
   ) {
     this.#action = action;
     this.#input = input;
     this.#getViewport = getViewport;
+    this.#generation = generation;
   }
 
   /**
-   * The current packet epoch. Packets scheduled under an older epoch are
-   * rejected; the epoch is bumped by `invalidate()` before cancellation or
-   * replacement so callbacks already in flight become harmless no-ops.
+   * The monotonic adapter-owned generation this binding belongs to (F3).
+   * Generations never reset to zero, so a replacement binding and the
+   * worklet closures that stamp its packets agree by construction — no
+   * post-commit synchronization is needed.
    */
-  get epoch(): number {
-    return this.#epoch;
-  }
-
-  /** Bump the epoch, invalidating every packet scheduled so far. Idempotent. */
-  invalidate(): void {
-    this.#epoch += 1;
+  get generation(): number {
+    return this.#generation;
   }
 
   /**
-   * Dispatch a coalesced packet stamped with its scheduling epoch.
+   * Dispatch a coalesced packet stamped with its scheduling generation.
    *
    * Returns `false` (and forwards nothing) when the binding is disposed or
-   * the packet belongs to a stale epoch; the active gesture's newer packets
-   * keep flowing under the current epoch with the latest viewport.
+   * the packet belongs to a different generation; the active gesture's
+   * packets keep flowing under the current generation with the latest
+   * viewport. Layout-epoch rejection happens on the adapter side (the epoch
+   * is adapter-owned and never resets, so it cannot desynchronize).
    */
   dispatch(packet: PointerPacket): boolean {
-    if (this.#disposed || packet.epoch !== this.#epoch) {
+    if (this.#disposed || packet.generation !== this.#generation) {
       return false;
     }
     switch (packet.kind) {

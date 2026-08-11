@@ -43,7 +43,7 @@ class RecordingInputController implements InputController<string> {
 describe('PointerBinding', () => {
   it('converts surface coordinates to world coordinates through the viewport', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 1);
     const began = binding.begin(1, { x: 195, y: 312.3125 + 109.6875 });
     assert.equal(began, true);
     assert.deepEqual(input.events, ['begin:primary:1:160.00:90.00']);
@@ -51,7 +51,7 @@ describe('PointerBinding', () => {
 
   it('rejects begins in fit letterbox space', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 2);
     const began = binding.begin(1, { x: 195, y: 100 });
     assert.equal(began, false);
     assert.deepEqual(input.events, []);
@@ -59,7 +59,7 @@ describe('PointerBinding', () => {
 
   it('maps movement outside the content through the unbounded transform', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 3);
     binding.begin(1, { x: 195, y: 312.3125 + 109.6875 });
     binding.move(1, { x: 195, y: 700 });
     binding.end(1);
@@ -73,7 +73,7 @@ describe('PointerBinding', () => {
 
   it('returns false with no viewport and forwards nothing but ends', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => undefined);
+    const binding = new PointerBinding('primary', input, () => undefined, 14);
     assert.equal(binding.begin(1, { x: 10, y: 10 }), false);
     binding.move(1, { x: 20, y: 20 });
     binding.end(1);
@@ -83,7 +83,7 @@ describe('PointerBinding', () => {
 
   it('ignores events after dispose', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 4);
     binding.dispose();
     binding.dispose();
     assert.equal(binding.begin(1, { x: 195, y: 400 }), false);
@@ -93,7 +93,7 @@ describe('PointerBinding', () => {
 
   it('forwards cancellation and pointer ids unchanged', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 5);
     binding.begin(9, { x: 195, y: 400 });
     binding.cancel();
     assert.deepEqual(input.events, ['begin:primary:9:160.00:71.95', 'cancel:primary']);
@@ -101,18 +101,18 @@ describe('PointerBinding', () => {
 
   it('never exposes gesture handler or platform types to the input buffer', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 6);
     binding.begin(2, { x: 195, y: 400 });
     assert.match(input.events[0] ?? '', /^begin:primary:2:/);
   });
 
-  it('dispatch routes packets stamped with the current epoch (F6)', () => {
+  it('dispatch routes packets stamped with the current generation (F3)', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
-    const epoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 7, x: 195, y: 400, epoch, seq: 1, atMs: 1000 }), true);
-    assert.equal(binding.dispatch({ kind: 'move', pointerId: 7, x: 195, y: 500, epoch, seq: 2, atMs: 1016 }), true);
-    assert.equal(binding.dispatch({ kind: 'end', pointerId: 7, x: 195, y: 500, epoch, seq: 3, atMs: 1033 }), true);
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 1);
+    const generation = binding.generation;
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 7, x: 195, y: 400, generation, layoutEpoch: 0, seq: 1, atMs: 1000 }), true);
+    assert.equal(binding.dispatch({ kind: 'move', pointerId: 7, x: 195, y: 500, generation, layoutEpoch: 0, seq: 2, atMs: 1016 }), true);
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 7, x: 195, y: 500, generation, layoutEpoch: 0, seq: 3, atMs: 1033 }), true);
     assert.deepEqual(input.events, [
       'begin:primary:7:160.00:71.95',
       // handleTouchesUp forwards the final position before releasing.
@@ -122,36 +122,34 @@ describe('PointerBinding', () => {
     ]);
   });
 
-  it('rejects every packet kind from a stale epoch after invalidation (F6)', () => {
+  it('rejects every packet kind from a different binding generation (F3)', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
-    const oldEpoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: oldEpoch , seq: 1, atMs: 1000 }), true);
-    binding.invalidate();
+    const first = new PointerBinding('primary', input, () => resolvedFor(390, 844), 2);
+    const replacement = new PointerBinding('primary', input, () => resolvedFor(390, 844), 3);
+    assert.equal(first.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, generation: 2, layoutEpoch: 0, seq: 1, atMs: 1000 }), true);
     const stale: PointerPacket[] = [
-      { kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: oldEpoch , seq: 1, atMs: 1000 },
-      { kind: 'move', pointerId: 1, x: 195, y: 500, epoch: oldEpoch , seq: 1, atMs: 1000 },
-      { kind: 'end', pointerId: 1, x: 195, y: 500, epoch: oldEpoch , seq: 1, atMs: 1000 },
-      { kind: 'cancel', epoch: oldEpoch, seq: 1, atMs: 1000 },
+      { kind: 'begin', pointerId: 2, x: 195, y: 400, generation: 2, layoutEpoch: 0, seq: 2, atMs: 1016 },
+      { kind: 'move', pointerId: 1, x: 195, y: 500, generation: 2, layoutEpoch: 0, seq: 3, atMs: 1033 },
+      { kind: 'end', pointerId: 1, x: 195, y: 500, generation: 2, layoutEpoch: 0, seq: 4, atMs: 1050 },
+      { kind: 'cancel', generation: 2, layoutEpoch: 0, seq: 5, atMs: 1066 },
     ];
     for (const packet of stale) {
-      assert.equal(binding.dispatch(packet), false, 'stale packet rejected');
+      assert.equal(replacement.dispatch(packet), false, 'old-generation packet rejected by the replacement');
     }
-    assert.deepEqual(input.events, ['begin:primary:1:160.00:71.95'], 'no stale edge reached the buffer');
+    assert.equal(first.dispatch({ kind: 'move', pointerId: 1, x: 195, y: 500, generation: 2, layoutEpoch: 0, seq: 6, atMs: 1083 }), true, 'the original binding keeps working');
+    assert.deepEqual(input.events, ['begin:primary:1:160.00:71.95', 'move:primary:1:160.00:154.00'], 'no stale edge reached the buffer');
   });
 
-  it('a stale terminal edge cannot release a newer capture reusing the pointer id (F6)', () => {
+  it('a stale terminal edge cannot release a newer capture reusing the pointer id (F3)', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
-    const firstEpoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: firstEpoch , seq: 1, atMs: 1000 }), true);
-    // Layout revision invalidates the first gesture; its queued end is stale.
-    binding.invalidate();
-    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: firstEpoch , seq: 1, atMs: 1000 }), false);
-    // A newer gesture reuses the same native pointer id under the new epoch.
-    const secondEpoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: secondEpoch , seq: 1, atMs: 1000 }), true);
-    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: secondEpoch , seq: 1, atMs: 1000 }), true);
+    const first = new PointerBinding('primary', input, () => resolvedFor(390, 844), 4);
+    const replacement = new PointerBinding('primary', input, () => resolvedFor(390, 844), 5);
+    assert.equal(first.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, generation: 4, layoutEpoch: 0, seq: 1, atMs: 1000 }), true);
+    // Replacement invalidates the first gesture; its queued end is stale.
+    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, generation: 4, layoutEpoch: 0, seq: 2, atMs: 1016 }), false);
+    // A newer gesture reuses the same native pointer id under the new generation.
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, generation: 5, layoutEpoch: 0, seq: 3, atMs: 1033 }), true);
+    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, generation: 5, layoutEpoch: 0, seq: 4, atMs: 1050 }), true);
     assert.deepEqual(input.events, [
       'begin:primary:4:160.00:71.95',
       'begin:primary:4:160.00:71.95',
@@ -160,50 +158,28 @@ describe('PointerBinding', () => {
     ], 'the stale end never released the newer capture');
   });
 
-  it('re-synchronizes the packet epoch when the binding is replaced (F6 review)', () => {
-    // Adapter-level replacement sequence: the old binding is invalidated
-    // (bumping the shared epoch to 1) and a fresh binding starts at 0. The
-    // adapter must re-sync the UI shared epoch to the replacement binding's
-    // epoch, otherwise every new packet is stamped 1 and rejected.
+  it('a replacement binding accepts the first packet immediately, by construction (F3)', () => {
     const input = new RecordingInputController();
-    const first = new PointerBinding('primary', input, () => resolvedFor(390, 844));
-    const sharedEpoch = first.epoch; // 0
-    assert.equal(first.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: sharedEpoch , seq: 1, atMs: 1000 }), true);
-
-    // Replacement: cleanup invalidates the old binding and bumps the mirror.
-    first.invalidate();
-    const bumped = first.epoch; // 1
-    assert.equal(bumped, sharedEpoch + 1);
-
-    // The new binding starts at epoch 0; the adapter syncs the mirror.
-    const replacement = new PointerBinding('primary', input, () => resolvedFor(390, 844));
-    const synced = replacement.epoch;
-    assert.equal(synced, 0, 'replacement binding starts fresh');
-    assert.equal(synced, sharedEpoch, 'adapter must re-sync the shared epoch to the replacement');
-
-    // Input continues immediately under the synced epoch.
-    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: synced , seq: 1, atMs: 1000 }), true);
-    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 1, x: 195, y: 400, epoch: synced , seq: 1, atMs: 1000 }), true);
-    // A packet stamped with the pre-replacement epoch is still rejected.
-    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: bumped , seq: 1, atMs: 1000 }), false);
+    const first = new PointerBinding('primary', input, () => resolvedFor(390, 844), 6);
+    assert.equal(first.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, generation: 6, layoutEpoch: 0, seq: 1, atMs: 1000 }), true);
+    const replacement = new PointerBinding('primary', input, () => resolvedFor(390, 844), 7);
+    assert.equal(replacement.generation, 7, 'generation is monotonic and never resets');
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, generation: 7, layoutEpoch: 0, seq: 2, atMs: 1016 }), true);
+    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 1, x: 195, y: 400, generation: 7, layoutEpoch: 0, seq: 3, atMs: 1033 }), true);
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 2, x: 195, y: 400, generation: 6, layoutEpoch: 0, seq: 4, atMs: 1050 }), false);
   });
 
-  it('invalidate and cancel are idempotent and ordering-safe (F6)', () => {
+  it('dispose and cancel are idempotent and ordering-safe (F3)', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
-    binding.invalidate();
-    binding.invalidate();
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 8);
     binding.cancel();
     binding.cancel();
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch, seq: 1, atMs: 1000 }), true);
-    binding.invalidate();
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, generation: 8, layoutEpoch: 0, seq: 1, atMs: 1000 }), true);
     binding.dispose();
     binding.dispose();
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch, seq: 2, atMs: 1016 }), false);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, generation: 8, layoutEpoch: 0, seq: 2, atMs: 1016 }), false);
   });
-});
 
-describe('ViewportBinding', () => {
   it('resolves on surface changes and notifies only on layout revisions', () => {
     const binding = new ViewportBinding(viewport);
     let revisions = 0;
@@ -500,7 +476,7 @@ describe('bindAppLifecycle hardening (feedback)', () => {
 describe('PointerBinding adapter dispatch (feedback)', () => {
   it('forwards the final up position before ending ownership', () => {
     const input = new RecordingInputController();
-    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 13);
     binding.handleTouchesDown(1, 195, 400);
     binding.handleTouchesMove(1, 195, 500);
     binding.handleTouchesUp(1, 220, 520);

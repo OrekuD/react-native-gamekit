@@ -60,6 +60,8 @@ export interface ScenarioResult {
   readonly latencyCounters:
     | { readonly matched: number; readonly unmatched: number; readonly rejected: number; readonly superseded: number }
     | undefined;
+  /** Trailing-flush samplers still mounted at run end (must be 0). */
+  readonly samplersAtEnd: number;
 }
 
 export interface LabRunControllerOptions {
@@ -101,6 +103,7 @@ export class LabRunController {
   #latencyUnmatched = 0;
   #latencyRejected = 0;
   #latencySuperseded = 0;
+  #samplersAtEnd = 0;
   readonly #inputToCommit = new CounterSeries();
   readonly #inputToUiObserved = new CounterSeries();
 
@@ -153,6 +156,7 @@ export class LabRunController {
     this.#latencyUnmatched = 0;
     this.#latencyRejected = 0;
     this.#latencySuperseded = 0;
+    this.#samplersAtEnd = 0;
     this.#inputToCommit.reset();
     this.#inputToUiObserved.reset();
   }
@@ -181,6 +185,11 @@ export class LabRunController {
   }
 
   /** Native-input stage counts read from UI-runtime shared values. */
+  /** The sampler count observed at run end (F2 acceptance evidence). */
+  setSamplerCount(count: number): void {
+    this.#samplersAtEnd = count;
+  }
+
   setInputStages(raw: number, forwarded: number): void {
     this.#inputStages = { raw, forwarded };
   }
@@ -309,6 +318,7 @@ export class LabRunController {
               rejected: this.#latencyRejected,
               superseded: this.#latencySuperseded,
             },
+      samplersAtEnd: this.#samplersAtEnd,
     });
     this.#spec = undefined;
   }

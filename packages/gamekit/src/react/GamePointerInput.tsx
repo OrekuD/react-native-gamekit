@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import {
   GestureDetector,
@@ -33,6 +33,9 @@ import { PointerBinding, type PointerPacket } from './pointerBinding';
 type PointerActionName<TInput extends InputMap> = {
   [TName in Extract<keyof TInput, string>]: TInput[TName] extends PointerInputAction ? TName : never;
 }[Extract<keyof TInput, string>];
+
+/** Monotonic adapter-owned binding generation; never resets to zero (F3). */
+let nextBindingGeneration = 1;
 
 type ManualTouchHandler = NonNullable<ManualGestureConfig['onTouchesDown']>;
 type ManualFinalizeHandler = NonNullable<ManualGestureConfig['onFinalize']>;
@@ -70,15 +73,28 @@ function TrailingFlushSampler({
   coalescerState,
   forwardEventOnJS,
   instrumentation,
-  bindingEpoch,
+  layoutEpoch,
   forwardSeq,
+  generation,
 }: {
   readonly coalescerState: SharedValue<PointerCoalescerState>;
   readonly forwardEventOnJS: (packet: PointerPacket) => void;
   readonly instrumentation: GamePointerInstrumentation | undefined;
-  readonly bindingEpoch: SharedValue<number>;
+  readonly layoutEpoch: SharedValue<number>;
   readonly forwardSeq: SharedValue<number>;
+  readonly generation: number;
 }) {
+  // F2 acceptance: report the sampler's mounted lifecycle so the lab can
+  // prove no idle frame callback survives pointer exit, replacement, or
+  // screen close/reopen.
+  const instrumentationRef = useRef(instrumentation);
+  useEffect(() => {
+    instrumentationRef.current?.onSamplerChanged?.(true);
+    return () => {
+      instrumentationRef.current?.onSamplerChanged?.(false);
+    };
+  }, []);
+
   useFrameCallback(() => {
     'worklet';
     const batch = advanceSharedCoalescer(coalescerState, {
@@ -94,7 +110,8 @@ function TrailingFlushSampler({
       forwardSeq.value += 1;
       scheduleOnRN(forwardEventOnJS, {
         ...forwarded,
-        epoch: bindingEpoch.value,
+        generation,
+        layoutEpoch: layoutEpoch.value,
         seq: forwardSeq.value,
         atMs: Date.now(),
       });
@@ -137,36 +154,52 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     createPointerCoalescerState(maxMoveIntervalMs),
   );
   const viewportBinding = viewportContext.binding;
-  // F6: the binding identity includes the declared action, the session input
-  // controller, and the viewport owner; changing any of them recreates it.
+  // F3 follow-up: the binding identity includes the declared action, the
+  // session input controller, and the viewport owner; changing any of them
+  // creates a fresh binding stamped with a NEW monotonic generation that
+  // never resets to zero. The worklet closures created in the same render
+  // stamp packets with that same generation, so the packet producer and
+  // consumer agree by construction — no post-commit synchronization.
   const binding = useMemo(
-    () => new PointerBinding(action, game.input, () => viewportBinding.resolved),
+    () => new PointerBinding(action, game.input, () => viewportBinding.resolved, nextBindingGeneration++),
     [action, game, viewportBinding],
   );
-  // F6: UI-runtime mirror of the binding epoch. Every scheduled packet is
-  // stamped with the epoch it was scheduled under; packets that were already
-  // in flight when the epoch advanced are rejected on the RN runtime.
-  const bindingEpoch = useSharedValue(binding.epoch);
-  const bumpEpoch = useCallback(() => {
-    binding.invalidate();
-    bindingEpoch.value = binding.epoch;
-  }, [binding, bindingEpoch]);
+  const generation = binding.generation;
+  // F6/F3: the layout epoch is adapter-owned (ref + UI mirror), bumped only
+  // on layout revisions and unmount; it never resets, so replacement cannot
+  // desynchronize it. The RN-side dispatch check rejects old-layout packets.
+  const layoutEpochRef = useRef(0);
+  const layoutEpoch = useSharedValue(0);
+  const bumpLayoutEpoch = useCallback(() => {
+    layoutEpochRef.current += 1;
+    layoutEpoch.value = layoutEpochRef.current;
+  }, [layoutEpoch]);
   // F1: monotonic forward sequence carried with every packet so the RN side
   // can attribute latency causally (never by reading a separate "latest").
   const forwardSeq = useSharedValue(0);
 
-  // The mirror of the coalescer's ownership, set from the worklets on
-  // touch boundaries through the samplerMirrorFromBatch helper.
-  const reportPointerActive = useCallback((active: boolean) => {
-    setPointerActive(active);
-  }, []);
+  // F2 follow-up: the sampler mirror is keyed by binding generation, so a
+  // replacement binding is inactive by construction and a stale terminal
+  // edge from an older generation can never alter the current generation's
+  // sampler state.
+  const [samplerState, setSamplerState] = useState<{ generation: number; active: boolean }>({
+    generation: -1,
+    active: false,
+  });
+  const reportSamplerState = useCallback(
+    (next: { generation: number; active: boolean }) => {
+      setSamplerState((previous) =>
+        previous.generation === next.generation ? next : previous,
+      );
+    },
+    [],
+  );
 
   // F2 review: `autostart` is only consulted at creation (changing it later
   // re-registers but never activates) and `setActive` from an effect proved
   // unreliable in this stack, so the sampler is a conditionally mounted
   // component (see TrailingFlushSampler): it mounts with autostart active
   // exactly while this mirror is true and unmounts when the pointer exits.
-  const [pointerActive, setPointerActive] = useState(false);
 
   // JS-thread handler (never captured by gesture worklets): the binding
   // rejects packets stamped with a stale epoch (layout revision, binding
@@ -174,6 +207,12 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // into the session input buffer.
   const forwardEventOnJS = useCallback(
     (packet: PointerPacket) => {
+      // F6/F3: adapter-owned layout epoch — packets scheduled under an older
+      // layout die here, before the binding sees them.
+      if (packet.layoutEpoch !== layoutEpochRef.current) {
+        instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, false);
+        return;
+      }
       const accepted = binding.dispatch(packet);
       instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, accepted);
     },
@@ -216,18 +255,19 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
-          epoch: bindingEpoch.value,
+          generation,
+          layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
         });
       }
       const nextActive = samplerMirrorFromBatch(batch);
       if (nextActive !== undefined) {
-        scheduleOnRN(reportPointerActive, nextActive);
+        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
       }
       GestureStateManager.activate(event.handlerTag);
     },
-    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive, viewportShared],
+    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState, viewportShared],
   );
 
   const handleTouchesMove = useCallback<ManualTouchHandler>(
@@ -251,14 +291,15 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
-          epoch: bindingEpoch.value,
+          generation,
+          layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
         });
         }
       }
     },
-    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation],
+    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch],
   );
 
   const handleTouchesUp = useCallback<ManualTouchHandler>(
@@ -283,7 +324,8 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
-          epoch: bindingEpoch.value,
+          generation,
+          layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
         });
@@ -294,13 +336,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         }
       }
       if (nextActive !== undefined) {
-        scheduleOnRN(reportPointerActive, nextActive);
+        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
       }
       if (deactivateAfterUp(event.numberOfTouches)) {
         GestureStateManager.deactivate(event.handlerTag);
       }
     },
-    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
+    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
   );
 
   const handleTouchesCancel = useCallback<ManualTouchHandler>(
@@ -316,17 +358,18 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
-          epoch: bindingEpoch.value,
+          generation,
+          layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
         });
       }
       const nextActive = samplerMirrorFromBatch(batch);
       if (nextActive !== undefined) {
-        scheduleOnRN(reportPointerActive, nextActive);
+        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
       }
     },
-    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
+    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
   );
 
   const handleFinalize = useCallback<ManualFinalizeHandler>(
@@ -345,17 +388,18 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
-          epoch: bindingEpoch.value,
+          generation,
+          layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
         });
       }
       const nextActive = samplerMirrorFromBatch(batch);
       if (nextActive !== undefined) {
-        scheduleOnRN(reportPointerActive, nextActive);
+        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
       }
     },
-    [bindingEpoch, coalescerState, forwardEventOnJS, instrumentation, reportPointerActive],
+    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
   );
 
   // RNGH 3 re-registers its gesture callbacks whenever this config identity
@@ -381,46 +425,49 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   const gesture = useManualGesture(gestureConfig);
 
   useEffect(() => {
-    // F6: a layout revision advances the epoch so queued packets from the
-    // old layout die on arrival, while the active gesture keeps flowing
-    // (the binding reads the viewport lazily and the coalescer state is
-    // preserved) — rotation and split-view resizing keep working mid-drag.
+    // F6/F3: a layout revision advances the adapter-owned layout epoch so
+    // queued old-layout packets die on arrival, while the active gesture
+    // keeps flowing (the binding reads the viewport lazily and the
+    // coalescer state is preserved). Binding replacement needs no epoch
+    // synchronization: the generation agreement is by construction.
     const unsubscribeLayout = viewportBinding.subscribe(() => {
-      bumpEpoch();
+      bumpLayoutEpoch();
     });
     return () => {
       unsubscribeLayout();
-      // Unmount: bump the epoch BEFORE cancellation so packets already in
-      // flight become harmless no-ops, then release the recognizer state.
-      bumpEpoch();
+      // Unmount or replacement: bump the layout epoch so packets already in
+      // flight become harmless no-ops, neutralize old input ownership exactly
+      // once, reset the coalescer, remove the old sampler (generation
+      // mismatch makes it inactive by construction), and dispose the binding.
+      bumpLayoutEpoch();
+      setSamplerState({ generation: -1, active: false });
       if (game.status !== 'disposed') {
         binding.cancel();
       }
       coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
       binding.dispose();
     };
-  }, [binding, bindingEpoch, bumpEpoch, coalescerState, game, maxMoveIntervalMs, viewportBinding]);
-
-  // F6 review: when the binding is replaced (session, action, or viewport
-  // owner changed), the replacement starts at epoch 0 while this cleanup's
-  // bump left the shared mirror at 1. Re-sync the mirror to the replacement
-  // binding — declared after the lifecycle effect so it runs after the
-  // previous binding's cleanup — otherwise every new packet is stamped 1
-  // and rejected, killing pointer input until the next layout revision.
-  useEffect(() => {
-    bindingEpoch.value = binding.epoch;
-  }, [binding, bindingEpoch]);
+  }, [
+    binding,
+    bumpLayoutEpoch,
+    coalescerState,
+    game,
+    layoutEpoch,
+    maxMoveIntervalMs,
+    viewportBinding,
+  ]);
 
   return (
     <GestureDetector gesture={gesture}>
       <View style={StyleSheet.absoluteFill} />
-      {pointerActive ? (
+      {samplerState.active && samplerState.generation === generation ? (
         <TrailingFlushSampler
           coalescerState={coalescerState}
           forwardEventOnJS={forwardEventOnJS}
           instrumentation={instrumentation}
-          bindingEpoch={bindingEpoch}
+          layoutEpoch={layoutEpoch}
           forwardSeq={forwardSeq}
+          generation={generation}
         />
       ) : null}
     </GestureDetector>
