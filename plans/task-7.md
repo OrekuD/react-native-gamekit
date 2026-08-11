@@ -696,24 +696,24 @@ public surface and prevents internals from dictating the API.
 
 #### Work
 
-- [ ] Add compile fixtures for the four examples above: image-only loading,
+- [x] Add compile fixtures for the four examples above: image-only loading,
   sprite-sheet loading, deterministic animation, and an Atlas batch.
-- [ ] Add a shape-only game fixture proving `assets` remains optional.
-- [ ] Prove group, asset, frame, and clip names are inferred as string literals.
-- [ ] Add expected type failures for unknown groups/assets/frames/clips and for
+- [x] Add a shape-only game fixture proving `assets` remains optional.
+- [x] Prove group, asset, frame, and clip names are inferred as string literals.
+- [x] Add expected type failures for unknown groups/assets/frames/clips and for
   retrieving a descriptor through the wrong manifest.
-- [ ] Add a fixture proving a URL/string source is rejected in Task 7; remote
+- [x] Add a fixture proving a URL/string source is rejected in Task 7; remote
   sources remain a future discriminated descriptor rather than an accidental
   branch of the local loader.
-- [ ] Decide the exact `GameDefinition` and `GameRendererProps` generic order
+- [x] Decide the exact `GameDefinition` and `GameRendererProps` generic order
   using real inference tests; users should not normally spell more generics
   than the renderer type needs.
-- [ ] Test both number props and supported Reanimated shared/derived values on
+- [x] Test both number props and supported Reanimated shared/derived values on
   the sprite surface.
-- [ ] Define the imperative API's ownership explicitly: an explicitly created
+- [x] Define the imperative API's ownership explicitly: an explicitly created
   store owns cache/native entries; `await store.acquire(...)` returns a fully
   ready lease; callers dispose leases and then the store in `finally`.
-- [ ] Define hook ownership explicitly: `useGameAssets` creates/owns its store
+- [x] Define hook ownership explicitly: `useGameAssets` creates/owns its store
   and lease; the caller must not dispose the returned ready value manually.
 - [ ] Record the accepted surface and rejected alternatives in a short decision
   section in this file or an existing architecture doc. Do not create another
@@ -730,6 +730,43 @@ public surface and prevents internals from dictating the API.
 `test(api): define asset and sprite contracts`
 
 ---
+
+#### T7.1 contract decisions (2026-08-11)
+
+Accepted surface — frozen by the fixtures in `packages/gamekit/test/`:
+
+- `defineAssets(groups)` returns a deeply readonly manifest; group, asset,
+  frame, and clip names are preserved as string literals; retrieval goes
+  through typed descriptor references (`loadedAssets.get(manifest.group.key)`),
+  never duplicated strings.
+- `image(source)` / `spriteSheet(source, { frames, animations })` accept a
+  static module handle only. The source type is `number`; string/URL sources
+  are rejected at the type boundary (a future remote-source descriptor is a
+  separate discriminated kind, never a branch of the local loader).
+- Sprite sheets: `frames` name rectangles; `animations` name clips with a
+  discriminated `mode: 'loop' | 'once'`, a uniform `frameDurationMs`, and
+  frame references restricted to the declared frame names. Per-frame
+  durations are deferred: uniform duration only, so precedence cannot be
+  misunderstood.
+- Generic order: `GameDefinition<TScenes, TInput, TInitialScene,
+  TAssets = undefined>` and `GameRendererProps<TScenes, TAssets = undefined>`
+  — assets are the LAST generic on both, so shape-only games and renderers
+  spell nothing new. `GameView` gains an optional `assets` prop carrying the
+  loaded lease; the headless `GameSession` never owns native handles.
+- `useGameAssets(manifest, { groups })` state shape:
+  `{ status: 'loading'; progress: number }` | `{ status: 'error'; error;
+  retry }` | `{ status: 'ready'; assets }`. The hook creates and owns its
+  store and lease; callers must not dispose the ready value.
+- Imperative ownership: `createGameAssetStore(manifest)` owns cache/native
+  entries; `await store.acquire({ groups, signal })` resolves only with a
+  complete usable lease; callers dispose the lease then the store in
+  `finally`; `AbortSignal` detaches immediately.
+- Animation: `startSpriteAnimation(descriptor, clip)` and
+  `advanceSpriteAnimation(descriptor, state, deltaSeconds)` are headless,
+  pure, fixed-step helpers; clip names are typed per descriptor.
+- Rejected alternatives: string/URL sources, module-global native-image
+  caches, automatic Sprite/SpriteBatch switching, wall-clock animation
+  sampling, per-frame React state, and any public string-typed lookup.
 
 ### T7.2 — Implement the headless manifest and validation layer
 
