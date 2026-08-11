@@ -777,22 +777,22 @@ descriptors and validates everything knowable before decoding.
 
 #### Work
 
-- [ ] Replace the placeholder `AssetDescriptor`/`AssetSource` model with a
+- [x] Replace the placeholder `AssetDescriptor`/`AssetSource` model with a
   discriminated image and sprite-sheet descriptor model.
-- [ ] Implement `image(...)`, `spriteSheet(...)`, and `defineAssets(...)` with
+- [x] Implement `image(...)`, `spriteSheet(...)`, and `defineAssets(...)` with
   exact generic inference from the accepted fixtures.
-- [ ] Add the manifest type to `GameDefinition` without making the headless
+- [x] Add the manifest type to `GameDefinition` without making the headless
   `GameSession` own native assets.
-- [ ] Normalize a stable diagnostic id from group/key while preserving typed
+- [x] Normalize a stable diagnostic id from group/key while preserving typed
   descriptor references for normal lookup.
-- [ ] Validate group/key identifiers, source kinds, rectangles, frame names,
+- [x] Validate group/key identifiers, source kinds, rectangles, frame names,
   clip frame references, durations, and animation modes.
-- [ ] Deep-freeze the manifest and metadata using the established trusted
+- [x] Deep-freeze the manifest and metadata using the established trusted
   deep-freeze rules without exposing the session's internal cache.
-- [ ] Add structured definition errors with stable codes and field paths.
-- [ ] Reject string/URL sources with a specific unsupported-source error at an
+- [x] Add structured definition errors with stable codes and field paths.
+- [x] Reject string/URL sources with a specific unsupported-source error at an
   untyped JavaScript boundary; do not begin a network request.
-- [ ] Export only the intended headless surface from `src/index.ts`.
+- [x] Export only the intended headless surface from `src/index.ts`.
 
 #### TDD cases
 
@@ -811,6 +811,9 @@ descriptors and validates everything knowable before decoding.
 
 ---
 
+**Status (2026-08-11):** implemented + tested (commit `566d866`). See
+`test/assetManifest.test.ts` and the T7.1 manifest fixture.
+
 ### T7.3 — Implement deterministic sprite animation primitives
 
 **Type:** headless core · **Depends on:** T7.2
@@ -820,21 +823,21 @@ renderer or simulator.
 
 #### Work
 
-- [ ] Compile named frame references into a compact immutable lookup suitable
+- [x] Compile named frame references into a compact immutable lookup suitable
   for both fixed-step JS use and worklet capture.
-- [ ] Implement the pure clip sampler with exact loop and one-shot boundary
+- [x] Implement the pure clip sampler with exact loop and one-shot boundary
   semantics.
-- [ ] Implement immutable `start`, `advance`, `play/change`, `pause`, `resume`,
+- [x] Implement immutable `start`, `advance`, `play/change`, `pause`, `resume`,
   and reset helpers for serializable animation playback state.
-- [ ] Support a finite positive speed multiplier and advance a large delta with
+- [x] Support a finite positive speed multiplier and advance a large delta with
   bounded arithmetic rather than an unbounded frame-by-frame loop.
-- [ ] Expose completion without requiring a gameplay system to infer it from a
+- [x] Expose completion without requiring a gameplay system to infer it from a
   visual frame.
 - [ ] Provide an allocation-free frame-index path if profiling confirms the
   ergonomic sampler allocates on every UI frame.
-- [ ] Document the separation between simulation animation state
+- [x] Document the separation between simulation animation state
   (`clip`, start tick/time, play state) and presented frame selection.
-- [ ] Ensure animation metadata contains only serializable numeric/string data;
+- [x] Ensure animation metadata contains only serializable numeric/string data;
   Skia rectangles are created in the adapter rather than stored in the
   headless descriptor.
 
@@ -859,6 +862,9 @@ renderer or simulator.
 
 ---
 
+**Status (2026-08-11):** implemented + tested (commits `c1b9732`,
+`566d866`). See `test/spriteAnimation.test.ts` and the T7.1 animation fixture.
+
 ### T7.4 — Build the Expo/Skia loader and owned resource cache
 
 **Type:** native adapter · **Depends on:** T7.2
@@ -879,36 +885,36 @@ AssetResolver (Expo static module -> local URI + metadata)
 
 #### Work
 
-- [ ] Verify the installed `expo-asset` and Skia APIs against their official
+- [x] Verify the installed `expo-asset` and Skia APIs against their official
   docs and installed types before coding. Record the exact primitives used.
-- [ ] Define internal `AssetResolver` and `ImageDecoder` interfaces so unit
+- [x] Define internal `AssetResolver` and `ImageDecoder` interfaces so unit
   tests use fakes rather than importing native modules.
-- [ ] Implement `createGameAssetStore(manifest)` as the explicit cache owner;
+- [x] Implement `createGameAssetStore(manifest)` as the explicit cache owner;
   reject acquisitions after store disposal and make store disposal idempotent.
-- [ ] Resolve static module handles through Expo Asset and decode through the
+- [x] Resolve static module handles through Expo Asset and decode through the
   supported Skia data/image APIs.
-- [ ] Dispose temporary decode data such as `SkData` as soon as the supported
+- [x] Dispose temporary decode data such as `SkData` as soon as the supported
   Skia ownership contract permits; final `SkImage` ownership remains with the
   cache entry until its last lease is released.
-- [ ] Treat a null decode as a structured load failure, not a ready resource.
-- [ ] Validate each sprite frame against decoded width/height before publishing
+- [x] Treat a null decode as a structured load failure, not a ready resource.
+- [x] Validate each sprite frame against decoded width/height before publishing
   readiness.
-- [ ] Deduplicate simultaneous loads by canonical resolved source plus decode
+- [x] Deduplicate simultaneous loads by canonical resolved source plus decode
   options; logical descriptor identity remains separate.
-- [ ] Implement reference counts and idempotent disposal. Dispose the Skia
+- [x] Implement reference counts and idempotent disposal. Dispose the Skia
   image exactly once when the final lease releases it.
-- [ ] Ensure a partially failed group releases everything acquired only by that
+- [x] Ensure a partially failed group releases everything acquired only by that
   attempt while preserving entries still leased elsewhere.
-- [ ] Add an attempt/epoch token so stale completion after retry/unmount cannot
+- [x] Add an attempt/epoch token so stale completion after retry/unmount cannot
   become current.
-- [ ] Accept `AbortSignal` for imperative acquisition and document honest
+- [x] Accept `AbortSignal` for imperative acquisition and document honest
   logical cancellation when Expo cannot stop the underlying work.
-- [ ] Make progress aggregation monotonic and based on requested logical
+- [x] Make progress aggregation monotonic and based on requested logical
   resources; document whether a deduplicated source counts once or once per
   logical descriptor.
-- [ ] Implement `LoadedGameAssets.get(descriptor)` with a disposed-state guard
+- [x] Implement `LoadedGameAssets.get(descriptor)` with a disposed-state guard
   in development.
-- [ ] Keep cache storage bounded by live/in-flight leases. Do not create an
+- [x] Keep cache storage bounded by live/in-flight leases. Do not create an
   immortal module-global image cache.
 - [ ] Add optional development placeholders only after the required failure
   path is correct and tested.
@@ -937,6 +943,10 @@ AssetResolver (Expo static module -> local URI + metadata)
 
 ---
 
+**Status (2026-08-11):** implemented + tested (commit `7412b38`). See
+`test/assetStore.test.ts` (14 ownership tests with injected pipeline fakes),
+`test/useGameAssets.test.tsx` (6 hook tests), and the T7.1 loading fixture.
+
 ### T7.5 — Add React loading and `GameView` asset delivery
 
 **Type:** React adapter · **Depends on:** T7.4
@@ -946,18 +956,18 @@ lifecycle. It does not become the frame store.
 
 #### Work
 
-- [ ] Implement `useGameAssets(manifest, options)` over a hook-owned store and
+- [x] Implement `useGameAssets(manifest, options)` over a hook-owned store and
   acquisition with the discriminated loading/ready/error contract.
-- [ ] Keep the requested `groups` value semantically stable; document or
+- [x] Keep the requested `groups` value semantically stable; document or
   normalize ordering so `['boot', 'play']` and a recreated equivalent array do
   not reload every React render.
-- [ ] Invalidate stale attempts before releasing their resources.
-- [ ] Make `retry` stable and ensure one user action starts one new attempt.
-- [ ] Extend `GameView` and `GameRendererProps` with the typed, stable asset
+- [x] Invalidate stale attempts before releasing their resources.
+- [x] Make `retry` stable and ensure one user action starts one new attempt.
+- [x] Extend `GameView` and `GameRendererProps` with the typed, stable asset
   lease accepted in T7.1.
-- [ ] Keep the asset lease out of `GameSession`, `CommitFrame`, shared frame
+- [x] Keep the asset lease out of `GameSession`, `CommitFrame`, shared frame
   values, and snapshot serialization.
-- [ ] Ensure changing the lease follows an explicit policy. Recommended:
+- [x] Ensure changing the lease follows an explicit policy. Recommended:
   require a new mounted running-game boundary rather than hot-swapping native
   resources under a live renderer.
 - [ ] Add an optional small loading-boundary example, not a mandatory visual
@@ -984,6 +994,13 @@ lifecycle. It does not become the frame store.
 
 ---
 
+**Status (2026-08-11):** implemented (commit `c074a7b`): transform math
+(8 pure tests), `GameWorld2D`, `Sprite` (single-entry Atlas sheet path with
+worklet frame resolution), `GameSprite` (exact per-scene selectors), and the
+T7.1 sprite fixture compiles. The visual/device cases (crispness, coexistence
+with raw Skia shapes, retained-vs-batch benchmark) remain pending the
+simulator/device verification in T7.8/T7.10.
+
 ### T7.6 — Add retained `Sprite` and `GameSprite` primitives
 
 **Type:** Skia rendering · **Depends on:** T7.3, T7.4, T7.5
@@ -993,32 +1010,32 @@ Skia nodes, and stable across animation frames.
 
 #### Work
 
-- [ ] Implement full-image sprites and sprite-sheet frame selection using a
+- [x] Implement full-image sprites and sprite-sheet frame selection using a
   source-verified Skia drawing path.
-- [ ] Implement `GameWorld2D` as one viewport-offset/scale group shared by all
+- [x] Implement `GameWorld2D` as one viewport-offset/scale group shared by all
   child sprites. It must not add camera state, subscribe React per frame, or
   apply the viewport transform once per child.
-- [ ] Support logical position, anchor, scale, rotation in radians, opacity,
+- [x] Support logical position, anchor, scale, rotation in radians, opacity,
   tint, flip, sampling, and visibility according to the contracts above.
-- [ ] Accept static values and supported Reanimated shared/derived values
+- [x] Accept static values and supported Reanimated shared/derived values
   without mirroring them through React state.
-- [ ] Precompute static source rectangles and metadata once per resource, not
+- [x] Precompute static source rectangles and metadata once per resource, not
   once per frame.
-- [ ] Define exact transform order and test the matrix/pivot math as pure code.
-- [ ] Keep React child order as the drawing order and document it.
-- [ ] Implement `GameSprite` as the common GameKit integration: it accepts the
+- [x] Define exact transform order and test the matrix/pivot math as pure code.
+- [x] Keep React child order as the drawing order and document it.
+- [x] Implement `GameSprite` as the common GameKit integration: it accepts the
   commit/alpha values, narrows by scene, invokes one worklet selector, and
   drives the underlying `Sprite` through one coherent derived value.
-- [ ] Interpolate position, rotation, uniform scale, and opacity when the
+- [x] Interpolate position, rotation, uniform scale, and opacity when the
   selector requests interpolation; choose clip/frame, tint, visibility, and
   flip discretely from the committed current snapshot.
-- [ ] Keep the selector's scene typing exact so a `scene="play"` selector
+- [x] Keep the selector's scene typing exact so a `scene="play"` selector
   receives only the play snapshot without casts.
 - [ ] Benchmark the ergonomic grouped-object selector against a compact
   numeric/setter representation at 32 and 100 retained sprites. If allocation
   or mapper work is material, change the public hot path before accepting the
   API; do not merely document the regression.
-- [ ] Fail clearly when a frame name belongs to another sheet or a loaded lease
+- [x] Fail clearly when a frame name belongs to another sheet or a loaded lease
   has been disposed.
 - [ ] Add a development-only bounds/debug overlay if it can be completely
   eliminated from the normal path.
