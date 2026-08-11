@@ -2,16 +2,20 @@
 
 ## Status
 
-**In progress — T7.0 complete; T7.1 next.**
+**In progress — T7.1–T7.9 complete; T7.10 automated verification complete,
+physical-device remainder device-gated.**
 
 T7.0 (baseline, feedback reconciliation F1–F7, and the pointer lifecycle
-checkpoint) is complete: the dirty tree was split into attributable commits,
-the F1–F7 feedback items are implemented with tests and simulator evidence
-(recorded in `plans/performance-tasks.md`), and the playground now runs one
-long-lived game surface with explicit session ownership transfers
-(`ecf5b86`). F7's physical-device matrix remains open and device-gated.
-T7.1 freezes the assets/sprites API contract with type fixtures and
-representative call sites before any runtime loading lands.
+checkpoint) is complete; T7.1–T7.9 landed in attributable commits with the
+T7.1 contract fixtures green, headless + mounted tests, the Sprite Field
+reference game verified on the simulator, and the docs/agent workflow in
+place. T7.10's automated gate passes (lint, typecheck, 238 tests,
+coverage gate, package build + tarball inspection, headless root import,
+docs build, Expo export, diff check). The physical-device matrix, the
+retained-vs-batch device benchmarks, the 50-cycle leak gate, and
+release-like builds remain device-gated (no physical hardware in this
+environment) and are tracked with F7; the RNGH in-place session-swap
+delivery limitation is recorded for the device matrix.
 
 Task 7 is the next product milestone after the core runtime, viewport/input
 work, and the performance programme. It turns GameKit from a shape-based game
