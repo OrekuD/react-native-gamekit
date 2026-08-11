@@ -108,9 +108,13 @@ export function GameSprite<
     if (envelope.scene !== scene) {
       return undefined;
     }
+    const current = envelope.current as never as SceneSnapshot<TScenes[TSceneName]>;
     const context = {
-      previous: envelope.previous as never as SceneSnapshot<TScenes[TSceneName]>,
-      current: envelope.current as never as SceneSnapshot<TScenes[TSceneName]>,
+      // The first commit has no previous snapshot; the current one stands in
+      // so the initial presentation interpolates from itself (alpha 0).
+      previous:
+        (envelope.previous ?? envelope.current) as never as SceneSnapshot<TScenes[TSceneName]>,
+      current,
       alpha: alpha.value,
     } as GameSpriteSelectContext<TScenes, TSceneName>;
     return select(context);
