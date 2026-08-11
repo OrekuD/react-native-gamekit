@@ -20,7 +20,9 @@ const TRACKED_MODULES = [
   'pointerCoalescer.ts',
   'pointerContainment.ts',
   'deepFreeze.ts',
-  'diagnostics.ts',
+  // diagnostics.ts is intentionally excluded: it is a type-only interface
+  // (F4 gating) with no runtime statements; its contract is enforced by the
+  // session's zero-read tests, not by line coverage.
 ];
 
 const output = execFileSync(
