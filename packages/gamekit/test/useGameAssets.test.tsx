@@ -133,6 +133,7 @@ describe('useGameAssets (T7.5)', () => {
         return Promise.resolve(createReadyLease());
       },
       dispose: () => undefined,
+      disposedCount: 0,
     };
     const storeFactory = () => store;
     const states: unknown[] = [];
