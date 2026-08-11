@@ -1,0 +1,127 @@
+---
+title: Assets
+description: Declare, load, and own local game assets with React Native GameKit.
+---
+
+# Assets
+
+GameKit assets are **local static module handles** declared next to the game
+definition, validated before decoding, and owned through an explicit lease
+model. There are no remote URLs in this version: a future descriptor will add
+network sources with caching, retry, and security policy.
+
+## Declare a manifest
+
+```ts
+import { defineAssets, image, spriteSheet } from 'react-native-gamekit';
+
+export const gameAssets = defineAssets({
+  boot: {
+    logo: image(require('./assets/logo.png')),
+  },
+  gameplay: {
+    player: spriteSheet(require('./assets/player.png'), {
+      frames: {
+        'idle-0': { x: 0, y: 0, width: 32, height: 32 },
+        'idle-1': { x: 32, y: 0, width: 32, height: 32 },
+      },
+      animations: {
+        idle: { frames: ['idle-0', 'idle-1'], frameDurationMs: 140, mode: 'loop' },
+      },
+    }),
+  },
+});
+```
+
+`defineAssets` preserves every group, asset, frame, and clip name as string
+literals, returns a deeply immutable manifest, and performs no I/O. Retrieval
+always goes through the typed descriptor reference — never a duplicated string:
+
+```ts
+const playerSheet = loaded.assets.get(gameAssets.gameplay.player);
+```
+
+Attach the manifest to a game definition; it is optional, so shape-only games
+declare nothing:
+
+```ts
+const game = defineGame({
+  viewport,
+  assets: gameAssets,
+  input: { primary: { type: 'pointer' } },
+  scenes,
+  initialScene: 'play',
+});
+```
+
+## Load with honest states
+
+```tsx
+import { useGameAssets } from 'react-native-gamekit/react';
+
+function SpriteGameScreen() {
+  const state = useGameAssets(gameAssets, { groups: ['boot', 'gameplay'] });
+
+  if (state.status === 'loading') {
+    return <LoadingScreen progress={state.progress} />;
+  }
+  if (state.status === 'error') {
+    return <LoadErrorScreen error={state.error} onRetry={state.retry} />;
+  }
+  return <RunningSpriteGame assets={state.assets} />;
+}
+```
+
+The state machine is exact:
+
+- `loading` — monotonic `progress` in `[0, 1]`, `1` only when everything is
+  ready; an empty group selection resolves immediately;
+- `error` — a structured `GameAssetError` with a stable `code` and `path`,
+  plus a stable `retry` that starts a new attempt (late completion from an
+  older attempt can never replace the new state);
+- `ready` — the complete lease; the hook owns and releases it on unmount,
+  retry, or manifest replacement. **Never dispose the ready value manually.**
+
+The hook normalizes group ordering, so a recreated equivalent array
+(`['boot', 'gameplay']` vs `['gameplay', 'boot']`) does not reload.
+
+## Imperative ownership
+
+Advanced code that coordinates game-owned and scene-owned groups uses the
+same ownership model explicitly:
+
+```ts
+const store = createGameAssetStore(gameAssets);
+const lease = await store.acquire({
+  groups: ['boot', 'gameplay'],
+  signal: abortController.signal,
+});
+
+try {
+  const playerSheet = lease.assets.get(gameAssets.gameplay.player);
+  // Mount/use resources that borrow from this lease.
+} finally {
+  lease.dispose();
+  store.dispose();
+}
+```
+
+Rules that are hard to miss:
+
+- an explicitly created store owns the cache and the native entries;
+- `acquire` resolves **only** with a complete usable lease;
+- concurrent loads of the same source decode once and share the decoded
+  image;
+- the final lease release disposes the native image exactly once;
+- a failed, retried, or aborted attempt releases every handle it acquired;
+  `AbortSignal` detaches the caller immediately;
+- the renderer borrows from the lease and never disposes its images.
+
+## Supported sources and formats
+
+- Static module handles from `require(...)` only (PNG, JPEG, WebP — whatever
+  the platform's image decoder supports).
+- No remote URLs, no file-path strings, no network fetches in this version.
+- Frame rectangles are validated against the decoded image dimensions after
+  load; an out-of-bounds frame fails with `ASSET_FRAME_OUT_OF_BOUNDS` before
+  readiness is published.

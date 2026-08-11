@@ -1,0 +1,116 @@
+---
+title: Create Your First Sprite Game
+description: Build a small sprite-based game with an animated character and a batched enemy field.
+---
+
+# Create Your First Sprite Game
+
+This guide builds the shape of the reference **Sprite Field** game: one
+animated character (a retained `GameSprite`) and a bounded field of repeated
+enemies (a `SpriteBatch`). It uses the exact public surface accepted in the
+compile fixtures. Complete [Assets](../concepts/assets) first.
+
+## 1. Declare the assets
+
+```ts
+import { defineAssets, spriteSheet } from 'react-native-gamekit';
+
+export const gameAssets = defineAssets({
+  gameplay: {
+    player: spriteSheet(require('./assets/player.png'), {
+      frames: {
+        'idle-0': { x: 0, y: 0, width: 32, height: 32 },
+        'idle-1': { x: 32, y: 0, width: 32, height: 32 },
+        'run-0': { x: 0, y: 32, width: 32, height: 32 },
+        'run-1': { x: 32, y: 32, width: 32, height: 32 },
+      },
+      animations: {
+        idle: { frames: ['idle-0', 'idle-1'], frameDurationMs: 220, mode: 'loop' },
+        run: { frames: ['run-0', 'run-1'], frameDurationMs: 110, mode: 'loop' },
+      },
+    }),
+    enemies: spriteSheet(require('./assets/enemies.png'), {
+      frames: {
+        'enemy-0': { x: 0, y: 0, width: 16, height: 16 },
+        'enemy-1': { x: 16, y: 0, width: 16, height: 16 },
+      },
+      animations: {
+        wander: { frames: ['enemy-0', 'enemy-1'], frameDurationMs: 260, mode: 'loop' },
+      },
+    }),
+  },
+});
+```
+
+## 2. Advance animation from scene state
+
+The scene snapshot carries the player's animation state; gameplay selects
+the clip from movement and advances it with fixed-step game time:
+
+```ts
+const animation = advanceSpriteAnimation(
+  gameAssets.gameplay.player,
+  selectPlayerClip(moving, state.animation),
+  deltaSeconds,
+);
+```
+
+## 3. Load and gate on readiness
+
+```tsx
+function SpriteFieldScreen() {
+  const state = useGameAssets(gameAssets, { groups: ['gameplay'] });
+  if (state.status === 'loading') return <Loading progress={state.progress} />;
+  if (state.status === 'error') return <ErrorView error={state.error} onRetry={state.retry} />;
+  return <RunningField assets={state.assets} />;
+}
+```
+
+Create the session only inside the ready child and dispose it once on close.
+
+## 4. Present with the public surface
+
+```tsx
+function RunningField({ assets }) {
+  return (
+    <GameWorld2D viewport={viewport}>
+      <GameSprite
+        scene="play"
+        commit={frame}
+        alpha={alpha}
+        source={assets.get(gameAssets.gameplay.player)}
+        anchor={{ x: 0.5, y: 1 }}
+        select={({ previous, current, alpha: t }) => {
+          'worklet';
+          return {
+            x: previous.playerX + (current.playerX - previous.playerX) * t,
+            y: current.playerY,
+            clip: current.animation.clip,
+            elapsedMs: current.animation.elapsedMs,
+            flipX: current.facing === 'left',
+          };
+        }}
+      />
+      <SpriteBatch
+        scene="play"
+        commit={frame}
+        alpha={alpha}
+        source={assets.get(gameAssets.gameplay.enemies)}
+        capacity={64}
+        select={({ current }) => current.enemies}
+        write={(write, enemy, index) => {
+          'worklet';
+          write.set(index, enemy.frame, enemy.x, enemy.y, enemy.rotation, enemy.scale, enemy.visible);
+        }}
+      />
+    </GameWorld2D>
+  );
+}
+```
+
+That is the complete vertical slice: assets → loading → fixed-step animation
+state → retained player + batched enemies — with no sprite position or
+animation frame in React state.
+
+The full working example lives in the playground as the **Sprite Field**
+catalog game, and its deterministic rules have headless tests.

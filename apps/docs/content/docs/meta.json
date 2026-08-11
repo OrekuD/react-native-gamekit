@@ -5,12 +5,17 @@
     "---Getting Started---",
     "getting-started/installation",
     "getting-started/create-your-first-game",
+    "getting-started/create-your-first-sprite-game",
     "getting-started/repository",
     "---Concepts---",
     "concepts/game-definition",
     "concepts/scenes-and-transitions",
     "concepts/viewport",
     "concepts/pointer-input",
+    "concepts/sprite-batching",
+    "concepts/sprite-animation",
+    "concepts/sprites",
+    "concepts/assets",
     "---Performance---",
     "concepts/performance-model",
     "concepts/renderer-guide",
@@ -19,6 +24,7 @@
     "---Reference---",
     "reference/brick-breaker",
     "reference/results",
+    "reference/asset-errors",
     "compatibility"
   ]
 }

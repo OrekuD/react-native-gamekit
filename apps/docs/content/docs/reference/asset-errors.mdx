@@ -1,0 +1,42 @@
+---
+title: Asset Errors
+description: Every structured asset error code with its corrective action.
+---
+
+# Asset Errors
+
+Asset failures are structured `GameAssetError`s with a stable machine-readable
+`code` and a `path` to the offending field. Messages never embed
+absolute machine paths. Check the code, fix the path, retry.
+
+## Definition-time errors
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `ASSET_INVALID_IDENTIFIER` | Empty or reserved (`/`) group/asset/frame/clip name. | Rename the identifier; `/` is reserved for diagnostic ids. |
+| `ASSET_INVALID_SOURCE` | The source is not a static module handle. | Pass the number returned by `require(...)`; strings and URLs are rejected in this version. |
+| `ASSET_INVALID_FRAME_RECT` | Frame coordinates are not finite, negative, or zero-sized. | Fix the rectangle: finite numbers, `x`/`y >= 0`, `width`/`height > 0`. |
+| `ASSET_EMPTY_CLIP` | A clip references no frames. | Give the clip at least one declared frame. |
+| `ASSET_UNKNOWN_FRAME` | A clip references a frame that is not declared. | Reference only the sheet's declared frame names. |
+| `ASSET_INVALID_DURATION` | A clip duration is not finite or not positive. | Use a finite `frameDurationMs > 0`. |
+| `ASSET_INVALID_MODE` | The clip mode is not `'loop'` or `'once'`. | Use the discriminated mode. |
+
+## Load-time errors
+
+| Code | Meaning | Fix |
+| --- | --- | --- |
+| `ASSET_UNKNOWN_GROUP` | A requested group does not exist in the manifest. | Request only declared groups (the type layer rejects unknown names). |
+| `ASSET_UNKNOWN_ASSET` | A descriptor lookup does not belong to the manifest or the selected groups. | Retrieve only descriptors from the same manifest that were loaded in the acquisition. |
+| `ASSET_RESOLVE_FAILED` | The static module could not be resolved. | Check that the module handle exists and is bundled; verify the asset is packaged. |
+| `ASSET_DECODE_FAILED` | Decoding produced no image. | The file may be corrupt or an unsupported format. |
+| `ASSET_FRAME_OUT_OF_BOUNDS` | A frame rectangle exceeds the decoded image dimensions. | Fix the rectangle or replace the image. |
+| `ASSET_ABORTED` | The acquisition was aborted by its `AbortSignal` or its store was disposed. | This is an expected cancellation; start a new attempt if the caller is still live. |
+| `ASSET_STORE_DISPOSED` | The store or lease is disposed. | Create a new store/lease; never reuse disposed owners. |
+
+## Development diagnostics
+
+- A disposed lease's `get` fails clearly instead of touching native memory.
+- A frame name from another sheet fails with the loaded frame list in the
+  message.
+- Writes past a batch's capacity fail in development; production slots are
+  hidden, never corrupt.

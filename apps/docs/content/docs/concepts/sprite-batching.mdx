@@ -1,0 +1,58 @@
+---
+title: Sprite Batching
+description: Draw hundreds of repeated sprites with an Atlas-backed batch.
+---
+
+# Sprite Batching
+
+`SpriteBatch` renders many instances of one decoded sprite sheet through
+Skia's `Atlas` with fixed-capacity, UI-owned buffers. It is the explicit
+tool for shared-texture density — retained `Sprite`s are for a stable,
+modest number of independently authored sprites. GameKit never switches
+between the paths automatically; authors choose, and the docs explain the
+trade-off with measured data.
+
+```tsx
+import { GameWorld2D, SpriteBatch } from 'react-native-gamekit/react';
+
+<SpriteBatch
+  scene="play"
+  commit={frame}
+  alpha={alpha}
+  source={assets.get(gameAssets.gameplay.enemies)}
+  capacity={512}
+  select={({ current }) => current.enemies}
+  write={(write, enemy, index) => {
+    'worklet';
+    write.set(index, enemy.frame, enemy.x, enemy.y, enemy.rotation, enemy.scale, enemy.visible);
+  }}
+/>
+```
+
+## Contract
+
+- `capacity` is fixed for the mounted batch; active count is explicit.
+- The batch owns all derived-value plumbing: `select` maps the committed
+  snapshot to the item array and `write` mutates the buffers in place on the
+  UI runtime — no per-frame allocation, no author-written derived values, no
+  React per frame.
+- `write.set(index, frame, x, y, rotation, scale, visible)` — writes past
+  capacity fail clearly in development; inactive slots are hidden with
+  zero-size rects and never remount topology.
+- Item order is the drawing order; the anchor is uniform per batch.
+- The batch never disposes the image — the asset lease owns it.
+- Do not put unrelated textures in one batch; multiple sheets may share a
+  batch only if they resolve to the same Skia image.
+
+## When not to batch
+
+- A handful of unique sprites: use retained `Sprite`s.
+- Mixed textures in one draw: use separate batches.
+- Per-sprite non-uniform scale: the RSXform carries uniform scale only;
+  retained sprites support non-uniform scale through the wrapping group.
+
+## Performance evidence
+
+The retained-vs-batch comparison is measured on the physical-device matrix
+(see the Performance Lab's sprite-scaling scenario and the device results).
+Simulator numbers are development proxies and never approve device gates.

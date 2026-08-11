@@ -1,0 +1,63 @@
+---
+title: Sprite Animation
+description: Deterministic, fixed-step sprite animation with React Native GameKit.
+---
+
+# Sprite Animation
+
+Animation time comes from GameKit, never the wall clock. Animation state is
+plain serializable data in the scene snapshot, advanced from fixed-step game
+time; the renderer only presents it. The same input and elapsed game time
+select the same sprite frame at 30/60/90/120 Hz.
+
+## Declare clips
+
+Clips live on the sprite-sheet descriptor with a discriminated mode and a
+uniform per-frame duration:
+
+```ts
+animations: {
+  idle: { frames: ['idle-0', 'idle-1'], frameDurationMs: 140, mode: 'loop' },
+  jump: { frames: ['run-1'], frameDurationMs: 120, mode: 'once' },
+}
+```
+
+- `loop` clips wrap with modulo — no duplicate or zero-length boundary frame;
+- `once` clips hold their final frame and report completion; restarting them
+  is an explicit gameplay state change;
+- frame references are restricted to the declared frame names at compile
+  time and validated again at definition time.
+
+## Advance from scene state
+
+```ts
+import { advanceSpriteAnimation, startSpriteAnimation } from 'react-native-gamekit';
+
+const initial = startSpriteAnimation(playerSheet, 'idle');
+
+const next = advanceSpriteAnimation(playerSheet, initial, deltaSeconds);
+```
+
+The helpers are immutable: changing, pausing, restarting, or completing a
+clip returns a new state object and never mutates scene state. Playback state
+is `{ clip, elapsedMs, paused, speed, completed }`.
+
+- `playSpriteAnimation(sheet, state, clip)` switches clips from the start;
+- `pauseSpriteAnimation` / `resumeSpriteAnimation` are exact and idempotent;
+- `resetSpriteAnimation` restarts the current clip;
+- `setSpriteAnimationSpeed` sets a finite positive multiplier; large deltas
+  stay bounded (loop elapsed time wraps within one timeline);
+- finite negative deltas clamp to zero; NaN/infinity fail clearly.
+
+Gameplay selects the clip from movement or other deterministic rules — the
+reference game switches idle ↔ run from the player's motion — and the
+renderer presents `clip` + `elapsedMs` through the sprite's frame selection.
+
+## Separation of concerns
+
+Gameplay-significant animation state belongs in the scene snapshot and
+advances from fixed-step game time. A renderer-only loop may calculate its
+presented frame from the latest committed state plus the interpolation
+alpha, but it must never emit collision, damage, scoring, or transition
+events based on a presentation-only frame. `Date.now()`, React timers, and
+per-frame `setState` are forbidden in animation sampling.

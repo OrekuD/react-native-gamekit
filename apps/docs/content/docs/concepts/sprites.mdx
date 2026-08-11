@@ -1,0 +1,89 @@
+---
+title: Sprites and Sprite Sheets
+description: Render retained sprites and sprite-sheet frames with React Native GameKit.
+---
+
+# Sprites and Sprite Sheets
+
+A `Sprite` renders one full-image asset or one sprite-sheet frame through a
+source-verified Skia path. Every animatable property accepts plain numbers or
+Reanimated shared/derived values — nothing is mirrored through React state,
+and the sprite never subscribes React to the game frame.
+
+## The world group
+
+`GameWorld2D` applies the resolved viewport offset and scale exactly once to
+all children. It is not a camera API; raw Skia nodes can be nested freely.
+
+```tsx
+import { GameWorld2D, Sprite } from 'react-native-gamekit/react';
+
+function MyRenderer({ frame, alpha, viewport, assets }) {
+  if (assets === undefined) return null;
+  return (
+    <GameWorld2D viewport={viewport}>
+      <Sprite source={assets.get(gameAssets.gameplay.player)} frame="idle-0" x={160} y={300} />
+    </GameWorld2D>
+  );
+}
+```
+
+## Properties
+
+| Prop | Meaning |
+| --- | --- |
+| `x`, `y` | World position in logical units (number or animated value). |
+| `rotation` | Radians around the anchor (number or animated value). |
+| `scale` | Uniform scale around the anchor (number or animated value). |
+| `anchor` | Normalized `[0, 1]` relative to the selected frame; `(0, 0)` is top-left, `(0.5, 0.5)` is centre. |
+| `flipX`, `flipY` | Explicit flips that preserve the anchor. |
+| `opacity` | In `[0, 1]`; hiding is expressed as a combined opacity so the component stays mounted. |
+| `tint` | Optional tint color. |
+| `sampling` | Pixel-art defaults to nearest-neighbour. |
+| `frame` | The sheet frame name (or `clip` + `elapsedMs` for clip-driven selection). |
+
+The transform pipeline is documented and tested as pure code:
+
+```
+T(x, y) · R(rotation) · T(anchor) · S(scaleX, scaleY) · T(-anchor)
+```
+
+Scale and flips happen around the anchor, then the frame rotates around the
+anchor at the world position.
+
+## GameSprite: the common path
+
+`GameSprite` accepts the renderer's `commit`/`alpha` values, narrows the
+snapshot by scene, and invokes one worklet selector — no author-written
+`useDerivedValue` or Skia plumbing:
+
+```tsx
+<GameSprite
+  scene="play"
+  commit={frame}
+  alpha={alpha}
+  source={assets.get(gameAssets.gameplay.player)}
+  anchor={{ x: 0.5, y: 1 }}
+  select={({ previous, current, alpha: t }) => {
+    'worklet';
+    return {
+      x: previous.playerX + (current.playerX - previous.playerX) * t,
+      y: current.playerY,
+      clip: current.animation.clip,
+      elapsedMs: current.animation.elapsedMs,
+      flipX: current.facing === 'left',
+    };
+  }}
+/>
+```
+
+Position, rotation, uniform scale, and opacity interpolate when the selector
+requests it; clip/frame, tint, visibility, and flips are chosen discretely
+from the committed snapshot. The selector's scene typing is exact — a
+`scene="play"` selector receives only the play snapshot without casts.
+
+## Drawing order
+
+React child order is the drawing order for retained sprites. A general
+layer/render graph is deferred. An unknown frame name or a disposed lease
+fails with a clear development error rather than undefined native behaviour.
