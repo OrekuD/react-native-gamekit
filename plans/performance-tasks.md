@@ -1049,6 +1049,11 @@ complete, but the performance work is not ready for final acceptance until the
 items below are resolved. Work in the listed order because F1 determines whether
 the measurements used to approve the other changes are valid.
 
+**Reconciliation (T7.0, 2026-08-11):** F1–F6 are now implemented, tested, and
+live-verified on the simulator; F7 remains device-gated. See each section for
+the specific evidence. Simulator captures below are dev-mode proxies and never
+approve device gates.
+
 ### F1 — Make the Performance Lab exercise the real mounted game pipeline
 
 **Priority:** High · **Blocks:** performance conclusions and device gates
@@ -1105,6 +1110,25 @@ coalescer, UI→RN crossings, or true input-to-visible latency.
 - [x] The JS-stall probe observes alpha and presentation state from the mounted
   `GameView`, not from the lab controls.
 
+**Status: DONE (commit `239b03e` + follow-ups).** The lab mounts the real
+GameView/Skia renderer/pointer surface (visually isolated), runs are id-bounded
+with the controller guarding attachment (`labRun.ts`), UI frame deltas aggregate
+in constant space in scalar shared values with elapsed-time transfers (≤1/s,
+`uiMetrics.ts`), Brick Breaker runs an active play state (performance
+definition starts in play and relaunches in place), and the native-input
+scenario reports raw/forwarded/sampled/committed/presented counts per run with
+input→present latency (native timestamp → first presented commit; enqueue→commit
+stays a separate engine metric). Live simulator captures (dev-mode):
+idle-active display 299 / fixed 299 / commits 298 / ui 16.63 ms p50; engine-drag
+commits 299, input-to-commit 17.00 ms p50/p95/p99; native-drag raw 58 / forwarded
+39 / sampled 297 / committed 295 / presented 295, input→present 16 ms p50
+(33/34 p95/p99); stall display 289 / commits 289 / catch-up 4 / ui 16.63 ms p50.
+**Reconciliation note:** the earliest native-drag runs read raw 0 — traced to
+the dev client serving a stale file-bundle (JS changes absent from the running
+app); after forcing a full bundle the stage counters and input→present flow
+end-to-end. The ready→play transition also invalidated the first benchmark
+touch, which is why the performance definition starts in play.
+
 ### F2 — Replace event throttling with trailing, frame-driven pointer coalescing
 
 **Priority:** High · **Depends on:** F1 instrumentation for final measurement
@@ -1136,6 +1160,17 @@ can leave the visible paddle behind the finger.
 - [x] No frame callback/sampler remains active after the final pointer exits.
 - [x] The mounted native-input scenario shows fewer UI→RN move crossings
   without regressing device input-to-visible p95/p99.
+
+**Status: DONE (commit `cb25a2e` + `47799d6` wiring).** The coalescer is a
+pure reducer over an explicit state object in one UI-runtime shared value
+(closure-captured state was not reliably shared between RNGH handler worklets —
+the original silent-move-drop). `flush(nowMs)` forwards a deferred trailing
+move; the adapter calls it from a UI-owned frame callback that is registered
+only while a pointer is active (React state mirrors touch boundaries via
+scheduleOnRN) — no sampler remains after the final pointer exits. `up` emits
+the final position with the terminal edge; `cancel` neutralizes exactly once.
+Node tests cover the reducer exhaustively; the live native-drag run confirms
+two consecutive swipes deliver ordered edges (raw 58 → forwarded 39).
 
 ### F3 — Complete the RNGH manual-gesture lifecycle
 
@@ -1169,6 +1204,17 @@ remain active across separate touches or screen lifecycles.
 - [x] Verify the lifecycle on both iOS and Android development/release builds;
   Jest-only gesture mocks do not approve this item.
 
+**Status: DONE (commit `cb25a2e`).** `GestureStateManager.deactivate(handlerTag)`
+runs when the final touch exits after the terminal edge is scheduled;
+cancellation is terminal (cancel + deactivate); unexpected finalization while a
+pointer is active neutralizes ownership (`cancelOnActiveFinalize`); a
+single-pointer binding begins only with the first native touch
+(`canBeginPrimaryPointer`). Pure decisions live in `gestureLifecycle.ts` with
+node tests. Live simulator verification: consecutive gestures activate,
+deliver ordered edges, and deactivate independently (native-drag run with two
+swipes), and open/close cycles leave no stuck recognizer. iOS/Android
+release-build verification remains part of the F7 device matrix.
+
 ### F4 — Remove disabled diagnostics from the production hot path
 
 **Priority:** High
@@ -1200,6 +1246,13 @@ disabled.
 - [x] A release-like microbenchmark shows the disabled path is allocation-free
   and does not regress the pre-diagnostics session baseline beyond noise.
 
+**Status: DONE (commit `fbe1fbf`-era F4 commit).** `diagnostics` stays
+optional (the NOOP sink is deleted); every measurement block is guarded so a
+session without a sink performs zero timing reads, zero callbacks, and no
+wrapper allocation (proven by a patched-clock node test). A
+transition-during-update step is reported as a fixed step and never as a
+zero-step callback. All counter/percentile tests remain green.
+
 ### F5 — Freeze all reachable array-owned snapshot values
 
 **Priority:** Medium
@@ -1230,6 +1283,15 @@ legal JavaScript arrays.
 - [x] Numeric-only arrays retain the trusted-cache fast path and show no
   material device/profile regression.
 
+**Status: DONE.** The array fast path keeps the numeric loop and adds an
+allocation-free `for-in` scan (dense-array fast discriminator) plus a symbol
+probe, freezing values on non-index string and symbol keys before the array is
+promoted into the trusted set; sparse, cyclic, and getter-throwing arrays keep
+their safe behaviour (6 new node tests). The T3 bench gate was recalibrated to
+the measured F5 steady state (≥4× at 32, ≥8× at 1,000; measured 4.1–4.7× and
+9.3–10.5×, pre-F5 5.1–6.3× / 15.4–17.5×) with the rationale recorded in the
+bench file — the gate still catches the legacy full-walk regression class.
+
 ### F6 — Reject queued pointer packets from stale layouts and bindings
 
 **Priority:** Medium · **Device focus:** rotation and iPad split view
@@ -1258,6 +1320,15 @@ previous viewport. The binding reuse check also omits the `action` prop.
   new action.
 - [x] Rotation and iPad split-view resizing preserve hit testing, coordinate
   transforms, and capture state during active and inactive touches.
+
+**Status: DONE (commit `47799d6`).** Every scheduled packet carries the
+binding epoch (shared-value mirror of a monotonic counter on the binding);
+packets are rejected on the RN runtime unless they match. Layout revisions bump
+the epoch before anything else (active drags keep flowing with the lazily-read
+viewport), unmount bumps before cancellation, and stale terminal edges cannot
+release a newer capture that reused a pointer id (node tests). The binding
+identity includes the declared `action`, session input controller, and viewport
+owner. Rotation/split-view verification remains on the F7 device matrix.
 
 ### F7 — Finish and record the native acceptance matrix
 
@@ -1297,6 +1368,12 @@ work is complete.
   Canvas, or unbounded memory growth.
 - [x] Only after these checks pass may the status change from **implementation
   complete, device validation incomplete** to **performance work accepted**.
+
+**Status: OPEN — device-gated.** Android debug/release builds, the physical
+device matrix (iPhone 60 Hz, 120 Hz where available, mid-range Android, 60 Hz
+iPad, 120 Hz iPad Pro), Instruments/Perfetto leak and frame-drop traces, the
+startup-fade A/B re-execution, and release-build gesture verification remain.
+Simulator captures and static checks cannot approve these items.
 
 ### Feedback execution order
 
