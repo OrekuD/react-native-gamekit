@@ -87,4 +87,42 @@ describe('deep-freeze array-owned values (F5)', () => {
     const frozen = freezer(array);
     assert.ok(Object.isFrozen(frozen));
   });
+
+  it('freezes non-enumerable own string-key values on arrays', () => {
+    const freezer = createDeepFreeze();
+    const array: unknown[] = [1];
+    const nested = { value: 1 };
+    Object.defineProperty(array, 'hidden', {
+      enumerable: false,
+      configurable: true,
+      writable: true,
+      value: nested,
+    });
+    const frozen = freezer(array) as unknown as Record<string, { value: number }>;
+    assert.ok(frozen['hidden'] !== undefined && Object.isFrozen(frozen['hidden']), 'non-enumerable own value is frozen');
+    assert.throws(() => {
+      frozen['hidden']!.value = 2;
+    }, /Cannot assign/);
+  });
+
+  it('never freezes inherited enumerable values through an array', () => {
+    const freezer = createDeepFreeze();
+    const inherited = { value: 1 };
+    const array = [1];
+    Object.setPrototypeOf(array, { meta: inherited });
+    freezer(array);
+    assert.ok(!Object.isFrozen(inherited), 'a shared prototype value must stay mutable');
+  });
+
+  it('treats numeric-looking non-index keys as ordinary properties', () => {
+    const freezer = createDeepFreeze();
+    const array: unknown[] = [1];
+    (array as unknown as Record<string, { value: number }>)['1e0'] = { value: 1 };
+    (array as unknown as Record<string, { value: number }>)['01'] = { value: 2 };
+    (array as unknown as Record<string, { value: number }>)['4294967295'] = { value: 3 };
+    const frozen = freezer(array) as unknown as Record<string, { value: number }>;
+    assert.ok(frozen['1e0'] !== undefined && Object.isFrozen(frozen['1e0']), "'1e0' is not a canonical index");
+    assert.ok(frozen['01'] !== undefined && Object.isFrozen(frozen['01']), "'01' is not a canonical index");
+    assert.ok(frozen['4294967295'] !== undefined && Object.isFrozen(frozen['4294967295']), 'the max-array-length key is not an index');
+  });
 });

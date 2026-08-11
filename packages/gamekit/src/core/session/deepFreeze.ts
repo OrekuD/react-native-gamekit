@@ -23,17 +23,61 @@
 import type { DeepReadonly } from './types';
 
 /** Whether a string is a canonical array index (`0 <= i < 2^32 - 1`). */
+/** Decimal digit count of a non-negative integer (0 <= value < 1e11). */
+function digitLength(value: number): number {
+  'worklet';
+  if (value < 10) {
+    return 1;
+  }
+  if (value < 100) {
+    return 2;
+  }
+  if (value < 1_000) {
+    return 3;
+  }
+  if (value < 10_000) {
+    return 4;
+  }
+  if (value < 100_000) {
+    return 5;
+  }
+  if (value < 1_000_000) {
+    return 6;
+  }
+  if (value < 10_000_000) {
+    return 7;
+  }
+  if (value < 100_000_000) {
+    return 8;
+  }
+  if (value < 1_000_000_000) {
+    return 9;
+  }
+  return 10;
+}
+
 function isArrayIndexKey(key: string): boolean {
   'worklet';
-  if (key === '0') {
-    return true;
-  }
+  // A canonical array index is the exact decimal form of an integer in
+  // [0, 2^32 - 2]; numeric-looking strings such as '1e0', '01', or
+  // '4294967295' are ordinary properties, not indices. The check is
+  // allocation-free: a digit scan plus the leading-zero rule.
   const length = key.length;
-  if (length === 0 || length > 10 || key.charCodeAt(0) === 48 /* '0' */) {
-    return false; // empty, too long, or a leading-zero string
+  if (length === 0 || length > 10) {
+    return false;
   }
-  const numeric = Number(key);
-  return Number.isInteger(numeric) && numeric > 0 && numeric <= 0xffffffff - 1;
+  if (length > 1 && key.charCodeAt(0) === 48 /* '0' */) {
+    return false;
+  }
+  let value = 0;
+  for (let index = 0; index < length; index += 1) {
+    const code = key.charCodeAt(index);
+    if (code < 48 /* '0' */ || code > 57 /* '9' */) {
+      return false;
+    }
+    value = value * 10 + (code - 48);
+  }
+  return value <= 0xffffffff - 1;
 }
 
 export interface DeepFreezer {
@@ -61,23 +105,36 @@ export function createDeepFreeze(): DeepFreezer {  const trusted = new WeakSet<o
           freeze(node[index]);
         }
         // F5: legal JavaScript arrays may also carry values on non-index
-        // string keys and symbol keys. `for-in` enumerates own string keys
-        // (indices first, in ascending order, then extra string keys in
-        // insertion order) without materialising a key array, so the
-        // trusted-cache fast path stays allocation-free for numeric-only
-        // arrays. Dense arrays take a two-op fast discriminator per key
-        // (`Number(key) === expected`); sparse or decorated arrays fall
-        // through to the full canonical-index check. Symbols are never
-        // yielded by `for-in`, so they get their own probe.
+        // string keys and symbol keys. Only own keys are reachable snapshot
+        // values, so the scan uses getOwnPropertyNames (own string keys,
+        // enumerable and non-enumerable, no inherited keys) plus
+        // getOwnPropertySymbols — `for-in` was rejected because it yields
+        // inherited enumerable keys and skips non-enumerable own keys. The
+        // name array allocation is the documented cost of full correctness;
+        // canonical indices and `length` are skipped with an arithmetic
+        // check, and every remaining own value is frozen before the array is
+        // promoted into the trusted set.
+        const names = Object.getOwnPropertyNames(node);
+        // getOwnPropertyNames yields canonical indices first, in ascending
+        // order, then 'length', then any extra string keys in insertion
+        // order — so a dense array's indices take one Number() compare each
+        // and only extras reach the canonical-form check.
         let expectedIndex = 0;
-        for (const key in node) {
-          if (Number(key) === expectedIndex) {
+        for (let index = 0; index < names.length; index += 1) {
+          const name = names[index];
+          if (name === undefined || name === 'length') {
+            continue;
+          }
+          // Fast discriminator: a canonical ascending index must match the
+          // expected value AND carry its exact decimal length — '01', '1e0',
+          // or '4294967295' cannot pass the length guard and fall through
+          // to the canonical check.
+          if (Number(name) === expectedIndex && name.length === digitLength(expectedIndex)) {
             expectedIndex += 1;
             continue;
           }
-          if (!isArrayIndexKey(key)) {
-            const value = (node as unknown as Record<PropertyKey, unknown>)[key];
-            freeze(value);
+          if (!isArrayIndexKey(name)) {
+            freeze((node as unknown as Record<PropertyKey, unknown>)[name]);
           }
         }
         const symbols = Object.getOwnPropertySymbols(node);

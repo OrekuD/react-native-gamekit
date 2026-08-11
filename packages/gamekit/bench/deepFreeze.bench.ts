@@ -6,15 +6,21 @@
  * reused by reference) against the previous implementation, which allocated a
  * fresh WeakSet and walked `Reflect.ownKeys` on every snapshot.
  *
- * Gate (V8, node 22): the trusted cache must be ≥4× faster at 32 entities
- * and ≥8× faster at 1,000 entities. Run with `pnpm bench:deepfreeze`.
+ * Gate (V8, node 22): the trusted cache must be ≥2.5× faster at 32 entities
+ * and ≥4.5× faster at 1,000 entities. Run with `pnpm bench:deepfreeze`.
  *
- * The floors were recalibrated after F5 (the deep-freeze pass now scans
- * arrays for non-index string/symbol keys with an allocation-free for-in
- * pass). Measured steady state with the F5 scan: 4.1–4.7× at 32 entities
- * and 9.3–10.5× at 1,000 (pre-F5: 5.1–6.3× / 15.4–17.5×). The floors sit
- * well above the legacy full-walk class (~1×) so any material regression of
- * the trusted-cache fast path still fails the gate.
+ * Floor history, all measured on the same V8/Node 22 bench:
+ * - pre-F5 (numeric fast path only): 5.1–6.3× at 32, 15.4–17.5× at 1,000.
+ * - F5 for-in scan (incorrect: inherited keys frozen, non-enumerable own
+ *   keys missed): 4.1–4.7× / 9.3–10.5×.
+ * - F5 corrected (getOwnPropertyNames + symbols: own keys only, canonical
+ *   index guard): 3.2–3.7× / 5.0–5.8×.
+ * The corrected scan allocates the own-name array once per first-visit
+ * array — the unavoidable cost of freezing non-enumerable own values — and
+ * the bench's fresh-array-per-tick shape is the worst case for it (shared
+ * arrays are trusted and never rescanned). The floors sit above the legacy
+ * full-walk class (~1×) with margin, so a material regression of the
+ * trusted-cache fast path (including disabling the cache) still fails.
  */
 import { createDeepFreeze } from '../src/core/session/deepFreeze';
 
@@ -104,11 +110,11 @@ const at1000 = measure(1_000);
 const speedup32 = at32.legacy / at32.cached;
 const speedup1000 = at1000.legacy / at1000.cached;
 
-console.log(`\ngate: 32 entities ≥4× (got ${speedup32.toFixed(1)}×), 1,000 entities ≥8× (got ${speedup1000.toFixed(1)}×)`);
-if (speedup32 < 4) {
-  throw new Error(`T3 gate failed: 32-entity speedup ${speedup32.toFixed(1)}× < 4×`);
+console.log(`\ngate: 32 entities ≥2.5× (got ${speedup32.toFixed(1)}×), 1,000 entities ≥4.5× (got ${speedup1000.toFixed(1)}×)`);
+if (speedup32 < 2.5) {
+  throw new Error(`T3 gate failed: 32-entity speedup ${speedup32.toFixed(1)}× < 2.5×`);
 }
-if (speedup1000 < 8) {
-  throw new Error(`T3 gate failed: 1,000-entity speedup ${speedup1000.toFixed(1)}× < 8×`);
+if (speedup1000 < 4.5) {
+  throw new Error(`T3 gate failed: 1,000-entity speedup ${speedup1000.toFixed(1)}× < 4.5×`);
 }
 console.log('T3 gate passed.');
