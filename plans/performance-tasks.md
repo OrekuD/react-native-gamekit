@@ -1118,11 +1118,13 @@ in constant space in scalar shared values with elapsed-time transfers (≤1/s,
 definition starts in play and relaunches in place), and the native-input
 scenario reports raw/forwarded/sampled/committed/presented counts per run with
 input→present latency (native timestamp → first presented commit; enqueue→commit
-stays a separate engine metric). Live simulator captures (dev-mode):
-idle-active display 299 / fixed 299 / commits 298 / ui 16.63 ms p50; engine-drag
-commits 299, input-to-commit 17.00 ms p50/p95/p99; native-drag raw 58 / forwarded
-39 / sampled 297 / committed 295 / presented 295, input→present 16 ms p50
-(33/34 p95/p99); stall display 289 / commits 289 / catch-up 4 / ui 16.63 ms p50.
+stays a separate engine metric). Live simulator captures (dev-mode, post-review-fix recapture):
+idle-active display 298 / fixed 299 / commits 298 / paddle-x constant 160 / ui
+16.63 ms p50; engine-drag commits 298, input-to-commit 17.00 ms p50/p95 (18
+p99), paddle-x p95/p99 288 (scripted drag tracked); native-drag raw 62 /
+forwarded 50 / sampled 297 / committed 296 / presented 296, paddle-x p99 179.77
+(paddle tracks), input→present 39 samples · 15 ms p50 / 16 ms p95/p99 (each
+forwarded input consumed exactly once).
 **Reconciliation note:** the earliest native-drag runs read raw 0 — traced to
 the dev client serving a stale file-bundle (JS changes absent from the running
 app); after forcing a full bundle the stage counters and input→present flow

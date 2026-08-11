@@ -660,11 +660,12 @@ or performance-feedback changes into the asset implementation commits.
 - F1–F6 reconciled with code + evidence in `plans/performance-tasks.md` (F7
   stays device-gated and open).
 - Live simulator baseline (dev-mode, iPhone 17 Pro Max simulator, iOS 26.5)
-  through the mounted pipeline: idle-active display 299 / commits 298 / ui
-  16.63 ms p50; engine-drag commits 299, input-to-commit 17.00 ms p50/p95/p99,
-  ui 16.63; native-drag raw 58 / forwarded 39 / sampled 297 / committed 295 /
-  presented 295, input→present 16/33/34 ms; stall display 289 / commits 289 /
-  catch-up 4 / ui 16.63 p50.
+  through the mounted pipeline, recaptured after the review fixes: idle-active
+  display 298 / commits 298 / ui 16.63 ms p50; engine-drag commits 298,
+  input-to-commit 17.00 ms p50/p95 (18 p99), paddle-x p95/p99 288; native-drag
+  raw 62 / forwarded 50 / sampled 297 / committed 296 / presented 296, paddle-x
+  p99 179.77, input→present 15/16/16 ms (39 samples, one per consumed forward);
+  stall display 289 / commits 289 / catch-up 4 / ui 16.63 p50 (pre-fix capture).
 - Dependency snapshot Task 7 starts from: React Native 0.86.2, Expo SDK 57
   (expo ~57.0.10), React 19.2.3, Skia 2.11.0, Reanimated 4.5.3, Worklets
   0.10.3, RNGH 3.1.0, `expo-asset` ~57.0.8 (peer-aligned), Safe Area Context
