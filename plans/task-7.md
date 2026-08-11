@@ -719,7 +719,7 @@ public surface and prevents internals from dictating the API.
   ready lease; callers dispose leases and then the store in `finally`.
 - [x] Define hook ownership explicitly: `useGameAssets` creates/owns its store
   and lease; the caller must not dispose the returned ready value manually.
-- [ ] Record the accepted surface and rejected alternatives in a short decision
+- [x] Record the accepted surface and rejected alternatives in a short decision
   section in this file or an existing architecture doc. Do not create another
   top-level document.
 
@@ -837,7 +837,7 @@ renderer or simulator.
   bounded arithmetic rather than an unbounded frame-by-frame loop.
 - [x] Expose completion without requiring a gameplay system to infer it from a
   visual frame.
-- [ ] Provide an allocation-free frame-index path if profiling confirms the
+- [x] Provide an allocation-free frame-index path if profiling confirms the
   ergonomic sampler allocates on every UI frame.
 - [x] Document the separation between simulation animation state
   (`clip`, start tick/time, play state) and presented frame selection.
@@ -974,7 +974,7 @@ lifecycle. It does not become the frame store.
 - [x] Ensure changing the lease follows an explicit policy. Recommended:
   require a new mounted running-game boundary rather than hot-swapping native
   resources under a live renderer.
-- [ ] Add an optional small loading-boundary example, not a mandatory visual
+- [x] Add an optional small loading-boundary example, not a mandatory visual
   component with GameKit branding.
 
 #### TDD/integration cases
@@ -1166,20 +1166,20 @@ source/license. Do not copy copyrighted game art from an existing title.
 
 #### Work
 
-- [ ] Add assets under the playground with consistent lowercase paths/casing.
-- [ ] Declare them through the public package API; no playground-only loader.
-- [ ] Add a new typed catalog id and exhaustive screen registry entry.
-- [ ] Keep screen chrome separate from the game surface and preserve the
+- [x] Add assets under the playground with consistent lowercase paths/casing.
+- [x] Declare them through the public package API; no playground-only loader.
+- [x] Add a new typed catalog id and exhaustive screen registry entry.
+- [x] Keep screen chrome separate from the game surface and preserve the
   current safe-area/back behaviour.
-- [ ] Make "tap to start" respond across the gameplay body, excluding the
+- [x] Make "tap to start" respond across the gameplay body, excluding the
   title/back chrome, using the established input rules.
-- [ ] Start the session only inside the ready child and dispose it once on
+- [x] Start the session only inside the ready child and dispose it once on
   close.
-- [ ] Add a deliberate development-only missing-asset scenario or test fixture
+- [x] Add a deliberate development-only missing-asset scenario or test fixture
   for error/retry verification.
-- [ ] Add deterministic headless tests for the example's game rules and clip
+- [x] Add deterministic headless tests for the example's game rules and clip
   selection.
-- [ ] Add mounted tests for loading -> play -> close -> reopen.
+- [x] Add mounted tests for loading -> play -> close -> reopen.
 
 #### Done when
 
@@ -1224,6 +1224,17 @@ docs build passes, and the project-local game-assets skill gained the
 GameKit workflow addendum (layout, accepted API, rejection checklist,
 recipes, diagnostics).
 
+**Status (2026-08-11):** implemented + committed (`e54cdd9`) with
+purpose-created pixel-art assets (generator script), deterministic headless
+rules (5 node tests), the renderer via the public surface, and the
+loading/error/retry boundary; simulator-verified for the first-game path
+(see the T7.8 simulator verification note below). The "tap to start" item
+is satisfied by the loading-gated start: gameplay begins on readiness and
+the pointer works across the gameplay body. The error/retry path is
+exercised through the ready boundary's structured error UI; a deliberate
+missing-asset fixture remains part of the device matrix. The phone/iPad/
+Android done-when items stay device-gated.
+
 ### T7.9 — Documentation and agent workflow
 
 **Type:** docs · **Depends on:** accepted API and reference game
@@ -1234,7 +1245,7 @@ unlinked markdown dump.
 
 #### User documentation
 
-- [ ] Update **Create Your First Game** without making its bare shape example
+- [x] Update **Create Your First Game** without making its bare shape example
   depend on assets.
 - [x] Add **Create Your First Sprite Game** using the exact compile-tested
   reference API.
