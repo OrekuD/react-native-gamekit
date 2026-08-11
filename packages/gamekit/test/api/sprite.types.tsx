@@ -13,22 +13,35 @@
  */
 import { GameWorld2D, GameSprite, Sprite } from '../../src/react';
 import type { GameRendererProps } from '../../src/react';
+import { defineScene, type LoadedImage, type LoadedSpriteSheet } from '../../src/index';
 import type { SharedValue } from 'react-native-reanimated';
 
 import { gameAssets } from '../api/assetsManifest.types';
 
-type Scenes = {
-  play: unknown;
+const scenes = {
+  play: defineScene({
+    actions: [],
+    create: () => ({
+      playerX: 160,
+      playerY: 300,
+      facing: 'right' as 'left' | 'right',
+      animation: { clip: 'idle', elapsedMs: 0 },
+    }),
+    update: ({ state }) => state,
+    snapshot: ({ state }) => ({ ...state, animation: { ...state.animation } }),
+  }),
 };
 
-type RendererProps = GameRendererProps<Scenes, typeof gameAssets>;
+type RendererProps = GameRendererProps<typeof scenes, typeof gameAssets>;
+void scenes;
 
-function PlayerSprite({ frame, alpha, viewport, assets }: RendererProps & {
-  readonly assets: never;
-}) {
+function PlayerSprite({ frame, alpha, viewport, assets }: RendererProps) {
+  if (assets === undefined) {
+    return null;
+  }
   return (
     <GameWorld2D viewport={viewport}>
-      <GameSprite
+      <GameSprite<typeof scenes, 'play'>
         scene="play"
         commit={frame}
         alpha={alpha}
@@ -51,7 +64,7 @@ function PlayerSprite({ frame, alpha, viewport, assets }: RendererProps & {
 
 // Lower-level Sprite: the direct-prop primitive for advanced composition.
 function DirectSprite(props: {
-  readonly source: unknown;
+  readonly source: LoadedImage | LoadedSpriteSheet;
   readonly x: number;
   readonly y: number;
   readonly rotation: number;
@@ -68,7 +81,7 @@ function DirectSprite(props: {
 // Reanimated-compatible surface: shared/derived values and numbers are both
 // accepted for every animatable sprite property.
 function AnimatedSprite(props: {
-  readonly source: unknown;
+  readonly source: LoadedImage | LoadedSpriteSheet;
   readonly x: SharedValue<number>;
   readonly y: number;
   readonly rotation: SharedValue<number>;

@@ -129,6 +129,8 @@ export interface LoadedImage {
   readonly width: number;
   /** Decoded source height in pixels. */
   readonly height: number;
+  /** The decoded image handle (Skia's SkImage satisfies this structurally). */
+  readonly image: unknown;
 }
 
 /** A ready sprite-sheet resource with validated frame rectangles. */
@@ -141,6 +143,8 @@ export interface LoadedSpriteSheet {
   readonly width: number;
   /** Decoded source height in pixels. */
   readonly height: number;
+  /** The decoded image handle (Skia's SkImage satisfies this structurally). */
+  readonly image: unknown;
 }
 
 /** A ready, typed, caller-owned lease over loaded asset groups. */

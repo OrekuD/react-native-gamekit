@@ -396,13 +396,14 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
         const width = handle?.width() ?? 0;
         const height = handle?.height() ?? 0;
         if (asset.descriptor.kind === 'image') {
-          return { descriptor: asset.descriptor, width, height };
+          return { descriptor: asset.descriptor, width, height, image: handle };
         }
         return {
           descriptor: asset.descriptor,
           frames: asset.descriptor.frames,
           width,
           height,
+          image: handle,
         };
       }
     }
