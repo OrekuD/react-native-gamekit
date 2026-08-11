@@ -85,11 +85,19 @@ export default function LabHost({ runId, scenario, durationMs, controller }: Lab
       forwardSeq.value += 1;
       latestForwarded.value = { seq: forwardSeq.value, atMs };
     },
+    // RN runtime: the binding's verdict. The accepted-input counter is read
+    // at dispatch time so the commit association is causal.
+    onDispatchResult: (seq: number, atMs: number, accepted: boolean) => {
+      controller.onForwardResult(seq, atMs, session.input.acceptedCount, accepted);
+    },
   };
 
   const viewInstrumentation = {
     onPresentCommit: (revision: number, atMs: number) => {
-      controller.onPresentCommit(revision, atMs, latestForwarded.value);
+      controller.onCommit(revision, atMs, session.input.acceptedCount);
+    },
+    onUiRevisionObserved: (revision: number, atMs: number) => {
+      controller.onUiObserved(revision, atMs);
     },
   };
 

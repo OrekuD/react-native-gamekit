@@ -49,8 +49,17 @@ function formatResult(result: ScenarioResult): string {
       `input raw ${stages.raw} · forwarded ${stages.forwarded} · sampled ${stages.sampled} · committed ${stages.committed} · presented ${stages.presented}`,
     );
   }
-  if (result.inputToPresentMs !== undefined) {
-    lines.push(`input→present ${formatSeries(result.inputToPresentMs)}`);
+  if (result.inputToCommitMs !== undefined) {
+    lines.push(`input→commit ${formatSeries(result.inputToCommitMs)}`);
+  }
+  if (result.inputToUiObservedMs !== undefined) {
+    lines.push(`input→ui-observed ${formatSeries(result.inputToUiObservedMs)}`);
+  }
+  if (result.latencyCounters !== undefined) {
+    const counters = result.latencyCounters;
+    lines.push(
+      `latency matched ${counters.matched} · unmatched ${counters.unmatched} · rejected ${counters.rejected} · superseded ${counters.superseded}`,
+    );
   }
   return lines.join('\n');
 }
@@ -105,7 +114,9 @@ export default function PerformanceLabScreen({ onExit }: PlaygroundGameScreenPro
       })(),
       ui: undefined,
       inputStages: undefined,
-      inputToPresentMs: undefined,
+      inputToCommitMs: undefined,
+      inputToUiObservedMs: undefined,
+      latencyCounters: undefined,
     });
     setResults([...moduleResults]);
   };

@@ -98,6 +98,10 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
   const clockEpoch = useSharedValue(0);
   const clockRevision = useSharedValue(-1);
   const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
+  // F1: last revision/epoch the UI clock observed, so the instrumentation can
+  // report the FIRST UI frame that saw a new commit.
+  const observedRevision = useSharedValue(-1);
+  const observedEpoch = useSharedValue(-1);
 
   const bindingRef = useRef<ViewportBinding | null>(null);
   if (bindingRef.current === null || bindingRef.current.config !== game.viewport) {
@@ -155,6 +159,11 @@ export function GameView<TScenes extends SceneMap, TInput extends InputMap>({
       return;
     }
     const envelope = frame.value;
+    if (observedEpoch.value !== epoch.value || observedRevision.value !== envelope.revision) {
+      observedEpoch.value = epoch.value;
+      observedRevision.value = envelope.revision;
+      instrumentationRef.current?.onUiRevisionObserved?.(envelope.revision, Date.now());
+    }
     const previousState = {
       epoch: clockEpoch.value,
       revision: clockRevision.value,

@@ -60,6 +60,9 @@ export function createInputBuffer<TInput extends InputMap>(
 ): InputBuffer<Extract<keyof TInput, string>> {
   type ActionName = Extract<keyof TInput, string>;
   const states = new Map<ActionName, MutableInputState>();
+  // F1: monotonic count of accepted input events. The lab associates a commit
+  // with the inputs its sampled step actually consumed via this counter.
+  let acceptedCount = 0;
 
   for (const [action, actionConfig] of Object.entries(input) as Array<[ActionName, { readonly type: InputActionKind }]>) {
     if (actionConfig.type === 'pointer') {
@@ -111,14 +114,19 @@ export function createInputBuffer<TInput extends InputMap>(
   };
 
   const controller: InputController<ActionName> = Object.freeze({
+    get acceptedCount() {
+      return acceptedCount;
+    },
     press(action: ActionName) {
       assertLive();
+      acceptedCount += 1;
       const state = getButton(action);
       state.pressed ||= !state.held;
       state.held = true;
     },
     release(action: ActionName) {
       assertLive();
+      acceptedCount += 1;
       const state = getButton(action);
       state.released ||= state.held;
       state.held = false;
@@ -138,8 +146,10 @@ export function createInputBuffer<TInput extends InputMap>(
         if (state.pendingBegin === undefined) {
           state.pendingBegin = { pointerId, position: freezePoint(position.x, position.y) };
         }
+        acceptedCount += 1;
         return;
       }
+      acceptedCount += 1;
       state.ownsSlot = true;
       state.active = true;
       state.pressed = true;
@@ -156,6 +166,7 @@ export function createInputBuffer<TInput extends InputMap>(
       if (!state.ownsSlot || !state.active || state.pointerId !== pointerId) {
         return;
       }
+      acceptedCount += 1;
       if (state.position !== undefined) {
         state.delta.x += position.x - state.position.x;
         state.delta.y += position.y - state.position.y;
@@ -169,6 +180,7 @@ export function createInputBuffer<TInput extends InputMap>(
       if (!state.ownsSlot || state.pointerId !== pointerId) {
         return;
       }
+      acceptedCount += 1;
       // The slot stays owned until the release edge is sampled so a fast
       // end -> begin between ticks cannot corrupt the terminal frame.
       state.active = false;
@@ -178,6 +190,7 @@ export function createInputBuffer<TInput extends InputMap>(
       assertLive();
       const state = getState(action);
       if (state.kind === 'button') {
+        acceptedCount += 1;
         state.cancelled = true;
         state.released ||= state.held;
         state.held = false;
@@ -186,6 +199,7 @@ export function createInputBuffer<TInput extends InputMap>(
       if (!state.ownsSlot) {
         return;
       }
+      acceptedCount += 1;
       // Same slot semantics as `end`.
       state.active = false;
       state.cancelled = true;

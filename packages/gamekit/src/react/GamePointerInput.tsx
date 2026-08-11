@@ -71,11 +71,13 @@ function TrailingFlushSampler({
   forwardEventOnJS,
   instrumentation,
   bindingEpoch,
+  forwardSeq,
 }: {
   readonly coalescerState: SharedValue<PointerCoalescerState>;
   readonly forwardEventOnJS: (packet: PointerPacket) => void;
   readonly instrumentation: GamePointerInstrumentation | undefined;
   readonly bindingEpoch: SharedValue<number>;
+  readonly forwardSeq: SharedValue<number>;
 }) {
   useFrameCallback(() => {
     'worklet';
@@ -89,7 +91,13 @@ function TrailingFlushSampler({
         'pointerId' in forwarded ? forwarded.pointerId : -1,
         Date.now(),
       );
-      scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+      forwardSeq.value += 1;
+      scheduleOnRN(forwardEventOnJS, {
+        ...forwarded,
+        epoch: bindingEpoch.value,
+        seq: forwardSeq.value,
+        atMs: Date.now(),
+      });
     }
   });
   return null;
@@ -143,6 +151,9 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     binding.invalidate();
     bindingEpoch.value = binding.epoch;
   }, [binding, bindingEpoch]);
+  // F1: monotonic forward sequence carried with every packet so the RN side
+  // can attribute latency causally (never by reading a separate "latest").
+  const forwardSeq = useSharedValue(0);
 
   // The mirror of the coalescer's ownership, set from the worklets on
   // touch boundaries through the samplerMirrorFromBatch helper.
@@ -163,9 +174,10 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // into the session input buffer.
   const forwardEventOnJS = useCallback(
     (packet: PointerPacket) => {
-      binding.dispatch(packet);
+      const accepted = binding.dispatch(packet);
+      instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, accepted);
     },
-    [binding],
+    [binding, instrumentation],
   );
 
   const handleTouchesDown = useCallback<ManualTouchHandler>(
@@ -201,7 +213,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           'pointerId' in forwarded ? forwarded.pointerId : -1,
           Date.now(),
         );
-        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+        forwardSeq.value += 1;
+        scheduleOnRN(forwardEventOnJS, {
+          ...forwarded,
+          epoch: bindingEpoch.value,
+          seq: forwardSeq.value,
+          atMs: Date.now(),
+        });
       }
       const nextActive = samplerMirrorFromBatch(batch);
       if (nextActive !== undefined) {
@@ -230,7 +248,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
             'pointerId' in forwarded ? forwarded.pointerId : -1,
             Date.now(),
           );
-          scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+          forwardSeq.value += 1;
+        scheduleOnRN(forwardEventOnJS, {
+          ...forwarded,
+          epoch: bindingEpoch.value,
+          seq: forwardSeq.value,
+          atMs: Date.now(),
+        });
         }
       }
     },
@@ -256,7 +280,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
             'pointerId' in forwarded ? forwarded.pointerId : -1,
             Date.now(),
           );
-          scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+          forwardSeq.value += 1;
+        scheduleOnRN(forwardEventOnJS, {
+          ...forwarded,
+          epoch: bindingEpoch.value,
+          seq: forwardSeq.value,
+          atMs: Date.now(),
+        });
         }
         const mirror = samplerMirrorFromBatch(batch);
         if (mirror !== undefined) {
@@ -283,7 +313,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       });
       for (const forwarded of batch) {
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
-        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+        forwardSeq.value += 1;
+        scheduleOnRN(forwardEventOnJS, {
+          ...forwarded,
+          epoch: bindingEpoch.value,
+          seq: forwardSeq.value,
+          atMs: Date.now(),
+        });
       }
       const nextActive = samplerMirrorFromBatch(batch);
       if (nextActive !== undefined) {
@@ -306,7 +342,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       });
       for (const forwarded of batch) {
         instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
-        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+        forwardSeq.value += 1;
+        scheduleOnRN(forwardEventOnJS, {
+          ...forwarded,
+          epoch: bindingEpoch.value,
+          seq: forwardSeq.value,
+          atMs: Date.now(),
+        });
       }
       const nextActive = samplerMirrorFromBatch(batch);
       if (nextActive !== undefined) {
@@ -378,6 +420,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           forwardEventOnJS={forwardEventOnJS}
           instrumentation={instrumentation}
           bindingEpoch={bindingEpoch}
+          forwardSeq={forwardSeq}
         />
       ) : null}
     </GestureDetector>

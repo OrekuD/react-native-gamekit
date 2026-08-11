@@ -31,10 +31,22 @@ export interface GamePointerInstrumentation {
     pointerId: number,
     atMs: number,
   ) => void;
+  /**
+   * RN runtime: the binding's verdict for a dispatched packet (F1). Only
+   * accepted packets may become latency samples; stale/rejected packets are
+   * counted but never sampled.
+   */
+  readonly onDispatchResult?: (seq: number, atMs: number, accepted: boolean) => void;
 }
 
 /** GameView presentation instrumentation (RN runtime callback). */
 export interface GameViewInstrumentation {
   /** A commit was presented to the canvas frame shared value. */
   readonly onPresentCommit?: (revision: number, atMs: number) => void;
+  /**
+   * UI runtime: the first UI frame that observed a new commit revision (the
+   * alpha clock's reset detects it). Skia GPU presentation is not proven by
+   * this hook, so latency consumers must name the stage honestly.
+   */
+  readonly onUiRevisionObserved?: (revision: number, atMs: number) => void;
 }

@@ -16,6 +16,7 @@ function resolvedFor(width: number, height: number): ResolvedViewport2D {
 /** Records the semantic events forwarded by the pointer binding. */
 class RecordingInputController implements InputController<string> {
   readonly events: string[] = [];
+  acceptedCount = 0;
 
   press(action: string): void {
     this.events.push(`press:${action}`);
@@ -24,12 +25,14 @@ class RecordingInputController implements InputController<string> {
     this.events.push(`release:${action}`);
   }
   begin(action: string, pointerId: number, position: { readonly x: number; readonly y: number }): void {
+    this.acceptedCount += 1;
     this.events.push(`begin:${action}:${pointerId}:${position.x.toFixed(2)}:${position.y.toFixed(2)}`);
   }
   move(action: string, pointerId: number, position: { readonly x: number; readonly y: number }): void {
     this.events.push(`move:${action}:${pointerId}:${position.x.toFixed(2)}:${position.y.toFixed(2)}`);
   }
   end(action: string, pointerId: number): void {
+    this.acceptedCount += 1;
     this.events.push(`end:${action}:${pointerId}`);
   }
   cancel(action: string): void {
@@ -107,9 +110,9 @@ describe('PointerBinding', () => {
     const input = new RecordingInputController();
     const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
     const epoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 7, x: 195, y: 400, epoch }), true);
-    assert.equal(binding.dispatch({ kind: 'move', pointerId: 7, x: 195, y: 500, epoch }), true);
-    assert.equal(binding.dispatch({ kind: 'end', pointerId: 7, x: 195, y: 500, epoch }), true);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 7, x: 195, y: 400, epoch, seq: 1, atMs: 1000 }), true);
+    assert.equal(binding.dispatch({ kind: 'move', pointerId: 7, x: 195, y: 500, epoch, seq: 2, atMs: 1016 }), true);
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 7, x: 195, y: 500, epoch, seq: 3, atMs: 1033 }), true);
     assert.deepEqual(input.events, [
       'begin:primary:7:160.00:71.95',
       // handleTouchesUp forwards the final position before releasing.
@@ -123,13 +126,13 @@ describe('PointerBinding', () => {
     const input = new RecordingInputController();
     const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
     const oldEpoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: oldEpoch }), true);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: oldEpoch , seq: 1, atMs: 1000 }), true);
     binding.invalidate();
     const stale: PointerPacket[] = [
-      { kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: oldEpoch },
-      { kind: 'move', pointerId: 1, x: 195, y: 500, epoch: oldEpoch },
-      { kind: 'end', pointerId: 1, x: 195, y: 500, epoch: oldEpoch },
-      { kind: 'cancel', epoch: oldEpoch },
+      { kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: oldEpoch , seq: 1, atMs: 1000 },
+      { kind: 'move', pointerId: 1, x: 195, y: 500, epoch: oldEpoch , seq: 1, atMs: 1000 },
+      { kind: 'end', pointerId: 1, x: 195, y: 500, epoch: oldEpoch , seq: 1, atMs: 1000 },
+      { kind: 'cancel', epoch: oldEpoch, seq: 1, atMs: 1000 },
     ];
     for (const packet of stale) {
       assert.equal(binding.dispatch(packet), false, 'stale packet rejected');
@@ -141,14 +144,14 @@ describe('PointerBinding', () => {
     const input = new RecordingInputController();
     const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844));
     const firstEpoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: firstEpoch }), true);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: firstEpoch , seq: 1, atMs: 1000 }), true);
     // Layout revision invalidates the first gesture; its queued end is stale.
     binding.invalidate();
-    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: firstEpoch }), false);
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: firstEpoch , seq: 1, atMs: 1000 }), false);
     // A newer gesture reuses the same native pointer id under the new epoch.
     const secondEpoch = binding.epoch;
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: secondEpoch }), true);
-    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: secondEpoch }), true);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 4, x: 195, y: 400, epoch: secondEpoch , seq: 1, atMs: 1000 }), true);
+    assert.equal(binding.dispatch({ kind: 'end', pointerId: 4, x: 195, y: 400, epoch: secondEpoch , seq: 1, atMs: 1000 }), true);
     assert.deepEqual(input.events, [
       'begin:primary:4:160.00:71.95',
       'begin:primary:4:160.00:71.95',
@@ -165,7 +168,7 @@ describe('PointerBinding', () => {
     const input = new RecordingInputController();
     const first = new PointerBinding('primary', input, () => resolvedFor(390, 844));
     const sharedEpoch = first.epoch; // 0
-    assert.equal(first.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: sharedEpoch }), true);
+    assert.equal(first.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: sharedEpoch , seq: 1, atMs: 1000 }), true);
 
     // Replacement: cleanup invalidates the old binding and bumps the mirror.
     first.invalidate();
@@ -179,10 +182,10 @@ describe('PointerBinding', () => {
     assert.equal(synced, sharedEpoch, 'adapter must re-sync the shared epoch to the replacement');
 
     // Input continues immediately under the synced epoch.
-    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: synced }), true);
-    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 1, x: 195, y: 400, epoch: synced }), true);
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: synced , seq: 1, atMs: 1000 }), true);
+    assert.equal(replacement.dispatch({ kind: 'end', pointerId: 1, x: 195, y: 400, epoch: synced , seq: 1, atMs: 1000 }), true);
     // A packet stamped with the pre-replacement epoch is still rejected.
-    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: bumped }), false);
+    assert.equal(replacement.dispatch({ kind: 'begin', pointerId: 2, x: 195, y: 400, epoch: bumped , seq: 1, atMs: 1000 }), false);
   });
 
   it('invalidate and cancel are idempotent and ordering-safe (F6)', () => {
@@ -192,11 +195,11 @@ describe('PointerBinding', () => {
     binding.invalidate();
     binding.cancel();
     binding.cancel();
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch }), true);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch, seq: 1, atMs: 1000 }), true);
     binding.invalidate();
     binding.dispose();
     binding.dispose();
-    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch }), false);
+    assert.equal(binding.dispatch({ kind: 'begin', pointerId: 1, x: 195, y: 400, epoch: binding.epoch, seq: 2, atMs: 1016 }), false);
   });
 });
 

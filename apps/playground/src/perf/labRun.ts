@@ -52,13 +52,23 @@ export interface ScenarioResult {
   readonly ui: UiFrameSummary | undefined;
   /** Native-input stage counters; present only for the native-drag scenario. */
   readonly inputStages: InputStageCounters | undefined;
-  /** Native input timestamp → first presented commit latency samples. */
-  readonly inputToPresentMs: SeriesSnapshot | undefined;
+  /** Native forward timestamp → first commit that sampled the input. */
+  readonly inputToCommitMs: SeriesSnapshot | undefined;
+  /** That commit's revision → first UI frame that observed it. */
+  readonly inputToUiObservedMs: SeriesSnapshot | undefined;
+  /** Explainable sample accounting for the native latency metric. */
+  readonly latencyCounters:
+    | { readonly matched: number; readonly unmatched: number; readonly rejected: number; readonly superseded: number }
+    | undefined;
 }
 
 export interface LabRunControllerOptions {
   readonly onComplete: (result: ScenarioResult) => void;
 }
+
+/** Bounded pending structures for the native latency metric (F1 follow-up). */
+const MAX_PENDING_FORWARDS = 64;
+const MAX_PENDING_REVISIONS = 32;
 
 let nextIssuedRunId = 1;
 
@@ -82,8 +92,17 @@ export class LabRunController {
   #completed = false;
   #inputStages: { raw: number; forwarded: number } | undefined;
   #presentedCount = 0;
-  #lastConsumedSeq = 0;
-  readonly #inputToPresent = new CounterSeries();
+  /** Bounded pending forwards: acknowledged on the RN side, awaiting the
+   * first commit whose sampled-input counter reaches their buffer count. */
+  readonly #pending: { seq: number; atMs: number; bufferCount: number }[] = [];
+  /** Bounded revision → forward timestamp map awaiting UI observation. */
+  readonly #matchedByRevision = new Map<number, number>();
+  #latencyMatched = 0;
+  #latencyUnmatched = 0;
+  #latencyRejected = 0;
+  #latencySuperseded = 0;
+  readonly #inputToCommit = new CounterSeries();
+  readonly #inputToUiObserved = new CounterSeries();
 
   constructor(options: LabRunControllerOptions) {
     this.#onComplete = options.onComplete;
@@ -128,8 +147,14 @@ export class LabRunController {
     this.#completed = false;
     this.#inputStages = undefined;
     this.#presentedCount = 0;
-    this.#lastConsumedSeq = 0;
-    this.#inputToPresent.reset();
+    this.#pending.length = 0;
+    this.#matchedByRevision.clear();
+    this.#latencyMatched = 0;
+    this.#latencyUnmatched = 0;
+    this.#latencyRejected = 0;
+    this.#latencySuperseded = 0;
+    this.#inputToCommit.reset();
+    this.#inputToUiObserved.reset();
   }
 
   /** A UI→RN transfer arrived. Merged only for the active run id. */
@@ -161,27 +186,82 @@ export class LabRunController {
   }
 
   /**
-   * A commit was presented (RN runtime). `forwarded` carries the monotonically
-   * increasing input sequence and UI-runtime timestamp of the most recent
-   * forwarded pointer event; each sequence is consumed exactly once on its
-   * first corresponding presentation, so one input event can never be
-   * attributed to multiple commits.
+   * RN-side result of dispatching one pointer packet (F1 follow-up).
+   *
+   * `seq`/`atMs` are the UI-runtime forward sequence and timestamp carried
+   * with the packet; `bufferCount` is the session input buffer's accepted-
+   * event counter at dispatch time; `accepted` is the binding's verdict.
+   * Rejected (stale epoch/generation) packets are counted and never become
+   * samples; accepted packets enter the bounded pending structure.
    */
-  onPresentCommit(
-    revision: number,
-    atMs: number,
-    forwarded: { readonly seq: number; readonly atMs: number } | undefined,
-  ): void {
+  onForwardResult(seq: number, atMs: number, bufferCount: number, accepted: boolean): void {
     if (this.#completed) {
       return;
     }
-    void revision;
+    if (!accepted) {
+      this.#latencyRejected += 1;
+      return;
+    }
+    if (this.#pending.length >= MAX_PENDING_FORWARDS) {
+      this.#pending.shift();
+      this.#latencySuperseded += 1;
+    }
+    this.#pending.push({ seq, atMs, bufferCount });
+  }
+
+  /**
+   * A commit was published (RN runtime). `sampledCount` is the session input
+   * buffer's accepted-event counter after the commit's last sampled step, so
+   * only a commit that actually sampled an accepted forward can consume it.
+   * Multiple forwards in one commit follow the documented aggregation rule:
+   * the newest accepted input is the sample; older ones are superseded.
+   */
+  onCommit(revision: number, atMs: number, sampledCount: number): void {
+    if (this.#completed) {
+      return;
+    }
     this.#presentedCount += 1;
-    if (forwarded !== undefined && forwarded.seq > this.#lastConsumedSeq) {
-      this.#lastConsumedSeq = forwarded.seq;
-      if (atMs >= forwarded.atMs) {
-        this.#inputToPresent.record(atMs - forwarded.atMs);
+    let matchIndex = -1;
+    for (let index = this.#pending.length - 1; index >= 0; index -= 1) {
+      const entry = this.#pending[index];
+      if (entry !== undefined && entry.bufferCount <= sampledCount) {
+        matchIndex = index;
+        break;
       }
+    }
+    if (matchIndex < 0) {
+      return; // This commit did not sample any pending forward.
+    }
+    const matched = this.#pending[matchIndex]!;
+    this.#pending.length = matchIndex; // Drop the matched entry and everything older.
+    this.#latencySuperseded += matchIndex; // Older pending forwards in the same commit.
+    this.#latencyMatched += 1;
+    if (atMs >= matched.atMs) {
+      this.#inputToCommit.record(atMs - matched.atMs);
+    }
+    if (this.#matchedByRevision.size >= MAX_PENDING_REVISIONS) {
+      this.#matchedByRevision.delete(this.#matchedByRevision.keys().next().value as number);
+    }
+    this.#matchedByRevision.set(revision, matched.atMs);
+  }
+
+  /**
+   * The first UI frame that observed `revision` (the UI alpha clock's reset
+   * detects the new commit). Later observations of the same revision record
+   * nothing; Skia GPU presentation is not proven, so this stage is named
+   * honestly `input-to-ui-observed`.
+   */
+  onUiObserved(revision: number, atMs: number): void {
+    if (this.#completed) {
+      return;
+    }
+    const forwardAtMs = this.#matchedByRevision.get(revision);
+    if (forwardAtMs === undefined) {
+      return;
+    }
+    this.#matchedByRevision.delete(revision);
+    if (atMs >= forwardAtMs) {
+      this.#inputToUiObserved.record(atMs - forwardAtMs);
     }
   }
 
@@ -217,8 +297,18 @@ export class LabRunController {
       summary: this.#jsSummary,
       ui: summarizeUi(this.#uiMerged),
       inputStages: stages,
-      inputToPresentMs:
-        this.#inputToPresent.count > 0 ? this.#inputToPresent.snapshot() : undefined,
+      inputToCommitMs: this.#inputToCommit.count > 0 ? this.#inputToCommit.snapshot() : undefined,
+      inputToUiObservedMs:
+        this.#inputToUiObserved.count > 0 ? this.#inputToUiObserved.snapshot() : undefined,
+      latencyCounters:
+        this.#spec.scenario !== 'native-drag'
+          ? undefined
+          : {
+              matched: this.#latencyMatched,
+              unmatched: this.#pending.length + this.#matchedByRevision.size,
+              rejected: this.#latencyRejected,
+              superseded: this.#latencySuperseded,
+            },
     });
     this.#spec = undefined;
   }

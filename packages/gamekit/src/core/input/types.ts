@@ -58,4 +58,10 @@ export interface InputController<TActionName extends string> {
   end(action: TActionName, pointerId: number): void;
   /** Cancel the active button or owning pointer of a declared action. */
   cancel(action: TActionName): void;
+  /**
+   * Monotonic count of input events accepted by this controller (F1). The
+   * session's commit instrumentation uses it to associate a commit with the
+   * inputs its fixed step actually sampled.
+   */
+  readonly acceptedCount: number;
 }

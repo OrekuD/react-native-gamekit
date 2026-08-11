@@ -10,7 +10,13 @@ import type { CoalescedPointerEvent } from './pointerCoalescer';
  * stale begin cannot reacquire input with old coordinates and a stale
  * terminal edge cannot release a newer capture that reused the pointer id.
  */
-export type PointerPacket = CoalescedPointerEvent & { readonly epoch: number };
+export type PointerPacket = CoalescedPointerEvent & {
+  readonly epoch: number;
+  /** Monotonic UI-runtime forward sequence (F1 latency causality). */
+  readonly seq: number;
+  /** UI-runtime timestamp of the forward (F1 latency causality). */
+  readonly atMs: number;
+};
 
 /** The identity a pointer binding is scoped to. */
 export interface PointerBindingIdentity<TName extends string> {
