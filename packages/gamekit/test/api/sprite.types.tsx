@@ -11,8 +11,8 @@
  * - the animation selection is driven by fixed-step state (`clip` +
  *   `elapsedMs`), never by the wall clock.
  */
-import { GameWorld2D, GameSprite, Sprite } from '../src/react';
-import type { GameRendererProps } from '../src/react';
+import { GameWorld2D, GameSprite, Sprite } from '../../src/react';
+import type { GameRendererProps } from '../../src/react';
 import type { SharedValue } from 'react-native-reanimated';
 
 import { gameAssets } from '../api/assetsManifest.types';

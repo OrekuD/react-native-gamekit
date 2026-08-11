@@ -14,8 +14,7 @@ const viewport = {
 function createCounterGame() {
   return defineGame({
     viewport,
-    assets: [],
-    input: {},
+      input: {},
     scenes: {
       play: defineScene({
         actions: [],
@@ -141,8 +140,7 @@ describe('session diagnostics sink (T1)', () => {
     const session = createGameSessionWithDriver(
       defineGame({
         viewport,
-        assets: [],
-        input: {},
+              input: {},
         scenes: {
           a: defineScene({
             actions: [],

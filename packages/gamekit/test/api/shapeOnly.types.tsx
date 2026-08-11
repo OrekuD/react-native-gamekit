@@ -6,8 +6,8 @@
  * the `assets` prop all compile unchanged — the manifest is strictly
  * optional and adds no native dependency to the headless definition.
  */
-import { defineGame, defineScene } from '../src/index';
-import { GameView, type GameRendererProps } from '../src/react';
+import { defineGame, defineScene } from '../../src/index';
+import { GameView, type GameRendererProps } from '../../src/react';
 
 const viewport = {
   logicalSize: { width: 320, height: 480 },

@@ -13,8 +13,7 @@ it('binds presentation imperatively and pauses without disposing on cleanup', ()
       logicalSize: { width: 320, height: 180 },
       mode: 'fit',
     },
-    assets: [],
-    input: {},
+      input: {},
     scenes: {
       play: defineScene({
         actions: [],

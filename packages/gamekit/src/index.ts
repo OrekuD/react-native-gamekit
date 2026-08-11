@@ -14,10 +14,28 @@ export type {
   GameSessionStatus,
   GameSubscription,
 } from './core/session/types';
-export { defineGame } from './definition/defineGame';
+export { defineAssets, image, spriteSheet } from './assets/defineAssets';
+export { GameAssetError } from './assets/errors';
 export type {
   AssetDescriptor,
-  AssetSource,
+  AssetGroup,
+  AssetGroupMap,
+  AssetSourceHandle,
+  BrandedAssetDescriptor,
+  GameAssetLease,
+  GameAssetManifest,
+  ImageDescriptor,
+  LoadedAssets,
+  LoadedImage,
+  LoadedSpriteSheet,
+  ManifestOf,
+  SpriteAnimationMode,
+  SpriteClip,
+  SpriteFrameRect,
+  SpriteSheetDescriptor,
+} from './assets/types';
+export { defineGame } from './definition/defineGame';
+export type {
   ButtonInputAction,
   GameDefinition,
   InputAction,

@@ -13,7 +13,6 @@ const viewport = {
 
 const _definition = defineGame({
   viewport,
-  assets: [],
   input: {
     primary: { type: 'pointer' },
     boost: { type: 'button' },

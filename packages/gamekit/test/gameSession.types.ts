@@ -63,7 +63,6 @@ const gameOverScene = defineScene({
 
 const game = defineGame({
   viewport,
-  assets: [],
   input: {
     primary: { type: 'pointer' },
     boost: { type: 'button' },

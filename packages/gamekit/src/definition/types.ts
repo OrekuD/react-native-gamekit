@@ -1,15 +1,5 @@
+import type { AssetGroupMap, GameAssetManifest } from '../assets/types';
 import type { Viewport } from '../viewport2d/types';
-
-/** A URI or static React Native resource handle. */
-export type AssetSource = string | number;
-
-/** A stable game asset declaration. Loading arrives in a later task. */
-export interface AssetDescriptor {
-  /** Stable identifier used by game code. */
-  readonly id: string;
-  /** Remote/file URI or static React Native resource handle. */
-  readonly source: AssetSource;
-}
 
 /** The button action supported by the runtime. */
 export interface ButtonInputAction {
@@ -62,11 +52,12 @@ export interface GameDefinition<
   TScenes extends SceneMap = SceneMap,
   TInput extends InputMap = InputMap,
   TInitialScene extends keyof TScenes = keyof TScenes,
+  TAssets extends AssetGroupMap = AssetGroupMap,
 > {
   /** The viewport configuration of the game. */
   readonly viewport: Viewport;
-  /** Assets declared by the game. Loading is not implemented yet. */
-  readonly assets?: readonly AssetDescriptor[];
+  /** Typed asset manifest; optional for shape-only games. */
+  readonly assets?: GameAssetManifest<TAssets>;
   /** Semantic input actions declared by the game. */
   readonly input: TInput;
   /** Functional scenes keyed by stable scene name. */

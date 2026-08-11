@@ -1,3 +1,4 @@
+import type { AssetGroupMap } from '../assets/types';
 import type { GameDefinition, InputMap, SceneMap } from './types';
 
 type SceneActions<TScene> = TScene extends { readonly __actionType?: infer TAction }
@@ -79,11 +80,12 @@ export function defineGame<
   const TScenes extends SceneMap,
   const TInput extends InputMap = InputMap,
   const TInitialScene extends keyof TScenes = keyof TScenes,
+  const TAssets extends AssetGroupMap = AssetGroupMap,
 >(
-  definition: GameDefinition<TScenes, TInput, TInitialScene> &
+  definition: GameDefinition<TScenes, TInput, TInitialScene, TAssets> &
     ValidateSceneActions<TScenes, TInput> &
     ValidateSceneTransitions<TScenes>,
-): GameDefinition<TScenes, TInput, TInitialScene> {
+): GameDefinition<TScenes, TInput, TInitialScene, TAssets> {
   // The viewport config is part of the public session surface; freeze it so a
   // caller cannot mutate a live game's coordinate authority.
   Object.freeze(definition.viewport.logicalSize);

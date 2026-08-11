@@ -63,8 +63,7 @@ function makeMultiSceneGame(
 ) {
   return defineGame({
     viewport,
-    assets: [],
-    input: {},
+      input: {},
     scenes: {
       ready: makeScene('ready', log, sceneOptions.readyUpdate ? { update: sceneOptions.readyUpdate } : {}),
       play: makeScene('play', log, sceneOptions.playUpdate ? { update: sceneOptions.playUpdate } : {}),
@@ -265,8 +264,7 @@ describe('named scenes and session lifecycle', () => {
     let retained: { setScene(name: string): void } | undefined;
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -303,8 +301,7 @@ describe('named scenes and session lifecycle', () => {
     const _log: SceneLifecycleLog = { name: 'x', events: [] };
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -384,8 +381,7 @@ describe('transition ordering and failure semantics', () => {
     const seen: Array<{ scene: string; sceneTick: number; sceneElapsedSeconds: number; tick: number; elapsedSeconds: number }> = [];
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -433,8 +429,7 @@ describe('transition ordering and failure semantics', () => {
     const _log: SceneLifecycleLog = { name: 'x', events: [] };
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         ready: defineScene({
           actions: ['boost'],
@@ -473,8 +468,7 @@ describe('transition ordering and failure semantics', () => {
   it('continues an active pointer through an input-triggered scene transition', () => {
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { primary: { type: 'pointer' } },
+          input: { primary: { type: 'pointer' } },
       scenes: {
         ready: defineScene({
           actions: ['primary'],
@@ -529,8 +523,7 @@ describe('transition ordering and failure semantics', () => {
     let failPlayCreate = false;
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -576,8 +569,7 @@ describe('transition ordering and failure semantics', () => {
     let failSnapshot = false;
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -687,8 +679,7 @@ describe('transition ordering and failure semantics', () => {
     const readyUpdateCounts: number[] = [];
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -732,8 +723,7 @@ describe('session scene validation', () => {
   it('rejects undeclared scene actions at session creation', () => {
     const invalid = {
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         play: defineScene({
           actions: ['fire'],
@@ -753,8 +743,7 @@ describe('session scene validation', () => {
   it('rejects unknown transition targets at session creation', () => {
     const invalid = {
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         play: defineScene({
           actions: [],
@@ -801,8 +790,7 @@ describe('feedback: transition publish and lifecycle hardening', () => {
     const sessionRef: { current: GameSession<never, never> | undefined } = { current: undefined };
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -840,8 +828,7 @@ describe('feedback: transition publish and lifecycle hardening', () => {
     const sessionRef: { current: GameSession<never, never> | undefined } = { current: undefined };
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -885,8 +872,7 @@ describe('feedback: transition publish and lifecycle hardening', () => {
     const events: string[] = [];
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],
@@ -926,8 +912,7 @@ describe('feedback: transition publish and lifecycle hardening', () => {
     let disposeCalls = 0;
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         ready: defineScene({
           actions: [],

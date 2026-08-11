@@ -15,8 +15,8 @@
  * Reserved-separator keys, invalid rectangles, empty clips, and duration
  * ranges are runtime validations (T7.2) and are intentionally absent here.
  */
-import { defineGame, defineScene, image, spriteSheet, startSpriteAnimation } from '../src/index';
-import { useGameAssets } from '../src/react';
+import { defineGame, defineScene, image, spriteSheet, startSpriteAnimation, type LoadedAssets } from '../../src/index';
+import { useGameAssets } from '../../src/react';
 
 import { gameAssets, otherAssets } from '../api/assetsManifest.types';
 
@@ -89,7 +89,7 @@ spriteSheet('https://example.com/player.png', {
 
 // --- Retrieval by descriptor reference only ---------------------------------
 
-declare const loaded: { get(descriptor: unknown): unknown };
+declare const loaded: LoadedAssets<typeof gameAssets>;
 
 // @ts-expect-error retrieving through the wrong manifest is rejected
 loaded.get(otherAssets.elsewhere.logo);

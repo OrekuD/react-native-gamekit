@@ -10,7 +10,7 @@ import {
   advanceSpriteAnimation,
   startSpriteAnimation,
   type SpriteAnimationState,
-} from '../src/index';
+} from '../../src/index';
 
 import { gameAssets } from '../api/assetsManifest.types';
 

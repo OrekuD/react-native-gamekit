@@ -15,8 +15,7 @@ function createCounterGame(
 ) {
   return defineGame({
     viewport,
-    assets: [],
-    input: { boost: { type: 'button' } },
+      input: { boost: { type: 'button' } },
     scenes: {
       play: defineScene({
         actions: [],
@@ -153,8 +152,7 @@ describe('GameSession fixed-step scheduling', () => {
     let pause = () => {};
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         play: defineScene({
           actions: [],
@@ -183,8 +181,7 @@ describe('GameSession fixed-step scheduling', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         play: defineScene({
           actions: [],
@@ -213,8 +210,7 @@ describe('GameSession fixed-step scheduling', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         play: defineScene({
           actions: ['boost'],
@@ -245,8 +241,7 @@ describe('GameSession fixed-step scheduling', () => {
     let snapshotCalls = 0;
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         play: defineScene({
           actions: [],
@@ -302,8 +297,7 @@ describe('GameSession input and snapshots', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         play: defineScene({
           actions: ['boost'],
@@ -342,8 +336,7 @@ describe('GameSession input and snapshots', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         play: defineScene({
           actions: ['boost'],
@@ -383,8 +376,7 @@ describe('GameSession input and snapshots', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         play: defineScene({
           actions: ['boost'],
@@ -419,8 +411,7 @@ describe('GameSession input and snapshots', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: { boost: { type: 'button' } },
+          input: { boost: { type: 'button' } },
       scenes: {
         play: defineScene({
           actions: ['boost'],
@@ -479,8 +470,7 @@ describe('GameSession input and snapshots', () => {
     const driver = new ManualFrameDriver();
     const game = defineGame({
       viewport,
-      assets: [],
-      input: {},
+          input: {},
       scenes: {
         play: defineScene({
           actions: [],

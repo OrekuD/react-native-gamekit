@@ -6,7 +6,7 @@
  * type layer must reject. If any expectation stops erroring, the contract
  * has loosened and this fixture must be updated (or the regression fixed).
  */
-import { defineGame, defineScene, type GameDefinition } from '../src/index.ts';
+import { defineAssets, defineGame, defineScene, image, type GameDefinition } from '../src/index.ts';
 
 const emptyScene = defineScene({
   actions: [],
@@ -23,10 +23,11 @@ const viewport = {
 // Scene names are inferred: `initialScene` must be one of the `scenes` keys.
 const game = defineGame({
   viewport,
-  assets: [
-    { id: 'local-image', source: 42 },
-    { id: 'remote-audio', source: 'https://example.com/theme.mp3' },
-  ],
+  assets: defineAssets({
+    boot: {
+      logo: image(42),
+    },
+  }),
   input: {},
   scenes: { menu: emptyScene, level1: emptyScene },
   initialScene: 'menu',
@@ -38,7 +39,6 @@ game.initialScene satisfies 'menu' | 'level1';
 
 defineGame({
   viewport,
-  assets: [],
   input: {},
   scenes: { menu: emptyScene },
   // @ts-expect-error initialScene must reference an existing scene key
@@ -48,7 +48,6 @@ defineGame({
 defineGame({
   // @ts-expect-error mode must be a declared viewport mode
   viewport: { logicalSize: { width: 390, height: 844 }, mode: 'zoom' },
-  assets: [],
   input: {},
   scenes: { menu: emptyScene },
   initialScene: 'menu',
@@ -57,7 +56,6 @@ defineGame({
 defineGame({
   // @ts-expect-error the Task 2 scale/overflow pair is replaced by mode
   viewport: { logicalSize: { width: 390, height: 844 }, scale: 'fit', overflow: 'letterbox' },
-  assets: [],
   input: {},
   scenes: { menu: emptyScene },
   initialScene: 'menu',
@@ -66,7 +64,6 @@ defineGame({
 defineGame({
   // @ts-expect-error logicalSize width must be a number
   viewport: { logicalSize: { width: '390', height: 844 }, mode: 'fit' },
-  assets: [],
   input: {},
   scenes: { menu: emptyScene },
   initialScene: 'menu',
@@ -74,7 +71,6 @@ defineGame({
 
 defineGame({
   viewport,
-  assets: [],
   input: {},
   // @ts-expect-error scenes values must be scene definitions
   scenes: { menu: 42 },
@@ -101,7 +97,6 @@ defineGame({
 
 defineGame({
   viewport,
-  assets: [],
   // @ts-expect-error input values must be input actions
   input: { move: 'left' },
   scenes: { menu: emptyScene },
@@ -119,7 +114,6 @@ const undeclaredTransitionScene = defineScene({
 // @ts-expect-error every declared transition target must be a declared scene
 defineGame({
   viewport,
-  assets: [],
   input: {},
   scenes: { menu: undeclaredTransitionScene },
   initialScene: 'menu',
@@ -127,7 +121,6 @@ defineGame({
 
 defineGame({
   viewport,
-  assets: [],
   input: { primary: { type: 'pointer' } },
   scenes: {
     menu: defineScene({

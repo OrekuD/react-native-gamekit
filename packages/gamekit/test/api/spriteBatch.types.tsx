@@ -11,8 +11,8 @@
  *   `write.set(index, frame, x, y, rotation, scale)` — no per-frame
  *   allocation and no React per-frame work.
  */
-import { GameWorld2D, SpriteBatch } from '../src/react';
-import type { GameRendererProps } from '../src/react';
+import { GameWorld2D, SpriteBatch } from '../../src/react';
+import type { GameRendererProps } from '../../src/react';
 
 import { gameAssets } from '../api/assetsManifest.types';
 

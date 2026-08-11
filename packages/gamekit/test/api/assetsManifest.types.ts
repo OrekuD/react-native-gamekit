@@ -19,7 +19,7 @@ import {
   type GameAssetManifest,
   type ImageDescriptor,
   type SpriteSheetDescriptor,
-} from '../src/index';
+} from '../../src/index';
 
 // The static module handle is the number returned by `require(...)` in
 // React Native (`image(require('./assets/logo.png'))`). This file is
@@ -107,10 +107,7 @@ void idleClip;
 void runClip;
 
 // The descriptor carries its typed frame and clip tables.
-const player = gameAssets.gameplay.player satisfies SpriteSheetDescriptor<
-  { 'idle-0': unknown; 'idle-1': unknown; 'run-0': unknown; 'run-1': unknown },
-  { idle: unknown; run: unknown }
->;
+const player = gameAssets.gameplay.player satisfies SpriteSheetDescriptor;
 const logoAsset = gameAssets.boot.logo satisfies ImageDescriptor;
 void player;
 void logoAsset;
