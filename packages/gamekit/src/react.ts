@@ -11,6 +11,8 @@ export type {
   GameSpriteSelectContext,
   GameSpriteSelection,
 } from './react/sprites/GameSprite';
+export { SpriteBatch } from './react/sprites/SpriteBatch';
+export type { SpriteBatchProps, SpriteBatchWrite } from './react/sprites/SpriteBatch';
 export {
   computeSpriteRsxform,
   spriteAnchorWorld,

@@ -13,21 +13,31 @@
  */
 import { GameWorld2D, SpriteBatch } from '../../src/react';
 import type { GameRendererProps } from '../../src/react';
+import { defineScene } from '../../src/index';
 
 import { gameAssets } from '../api/assetsManifest.types';
 
-type Scenes = {
-  play: unknown;
+const scenes = {
+  play: defineScene({
+    actions: [],
+    create: () => ({
+      enemies: [] as readonly { readonly frame: string; readonly x: number; readonly y: number; readonly rotation: number; readonly scale: number; readonly visible: boolean }[],
+    }),
+    update: ({ state }) => state,
+    snapshot: ({ state }) => state,
+  }),
 };
 
-type RendererProps = GameRendererProps<Scenes, typeof gameAssets>;
+type RendererProps = GameRendererProps<typeof scenes, typeof gameAssets>;
+void scenes;
 
-function EnemiesBatch({ frame, alpha, viewport, assets }: RendererProps & {
-  readonly assets: never;
-}) {
+function EnemiesBatch({ frame, alpha, viewport, assets }: RendererProps) {
+  if (assets === undefined) {
+    return null;
+  }
   return (
     <GameWorld2D viewport={viewport}>
-      <SpriteBatch
+      <SpriteBatch<typeof scenes, 'play', { readonly frame: string; readonly x: number; readonly y: number; readonly rotation: number; readonly scale: number; readonly visible: boolean }>
         scene="play"
         commit={frame}
         alpha={alpha}
@@ -36,7 +46,7 @@ function EnemiesBatch({ frame, alpha, viewport, assets }: RendererProps & {
         select={({ current }) => current.enemies}
         write={(write, enemy, index) => {
           'worklet';
-          write.set(index, enemy.frame, enemy.x, enemy.y, enemy.rotation, enemy.scale);
+          write.set(index, enemy.frame, enemy.x, enemy.y, enemy.rotation, enemy.scale, enemy.visible);
         }}
       />
     </GameWorld2D>
@@ -45,12 +55,13 @@ function EnemiesBatch({ frame, alpha, viewport, assets }: RendererProps & {
 
 // The write setter also accepts an explicit frame name and a visibility flag
 // so inactive slots stay hidden without remounting topology.
-function BatchedWithVisibility({ frame, alpha, viewport, assets }: RendererProps & {
-  readonly assets: never;
-}) {
+function BatchedWithVisibility({ frame, alpha, viewport, assets }: RendererProps) {
+  if (assets === undefined) {
+    return null;
+  }
   return (
     <GameWorld2D viewport={viewport}>
-      <SpriteBatch
+      <SpriteBatch<typeof scenes, 'play', { readonly frame: string; readonly x: number; readonly y: number; readonly rotation: number; readonly scale: number; readonly visible: boolean }>
         scene="play"
         commit={frame}
         alpha={alpha}
