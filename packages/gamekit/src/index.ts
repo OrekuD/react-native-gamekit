@@ -14,6 +14,21 @@ export type {
   GameSessionStatus,
   GameSubscription,
 } from './core/session/types';
+export {
+  advanceSpriteAnimation,
+  pauseSpriteAnimation,
+  playSpriteAnimation,
+  resetSpriteAnimation,
+  resumeSpriteAnimation,
+  setSpriteAnimationSpeed,
+  startSpriteAnimation,
+} from './sprites/spriteAnimationState';
+export {
+  sampleSpriteClipFrame,
+  sampleSpriteClipFrameName,
+  spriteClipDurationMs,
+} from './sprites/sampleSpriteClip';
+export type { SpriteAnimationState } from './sprites/spriteAnimationState';
 export { defineAssets, image, spriteSheet } from './assets/defineAssets';
 export { GameAssetError } from './assets/errors';
 export type {

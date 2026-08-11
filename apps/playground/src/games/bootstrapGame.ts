@@ -48,7 +48,6 @@ export const bootstrapDefinition = defineGame({
     logicalSize: { width: LOGICAL_WIDTH, height: LOGICAL_HEIGHT },
     mode: 'fit',
   },
-  assets: [],
   input: {
     boost: {
       type: 'button',

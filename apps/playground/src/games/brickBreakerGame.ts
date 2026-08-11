@@ -419,7 +419,6 @@ export const brickBreakerDefinition = defineGame({
     },
     mode: 'fit',
   },
-  assets: [],
   input: {
     start: {
       type: 'button',
