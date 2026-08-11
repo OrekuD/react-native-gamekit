@@ -6,9 +6,9 @@ import { createDeepFreeze } from '../src/core/session/deepFreeze';
 describe('deep-freeze array-owned values (F5)', () => {
   it('freezes nested objects stored on non-index string properties of arrays', () => {
     const freezer = createDeepFreeze();
-    const array = [1, 2, 3];
-    array['meta'] = { nested: { value: 1 } };
-    const frozen = freezer(array) as { meta: { nested: { value: number } } };
+    const array: number[] & { meta?: { nested: { value: number } } } = [1, 2, 3];
+    array.meta = { nested: { value: 1 } };
+    const frozen = freezer(array) as unknown as { meta: { nested: { value: number } } };
 
     assert.ok(Object.isFrozen(frozen.meta.nested), 'nested object on a string key is frozen');
     assert.throws(() => {
@@ -22,13 +22,15 @@ describe('deep-freeze array-owned values (F5)', () => {
   it('freezes nested objects stored on symbol properties of arrays', () => {
     const freezer = createDeepFreeze();
     const symbol = Symbol('meta');
-    const array: unknown[] = [1];
-    (array as Record<symbol, unknown>)[symbol] = { nested: { value: 1 } };
-    const frozen = freezer(array) as Record<symbol, { nested: { value: number } }>;
+    const array = [1] as unknown as Record<symbol, { nested: { value: number } }> & unknown[];
+    array[symbol] = { nested: { value: 1 } };
+    const frozen = freezer(array) as unknown as Record<symbol, { nested: { value: number } }>;
 
-    assert.ok(Object.isFrozen(frozen[symbol].nested), 'nested object on a symbol key is frozen');
+    const meta = frozen[symbol];
+    assert.ok(meta !== undefined);
+    assert.ok(Object.isFrozen(meta.nested), 'nested object on a symbol key is frozen');
     assert.throws(() => {
-      frozen[symbol].nested.value = 2;
+      meta.nested.value = 2;
     }, /Cannot assign/);
   });
 
@@ -60,10 +62,12 @@ describe('deep-freeze array-owned values (F5)', () => {
   it('keeps cyclic arrays safe with non-index keys', () => {
     const freezer = createDeepFreeze();
     const array: unknown[] = [];
-    array['meta'] = { self: array };
-    const frozen = freezer(array) as unknown[];
+    (array as unknown as Record<string, unknown>)['meta'] = { self: array };
+    const frozen = freezer(array) as unknown as Record<string, unknown>;
 
-    assert.ok(Object.isFrozen(frozen['meta' as keyof unknown[]] as object));
+    const meta = frozen['meta'];
+    assert.ok(meta !== undefined);
+    assert.ok(Object.isFrozen(meta as object));
   });
 
   it('leaves the parent untrusted when a string-key getter throws', () => {

@@ -119,18 +119,16 @@ describe('session diagnostics sink (T1)', () => {
     });
     const originalNow = performance.now.bind(performance);
     let clockReads = 0;
-    // @ts-expect-error patching the global clock for the duration of the test
-    performance.now = () => {
+    performance.now = (() => {
       clockReads += 1;
       return originalNow();
-    };
+    }) as typeof performance.now;
     try {
       session.start();
       for (let frame = 0; frame < 20; frame += 1) {
         driver.fireNext(frame * 10);
       }
     } finally {
-      // @ts-expect-error restoring the global clock
       performance.now = originalNow;
     }
     assert.equal(clockReads, 0, 'no timing reads on the disabled diagnostics path');
@@ -159,9 +157,8 @@ describe('session diagnostics sink (T1)', () => {
           }),
           b: defineScene({
             actions: [],
-            create: () => ({})
-            ,
-            update: ({ state }) => ({ ready: state.ready ?? 1 }),
+            create: () => ({ ready: 0 }),
+            update: ({ state }) => ({ ready: state.ready + 1 }),
             snapshot: ({ state }) => ({ ready: state.ready }),
           }),
         },
