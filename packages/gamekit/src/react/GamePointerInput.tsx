@@ -58,6 +58,44 @@ function advanceSharedCoalescer(
 }
 
 /**
+ * F2 trailing-flush sampler (review fix).
+ *
+ * Mounted only while the coalescer owns a pointer: the frame callback starts
+ * active at creation (autostart), forwards a deferred trailing move whenever
+ * the flush interval elapses, and the component unmounts — unregistering the
+ * callback — when the final pointer exits. No permanent frame callback and
+ * no runtime activation calls.
+ */
+function TrailingFlushSampler({
+  coalescerState,
+  forwardEventOnJS,
+  instrumentation,
+  bindingEpoch,
+}: {
+  readonly coalescerState: SharedValue<PointerCoalescerState>;
+  readonly forwardEventOnJS: (packet: PointerPacket) => void;
+  readonly instrumentation: GamePointerInstrumentation | undefined;
+  readonly bindingEpoch: SharedValue<number>;
+}) {
+  useFrameCallback(() => {
+    'worklet';
+    const batch = advanceSharedCoalescer(coalescerState, {
+      kind: 'flush',
+      nowMs: Date.now(),
+    });
+    for (const forwarded of batch) {
+      instrumentation?.onForwarded?.(
+        forwarded.kind,
+        'pointerId' in forwarded ? forwarded.pointerId : -1,
+        Date.now(),
+      );
+      scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
+    }
+  });
+  return null;
+}
+
+/**
  * Bind one primary pointer to a declared pointer action.
  *
  * Gesture Handler is an implementation detail: the manual gesture activates
@@ -106,42 +144,18 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     bindingEpoch.value = binding.epoch;
   }, [binding, bindingEpoch]);
 
-  // F2: one UI-owned sampler forwards a deferred trailing move from the
-  // frame clock while a pointer is active, so the paddle never trails after
-  // native touch movement pauses. `autostart` is only consulted at creation,
-  // so the callback is created inactive and toggled at runtime with
-  // `setActive` whenever the React mirror of the coalescer's ownership
-  // changes — there is no permanent frame callback after the pointer exits.
-  const [pointerActive, setPointerActive] = useState(false);
+  // The mirror of the coalescer's ownership, set from the worklets on
+  // touch boundaries through the samplerMirrorFromBatch helper.
   const reportPointerActive = useCallback((active: boolean) => {
     setPointerActive(active);
   }, []);
 
-  const frameCallback = useFrameCallback(
-    () => {
-      'worklet';
-      if (coalescerState.value.active === undefined) {
-        return;
-      }
-      const batch = advanceSharedCoalescer(coalescerState, {
-        kind: 'flush',
-        nowMs: Date.now(),
-      });
-      for (const forwarded of batch) {
-        instrumentation?.onForwarded?.(
-          forwarded.kind,
-          'pointerId' in forwarded ? forwarded.pointerId : -1,
-          Date.now(),
-        );
-        scheduleOnRN(forwardEventOnJS, { ...forwarded, epoch: bindingEpoch.value });
-      }
-    },
-    false,
-  );
-
-  useEffect(() => {
-    frameCallback.setActive(pointerActive);
-  }, [frameCallback, pointerActive]);
+  // F2 review: `autostart` is only consulted at creation (changing it later
+  // re-registers but never activates) and `setActive` from an effect proved
+  // unreliable in this stack, so the sampler is a conditionally mounted
+  // component (see TrailingFlushSampler): it mounts with autostart active
+  // exactly while this mirror is true and unmounts when the pointer exits.
+  const [pointerActive, setPointerActive] = useState(false);
 
   // JS-thread handler (never captured by gesture worklets): the binding
   // rejects packets stamped with a stale epoch (layout revision, binding
@@ -358,6 +372,14 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   return (
     <GestureDetector gesture={gesture}>
       <View style={StyleSheet.absoluteFill} />
+      {pointerActive ? (
+        <TrailingFlushSampler
+          coalescerState={coalescerState}
+          forwardEventOnJS={forwardEventOnJS}
+          instrumentation={instrumentation}
+          bindingEpoch={bindingEpoch}
+        />
+      ) : null}
     </GestureDetector>
   );
 }
