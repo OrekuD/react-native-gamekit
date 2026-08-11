@@ -315,6 +315,27 @@ describe('asset store ownership (T7.4)', () => {
     store.dispose();
   });
 
+  it('lookup is descriptor-reference membership, not manifest identity (R9)', async () => {
+    const sharedDescriptor = image(42);
+    const first = defineAssets({ boot: { logo: sharedDescriptor } });
+    const second = defineAssets({ boot: { logo: sharedDescriptor } });
+    const fakes = fakePipelines();
+    const store = createGameAssetStoreCore(first, fakes.pipelines);
+    const lease = await store.acquire({ groups: ['boot'] });
+    // The same declared reference object resolves in the manifest that
+    // declared it...
+    assert.equal(lease.assets.get(first.boot.logo).width, 64);
+    // ...and a descriptor object with identical shape but a different
+    // identity does not (reference membership, not structural equality).
+    const twin = image(42);
+    assert.throws(() => lease.assets.get(twin), /ASSET_UNKNOWN_ASSET/);
+    // The same object declared by a second manifest is still the same
+    // reference: accepted here too.
+    assert.equal(lease.assets.get(second.boot.logo).width, 64);
+    lease.dispose();
+    store.dispose();
+  });
+
   it('the get guard fails clearly after the lease is disposed', async () => {
     const fakes = fakePipelines();
     const store = createGameAssetStoreCore(manifest, fakes.pipelines);

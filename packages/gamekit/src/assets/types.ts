@@ -109,7 +109,15 @@ export type GameAssetManifest<TGroups extends AssetGroupMap = AssetGroupMap> = {
 export type ManifestOf<TDescriptor> =
   TDescriptor extends { readonly [manifestBrand]?: infer TManifest } ? TManifest : never;
 
-/** Loaded-asset lookup keyed by typed descriptor reference. */
+/** Loaded-asset lookup keyed by typed descriptor reference.
+ *
+ * v1 semantics (R9): lookup is descriptor-REFERENCE membership — the exact
+ * descriptor object declared by the manifest. The compile-time brand is
+ * structural, so identically shaped manifests are not nominally distinct;
+ * the runtime reference check is the guarantee, and the type layer still
+ * rejects duplicated string keys and descriptors from differently shaped
+ * manifests.
+ */
 export interface LoadedAssets<TManifest> {
   /** The manifest this store was created from. */
   readonly manifest: TManifest;

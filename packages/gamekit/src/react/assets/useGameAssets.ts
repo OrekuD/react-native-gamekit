@@ -51,9 +51,15 @@ export type GameAssetsState<TManifest extends AssetGroupMap> =
   | { readonly status: 'error'; readonly error: GameAssetError; readonly retry: () => void }
   | { readonly status: 'ready'; readonly assets: LoadedAssets<TManifest> };
 
+/** Deduplicate and sort groups so equivalent reordered/duplicated arrays
+ * map to one key and one acquisition (R6). */
+export function dedupeGroups(groups: readonly string[]): readonly string[] {
+  return [...new Set(groups)].sort();
+}
+
 /** Order-independent group key: equivalent arrays map to one key. */
 export function stableGroupsKey(groups: readonly string[]): string {
-  return [...groups].sort().join('\u0000');
+  return dedupeGroups(groups).join('\u0000');
 }
 
 export function useGameAssets<TManifest extends AssetGroupMap>(
@@ -70,13 +76,11 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
   });
   const storeRef = useRef<HookStore<TManifest> | undefined>(undefined);
   const leaseRef = useRef<GameAssetLease<TManifest> | undefined>(undefined);
-  const retryRef = useRef<() => void>(() => undefined);
   const retry = useCallback(() => {
-    // One user action starts one new attempt; the previous attempt's late
-    // completion can no longer replace the state (the effect re-runs).
+    // R6: one user action starts exactly one new attempt; the same function
+    // identity is exposed in loading and error states.
     setAttempt((current) => current + 1);
   }, []);
-  retryRef.current = retry;
 
   // Ref mirror of the attempt so stale-effect completions are rejected
   // after a retry re-renders with a higher attempt.
@@ -95,15 +99,20 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
       }
     };
 
+    // R6: every attempt owns an AbortController; aborting detaches the
+    // caller and rejects late progress/ready/error from older configs.
+    const controller = new AbortController();
+
     setState({
       status: 'loading',
       progress: 0,
-      retry: () => retryRef.current(),
+      retry: retry,
     });
 
     store
       .acquire({
-        groups: options.groups,
+        groups: dedupeGroups(options.groups),
+        signal: controller.signal,
         onProgress: (progress) => {
           setIfCurrent((previous) =>
             previous.status === 'loading' ? { ...previous, progress } : previous,
@@ -128,11 +137,14 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
           error instanceof GameAssetError
             ? error
             : new GameAssetError('ASSET_DECODE_FAILED', [], error instanceof Error ? error.message : String(error));
-        setState({ status: 'error', error: structured, retry: () => retryRef.current() });
+        setState({ status: 'error', error: structured, retry });
       });
 
     return () => {
       disposed = true;
+      // R6: abort before releasing so no late completion can touch state or
+      // resources, then release the lease and store exactly once.
+      controller.abort();
       leaseRef.current?.dispose();
       leaseRef.current = undefined;
       storeRef.current = undefined;

@@ -70,19 +70,31 @@ export interface GameSpriteProps<
   readonly select: (context: GameSpriteSelectContext<TScenes, TSceneName>) => GameSpriteSelection;
 }
 
-/** Select the frame name for a clip + elapsed time (loop/once semantics). */
+/**
+ * Select the frame name for a clip + elapsed time (loop/once semantics).
+ * Reads the descriptor's animation table; the result is resolved against
+ * the frame rectangles by the caller. Reuses the pure sampler's semantics.
+ */
 export function spriteFrameNameForClip(
-  frames: Readonly<Record<string, unknown>>,
+  animations: Readonly<
+    Record<
+      string,
+      {
+        readonly frames: readonly string[];
+        readonly frameDurationMs: number;
+        readonly mode: 'loop' | 'once';
+      }
+    >
+  >,
   clip: string,
   elapsedMs: number,
 ): string {
   'worklet';
-  const source = frames as Readonly<Record<string, { readonly frames?: readonly string[]; readonly frameDurationMs?: number; readonly mode?: 'loop' | 'once' }>>;
-  const animation = source[clip];
-  if (animation === undefined || animation.frames === undefined || animation.frames.length === 0) {
+  const animation = animations[clip];
+  if (animation === undefined || animation.frames.length === 0) {
     return clip;
   }
-  const duration = animation.frameDurationMs ?? 1;
+  const duration = animation.frameDurationMs;
   const count = animation.frames.length;
   const index =
     animation.mode === 'once'
@@ -148,9 +160,12 @@ export function GameSprite<
     if (source.descriptor.kind !== 'sprite-sheet') {
       return undefined;
     }
+    // R3: the sampler reads the descriptor's animation table (clips), never
+    // the frame-rectangle map; the returned frame name is resolved against
+    // the frame rectangles in the Sprite's rect modifier.
     const sheet = source as LoadedSpriteSheet;
     return spriteFrameNameForClip(
-      sheet.frames,
+      sheet.descriptor.animations,
       selectionValue.clip,
       selectionValue.elapsedMs ?? 0,
     );

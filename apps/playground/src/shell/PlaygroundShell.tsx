@@ -16,7 +16,10 @@ import type {
 import { createBrickBreakerSession } from '../games/brickBreakerGame';
 import { createBootstrapGameSession } from '../games/bootstrapGame';
 import { createLabSession } from '../perf/labSession';
-import { createSpriteFieldSession } from '../games/spriteFieldGame';
+import { createSpriteFieldSession, spriteFieldAssets } from '../games/spriteFieldGame';
+import { createIdleSession } from '../games/idleSession';
+import { useGameAssets } from 'react-native-gamekit/react';
+import type { GameAssetsState } from 'react-native-gamekit/react';
 import type { PlaygroundGameId } from '../catalog/games';
 import { usePlaygroundStore } from '../state/playgroundStore';
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps';
@@ -37,6 +40,8 @@ import { SpriteFieldRenderer } from '../renderers/SpriteFieldRenderer';
 
 /** The GameView's scene-map parameter when the surface treats games opaquely. */
 type SceneDefinitionMarkerMap = Record<string, SceneDefinitionMarker>;
+
+
 
 const FADE_DURATION_MS = 180;
 
@@ -178,6 +183,9 @@ function GameSurface({
   readonly showPointer: boolean;
 }) {
   const reduceMotion = useReducedMotion();
+  // Explicit two-state visibility: opening fades to 1; closing fades to 0
+  // (or snaps when reduced motion is enabled). The surface never stays at 1
+  // just because the component itself did not remount (R1).
   const opacity = useSharedValue(0);
   // The lab transfers run sessions to the shell. A detached/replaced session
   // remains alive until the render without it commits, then this owner
@@ -229,17 +237,55 @@ function GameSurface({
 
   useEffect(() => {
     if (reduceMotion) {
-      opacity.value = 1;
+      opacity.value = hidden ? 0 : 1;
       return;
     }
-    opacity.value = withTiming(1, { duration: FADE_DURATION_MS });
-  }, [opacity, reduceMotion]);
+    opacity.value = withTiming(hidden ? 0 : 1, { duration: FADE_DURATION_MS });
+  }, [opacity, reduceMotion, hidden]);
+
+  // R2: asset-backed games create an asset-load request at the shell level,
+  // not a running session. The immutable attachment — one generation, one
+  // session, the exact loaded lease — is published on readiness only; the
+  // loading/error UI is representable before any gameplay session exists.
+  const assetBacked = gameId === 'sprite-field';
+  const assetState = useGameAssets(
+    spriteFieldAssets,
+    { groups: ['boot', 'gameplay'] },
+  );
+  const [attachment, setAttachment] = useState<{
+    readonly generation: number;
+    readonly session: GameSession;
+    readonly assets: import('react-native-gamekit').LoadedAssets<typeof spriteFieldAssets>;
+  } | null>(null);
+  const attachmentGenerationRef = useRef(0);
+  // R5: a monotonic binding generation for the pointer adapter — never derive
+  // identity through object stringification (sessions stringify identically).
+  const [bindingGeneration, setBindingGeneration] = useState(0);
+  const bindingGenerationRef = useRef(0);
+
+  useEffect(() => {
+    if (!assetBacked || assetState.status !== 'ready') {
+      return;
+    }
+    attachmentGenerationRef.current += 1;
+    const generation = attachmentGenerationRef.current;
+    const session = createSpriteFieldSession() as unknown as GameSession;
+    setAttachment({ generation, session, assets: assetState.assets });
+  }, [assetBacked, assetState]);
 
   const content = GAME_CONTENTS[gameId];
   const Content = content.component;
   const Renderer = content.renderer;
   const activeRunSurface = gameId === 'perf-lab' ? runSurface.current : undefined;
-  const renderedGame = activeRunSurface?.session ?? game;
+  const renderedGame =
+    activeRunSurface?.session ?? (assetBacked ? (attachment?.session ?? game) : game);
+  // R5: bump the binding generation whenever the rendered session identity
+  // changes (lab runs, asset readiness, and game switches).
+  useEffect(() => {
+    bindingGenerationRef.current += 1;
+    setBindingGeneration(bindingGenerationRef.current);
+  }, [renderedGame]);
+  const assets = assetBacked ? (assetState.status === 'ready' ? assetState.assets : undefined) : undefined;
 
   useEffect(() => {
     if (hidden) {
@@ -254,16 +300,17 @@ function GameSurface({
   }, [hidden, renderedGame]);
 
   return (
-    <View
+    <Animated.View
       accessibilityElementsHidden={hidden}
       accessibilityViewIsModal={!hidden}
       importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
       onAccessibilityEscape={onExit}
       pointerEvents={hidden ? 'none' : 'auto'}
-      style={styles.gameSurface}
+      style={[styles.gameSurface, { opacity }]}
     >
       <GameView
         game={renderedGame}
+        assets={assets as never}
         renderer={Renderer as unknown as ComponentType<GameRendererProps<SceneDefinitionMarkerMap>>}
         instrumentation={activeRunSurface?.view}
         style={StyleSheet.absoluteFill}
@@ -273,7 +320,7 @@ function GameSurface({
             // Each binding generation gets a fresh RNGH detector: recognizer
             // delivery proved unreliable across in-place session swaps while
             // the canvas itself stays mounted (the one-canvas invariant).
-            key={String(renderedGame)}
+            key={bindingGeneration}
             game={renderedGame as GameSession<SceneDefinitionMarkerMap, Record<string, PointerInputAction>>}
             action="primary"
             instrumentation={activeRunSurface?.pointer}
@@ -284,9 +331,10 @@ function GameSurface({
           onExit={onExit}
           onOpenGame={onOpenGame}
           onRunSurfaceEvent={handleRunSurfaceEvent}
+          assetState={assetBacked ? assetState : undefined}
         />
       </GameView>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -329,7 +377,9 @@ function createSessionFor(gameId: PlaygroundGameId): GameSession {
     return createLabSession() as unknown as GameSession;
   }
   if (gameId === 'sprite-field') {
-    return createSpriteFieldSession() as unknown as GameSession;
+    // R2: navigation to the asset-backed game creates a load request, not a
+    // running session. The gameplay session is created only on readiness.
+    return createIdleSession() as unknown as GameSession;
   }
   return createBootstrapGameSession() as unknown as GameSession;
 }

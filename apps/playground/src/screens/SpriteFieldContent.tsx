@@ -12,14 +12,15 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useGameAssets } from 'react-native-gamekit/react';
+
 
 import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
-import { spriteFieldAssets, type SpriteFieldSession, type PlaySnapshot } from '../games/spriteFieldGame';
+import { type SpriteFieldSession, type PlaySnapshot } from '../games/spriteFieldGame';
 
-export default function SpriteFieldContent({ game, onExit }: PlaygroundGameContentProps) {
+export default function SpriteFieldContent({ game, onExit, assetState }: PlaygroundGameContentProps) {
   const session = game as SpriteFieldSession;
-  const state = useGameAssets(spriteFieldAssets, { groups: ['boot', 'gameplay'] });
+  // R2: the shell owns the asset load; the content consumes the status.
+  const state = assetState ?? { status: 'loading' as const, progress: 0, retry: () => undefined };
   const [hud, setHud] = useState<{ score: number; clip: string }>(() => {
     const play = session.getRenderFrame().current as PlaySnapshot;
     return { score: play.score, clip: play.animation.clip };

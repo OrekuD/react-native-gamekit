@@ -98,6 +98,11 @@ export function SpriteBatch<
   anchor = { x: 0, y: 0 },
 }: SpriteBatchProps<TScenes, TSceneName, TItem>) {
   const image = source.image as SkImage;
+  if (!Number.isInteger(capacity) || capacity <= 0) {
+    throw new Error(
+      `SpriteBatch capacity must be a positive integer, got ${String(capacity)}`,
+    );
+  }
   const rects = useRectBuffer(capacity, (rect) => {
     'worklet';
     rect.setXYWH(0, 0, 0, 0);
@@ -107,21 +112,10 @@ export function SpriteBatch<
     xform.set(1, 0, 0, 0);
   });
 
-  // The batch's own UI mapper: one derived value reads the committed
-  // snapshot, runs the author's select + write per item, and reports the
-  // active count. Buffers are mutated in place; no objects are allocated
-  // per item per frame beyond the item array the select returns.
-  const activeCount = useDerivedValue(() => {
-    'worklet';
-    const envelope = commit.value;
-    if (envelope.scene !== scene) {
-      return 0;
-    }
-    const items = select({
-      current: envelope.current as never as SceneSnapshot<TScenes[TSceneName]>,
-      alpha: alpha.value,
-    });
-    const writeApi: SpriteBatchWrite = {
+  // R7: one stable write coordinator for the batch lifetime; the per-update
+  // worklet only calls it (no per-frame coordinator allocation).
+  const writeApi: SpriteBatchWrite = useMemo(
+    () => ({
       set: (index, frame, x, y, rotation, scale, visible = true) => {
         'worklet';
         if (index < 0 || index >= capacity) {
@@ -159,12 +153,32 @@ export function SpriteBatch<
         });
         xformSlot.set(rsxform.scos, rsxform.ssin, rsxform.tx, rsxform.ty);
       },
-    };
-    const count = Math.min(items.length, capacity);
+    }),
+    // The buffers, source, and anchor are stable for the mounted batch.
+    [capacity, rects, xforms, source, anchor.x, anchor.y],
+  );
+
+  // The batch's own UI mapper: one derived value reads the committed
+  // snapshot, runs the author's select + write per item, and reports the
+  // active count. Buffers are mutated in place; no objects are allocated
+  // per item per frame beyond the item array the select returns.
+  const activeCount = useDerivedValue(() => {
+    'worklet';
+    const envelope = commit.value;
+    if (envelope.scene !== scene) {
+      return 0;
+    }
+    const items = select({
+      current: envelope.current as never as SceneSnapshot<TScenes[TSceneName]>,
+      alpha: alpha.value,
+    });
+    if (items.length > capacity) {
+      throw new Error(
+        `SpriteBatch overflow: ${items.length} items selected with capacity ${capacity}`,
+      );
+    }
+    const count = items.length;
     for (let index = 0; index < items.length; index += 1) {
-      if (index >= capacity) {
-        break;
-      }
       const item = items[index];
       if (item !== undefined) {
         write(writeApi, item, index);
@@ -178,7 +192,7 @@ export function SpriteBatch<
       }
     }
     return count;
-  }, [commit, alpha, scene, select, write, source, anchor.x, anchor.y, capacity, rects, xforms]);
+  }, [commit, alpha, scene, select, write, writeApi]);
 
   void activeCount;
 

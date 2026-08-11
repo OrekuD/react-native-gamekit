@@ -134,8 +134,8 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
   const resources = new Map<string, ResourceEntry>();
   let disposed = false;
   let nextAttemptToken = 1;
-  /** Handles acquired by the current attempt and not yet committed to a lease. */
-  let pendingAttempt: Attempt | undefined;
+  /** Per-attempt ownership is explicit: the attempt object is passed through
+   * every resolve/decode/validate operation; no shared singleton (R4). */
 
   function assertLive(): void {
     if (disposed) {
@@ -224,7 +224,7 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
 
   async function acquireOne(
     asset: LogicalAsset,
-    token: number,
+    attempt: Attempt,
     signal: AbortSignal | undefined,
   ): Promise<void> {
     const uri = await Promise.race([pipelines.resolve(asset.descriptor.source), abortPromise(signal)]);
@@ -241,7 +241,7 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     }
     // Record ownership BEFORE any further await or validation so every
     // reference has a single release path.
-    pendingAttempt?.acquired.set(asset.key, uri);
+    attempt.acquired.set(asset.key, uri);
     const entry = resources.get(uri);
     if (entry !== undefined) {
       entry.logicalKeys.add(asset.key);
@@ -254,8 +254,8 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
         handle.height(),
       );
     }
-    void token;
   }
+
 
   const acquire = async (options: AcquireOptions): Promise<GameAssetLease<TManifest>> => {
     assertLive();
@@ -287,7 +287,6 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     const token = nextAttemptToken;
     nextAttemptToken += 1;
     const attempt: Attempt = { token, acquired: new Map() };
-    pendingAttempt = attempt;
 
     const loaded = new Map<string, string>();
     try {
@@ -295,13 +294,10 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       const total = requested.length;
       for (const asset of requested) {
         throwIfAborted();
-        await acquireOne(asset, token, signal);
+        await acquireOne(asset, attempt, signal);
         loaded.set(asset.key, asset.key);
         completed += 1;
         options.onProgress?.(completed / total);
-      }
-      if (pendingAttempt === attempt) {
-        pendingAttempt = undefined;
       }
       return createLease(loaded, () => {
         for (const key of loaded.keys()) {
@@ -311,9 +307,6 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     } catch (error) {
       // Release every reference this attempt acquired exactly once; entries
       // still leased by a previous lease keep their references.
-      if (pendingAttempt === attempt) {
-        pendingAttempt = undefined;
-      }
       for (const logicalKey of attempt.acquired.keys()) {
         releaseLogical(logicalKey);
       }
@@ -362,10 +355,15 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
         }
         const entry = findLoadedFor(descriptor, loaded);
         if (entry === undefined) {
+          // R9: v1 lookup is descriptor-reference membership — the exact
+          // descriptor object the manifest declared — not a nominal manifest
+          // identity. Identically shaped manifests share the structural type,
+          // so the type layer cannot distinguish them; the runtime reference
+          // check is the guarantee.
           throw new GameAssetError(
             'ASSET_UNKNOWN_ASSET',
             [],
-            'descriptor does not belong to this manifest or group selection',
+            'descriptor is not a reference declared by this manifest and group selection',
           );
         }
         return entry as TDescriptor extends { readonly kind: 'sprite-sheet' }

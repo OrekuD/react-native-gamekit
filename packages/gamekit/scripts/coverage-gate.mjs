@@ -20,6 +20,14 @@ const TRACKED_MODULES = [
   'pointerCoalescer.ts',
   'pointerContainment.ts',
   'deepFreeze.ts',
+  // Task 7 executable modules (R8): the asset manifest/validation, the
+  // animation sampler/state, the sprite transform math, and the store.
+  'defineAssets.ts',
+  'validation.ts',
+  'sampleSpriteClip.ts',
+  'spriteAnimationState.ts',
+  'spriteTransform.ts',
+  'createGameAssetStore.ts',
   // diagnostics.ts is intentionally excluded: it is a type-only interface
   // (F4 gating) with no runtime statements; its contract is enforced by the
   // session's zero-read tests, not by line coverage.
@@ -27,7 +35,7 @@ const TRACKED_MODULES = [
 
 const output = execFileSync(
   process.execPath,
-  ['--import', 'tsx', '--experimental-test-coverage', '--test', 'test/*.test.ts'],
+  ['--import', 'tsx', '--experimental-test-coverage', '--test', 'test/*.test.ts', 'test/*.test.tsx'],
   { cwd: new URL('..', import.meta.url).pathname, encoding: 'utf8' },
 );
 

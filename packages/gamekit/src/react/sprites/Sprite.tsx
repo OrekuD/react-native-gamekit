@@ -29,7 +29,7 @@ export interface SpriteProps {
   /** The loaded asset; the renderer borrows and never disposes it. */
   readonly source: LoadedImage | LoadedSpriteSheet;
   /** Frame name for sprite sheets; ignored for full images. */
-  readonly frame?: string;
+  readonly frame?: SpriteAnimatableString;
   /** Clip name for sprite sheets; the frame is selected from it. */
   readonly clip?: SpriteAnimatableString;
   /** Elapsed milliseconds within the clip (frame selection). */
@@ -103,12 +103,14 @@ export function Sprite({
     'worklet';
     const clipValue = typeof clip === 'string' ? clip : clip?.value;
     const elapsedValue = typeof elapsedMs === 'number' ? elapsedMs : elapsedMs?.value;
-    let name: string | undefined = frame;
+    let name: string | undefined = typeof frame === 'string' ? frame : frame?.value;
     if (name === undefined && source.descriptor.kind === 'sprite-sheet' && clipValue !== undefined) {
       const sheet = source as LoadedSpriteSheet;
-      const animation = (sheet.frames as unknown as Record<string, { readonly frames?: readonly string[]; readonly frameDurationMs?: number; readonly mode?: 'loop' | 'once' }>)[clipValue];
-      if (animation !== undefined && animation.frames !== undefined && animation.frames.length > 0) {
-        const duration = animation.frameDurationMs ?? 1;
+      // R3: resolve the clip through the descriptor's animation table, then
+      // the returned frame name through the frame rectangles below.
+      const animation = sheet.descriptor.animations[clipValue];
+      if (animation !== undefined && animation.frames.length > 0) {
+        const duration = animation.frameDurationMs;
         const count = animation.frames.length;
         const index =
           animation.mode === 'once'
@@ -131,7 +133,8 @@ export function Sprite({
     rect.setXYWH(frameRect.x, frameRect.y, frameRect.width, frameRect.height);
   };
 
-  const frameSize = useMemo(() => resolveSpriteFrameRect(source, frame), [source, frame]);
+  const staticFrame = typeof frame === 'string' ? frame : undefined;
+  const frameSize = useMemo(() => resolveSpriteFrameRect(source, staticFrame), [source, staticFrame]);
   const input: SpriteTransformInput = {
     x,
     y,
