@@ -31,6 +31,12 @@ export const PLAYGROUND_GAMES = [
     description: 'Deterministic diagnostics: counters, frame deltas, stall probe.',
     label: 'Run',
   },
+  {
+    id: 'sprite-field',
+    title: 'Sprite Field',
+    description: 'A retained animated character over an Atlas batch field.',
+    label: 'Play',
+  },
 ] as const;
 
 /** Every canonical game id, used for runtime validation at the untyped boundary. */

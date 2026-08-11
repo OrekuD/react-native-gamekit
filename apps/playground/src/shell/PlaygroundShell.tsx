@@ -16,6 +16,7 @@ import type {
 import { createBrickBreakerSession } from '../games/brickBreakerGame';
 import { createBootstrapGameSession } from '../games/bootstrapGame';
 import { createLabSession } from '../perf/labSession';
+import { createSpriteFieldSession } from '../games/spriteFieldGame';
 import type { PlaygroundGameId } from '../catalog/games';
 import { usePlaygroundStore } from '../state/playgroundStore';
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps';
@@ -29,8 +30,10 @@ import HomeScreen from '../screens/HomeScreen';
 import BrickBreakerContent from '../screens/BrickBreakerContent';
 import BootstrapContent from '../screens/BootstrapContent';
 import LabContent from '../perf/LabContent';
+import SpriteFieldContent from '../screens/SpriteFieldContent';
 import { BrickBreakerRenderer } from '../renderers/BrickBreakerRenderer';
 import { BootstrapRenderer } from '../renderers/BootstrapRenderer';
+import { SpriteFieldRenderer } from '../renderers/SpriteFieldRenderer';
 
 /** The GameView's scene-map parameter when the surface treats games opaquely. */
 type SceneDefinitionMarkerMap = Record<string, SceneDefinitionMarker>;
@@ -304,6 +307,10 @@ const GAME_CONTENTS: Record<PlaygroundGameId, GameContentEntry> = {
     component: LabContent,
     renderer: BrickBreakerRenderer as unknown as ComponentType<GameRendererProps<never>>,
   },
+  'sprite-field': {
+    component: SpriteFieldContent,
+    renderer: SpriteFieldRenderer as unknown as ComponentType<GameRendererProps<never>>,
+  },
 };
 
 function createSessionFor(gameId: PlaygroundGameId): GameSession {
@@ -317,11 +324,14 @@ function createSessionFor(gameId: PlaygroundGameId): GameSession {
   if (gameId === 'perf-lab') {
     return createLabSession() as unknown as GameSession;
   }
+  if (gameId === 'sprite-field') {
+    return createSpriteFieldSession() as unknown as GameSession;
+  }
   return createBootstrapGameSession() as unknown as GameSession;
 }
 
 function hasPointerAction(gameId: PlaygroundGameId | null): boolean {
-  return gameId === 'brick-breaker' || gameId === 'perf-lab';
+  return gameId === 'brick-breaker' || gameId === 'perf-lab' || gameId === 'sprite-field';
 }
 
 function disposeSession(session: GameSession): void {
