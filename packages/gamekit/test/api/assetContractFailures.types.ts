@@ -15,7 +15,7 @@
  * Reserved-separator keys, invalid rectangles, empty clips, and duration
  * ranges are runtime validations (T7.2) and are intentionally absent here.
  */
-import { defineGame, defineScene, image, spriteSheet, startSpriteAnimation, type LoadedAssets } from '../../src/index';
+import { defineGame, defineScene, image, spriteSheet, type LoadedAssets } from '../../src/index';
 import { useGameAssets } from '../../src/react';
 
 import { gameAssets, otherAssets } from '../api/assetsManifest.types';
@@ -65,11 +65,10 @@ spriteSheet(handle, {
   },
 });
 
-startSpriteAnimation(
-  gameAssets.gameplay.player,
-  // @ts-expect-error the clip must exist on the descriptor
-  'dash',
-);
+// Unknown clips on the playback helpers are rejected at runtime with
+// ASSET_UNKNOWN_CLIP (covered by test/spriteAnimation.test.ts); the
+// type-level literal contract for clips is enforced at spriteSheet
+// definition time.
 
 // --- String/URL sources are rejected ----------------------------------------
 

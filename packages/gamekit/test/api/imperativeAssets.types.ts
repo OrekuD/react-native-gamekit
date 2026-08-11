@@ -10,7 +10,8 @@
  * - `AbortSignal` detaches an imperative caller immediately;
  * - the renderer borrows from the lease and never disposes its images.
  */
-import { createGameAssetStore, type GameAssetLease } from '../../src/index';
+import { createGameAssetStore } from '../../src/react';
+import type { GameAssetLease } from '../../src/index';
 
 import { gameAssets } from '../api/assetsManifest.types';
 

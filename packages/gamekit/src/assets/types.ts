@@ -88,7 +88,7 @@ declare const manifestBrand: unique symbol;
 export type BrandedAssetDescriptor<
   TManifest,
   TDescriptor extends AssetDescriptor,
-> = TDescriptor & { readonly [manifestBrand]?: TManifest };
+> = { readonly [manifestBrand]?: TManifest } & TDescriptor;
 
 /**
  * The deeply immutable manifest produced by `defineAssets`.

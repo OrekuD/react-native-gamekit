@@ -28,7 +28,7 @@ export {
   sampleSpriteClipFrameName,
   spriteClipDurationMs,
 } from './sprites/sampleSpriteClip';
-export type { SpriteAnimationState } from './sprites/spriteAnimationState';
+export type { SpriteAnimationState, SpriteClipNames } from './sprites/spriteAnimationState';
 export { defineAssets, image, spriteSheet } from './assets/defineAssets';
 export { GameAssetError } from './assets/errors';
 export type {

@@ -13,9 +13,17 @@ export type GameAssetErrorCode =
   | 'ASSET_INVALID_FRAME_RECT'
   | 'ASSET_EMPTY_CLIP'
   | 'ASSET_UNKNOWN_FRAME'
+  | 'ASSET_UNKNOWN_CLIP'
   | 'ASSET_INVALID_DURATION'
   | 'ASSET_INVALID_MODE'
-  | 'ASSET_UNSUPPORTED_SOURCE';
+  | 'ASSET_UNSUPPORTED_SOURCE'
+  | 'ASSET_UNKNOWN_GROUP'
+  | 'ASSET_UNKNOWN_ASSET'
+  | 'ASSET_RESOLVE_FAILED'
+  | 'ASSET_DECODE_FAILED'
+  | 'ASSET_FRAME_OUT_OF_BOUNDS'
+  | 'ASSET_ABORTED'
+  | 'ASSET_STORE_DISPOSED';
 
 /** A structured asset definition or loading failure. */
 export class GameAssetError extends Error {

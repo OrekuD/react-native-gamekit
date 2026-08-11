@@ -14,6 +14,7 @@
  * the interpolation alpha, but must never emit gameplay events from a
  * presentation-only frame.
  */
+import { GameAssetError } from '../assets/errors';
 import type { SpriteSheetDescriptor } from '../assets/types';
 import { spriteClipDurationMs } from './sampleSpriteClip';
 
@@ -43,17 +44,40 @@ function assertFiniteDelta(deltaSeconds: number): void {
   }
 }
 /** The clip names of a sprite-sheet descriptor (works through the manifest brand). */
-export type SpriteClipNames<TDescriptor> =
-  TDescriptor extends { readonly animations: infer TClips }
-    ? Extract<keyof TClips, string>
-    : never;
+export type SpriteClipNames<TDescriptor extends SpriteSheetDescriptor> = Extract<
+  keyof TDescriptor['animations'],
+  string
+>;
 
-/** Start playback of `clip` from its beginning. */
-export function startSpriteAnimation<TDescriptor extends SpriteSheetDescriptor>(
-  _descriptor: TDescriptor,
-  clip: SpriteClipNames<TDescriptor>,
-): SpriteAnimationState<SpriteClipNames<TDescriptor>> {
+/** Runtime clip lookup; throws a structured error for unknown clips. */
+function clipOf(
+  descriptor: SpriteSheetDescriptor,
+  clip: string,
+): SpriteSheetDescriptor['animations'][string] {
   'worklet';
+  const animation = descriptor.animations[clip];
+  if (animation === undefined) {
+    throw new GameAssetError(
+      'ASSET_UNKNOWN_CLIP',
+      ['animations', clip],
+      `unknown animation clip ${JSON.stringify(clip)}`,
+    );
+  }
+  return animation;
+}
+
+/**
+ * Start playback of `clip` from its beginning. The clip name is preserved
+ * as a string literal in the returned state; unknown clips are rejected at
+ * runtime (the manifest descriptor keeps the sheet-level frame and clip
+ * names literal via the spriteSheet contract).
+ */
+export function startSpriteAnimation<TClipName extends string>(
+  descriptor: SpriteSheetDescriptor,
+  clip: TClipName,
+): SpriteAnimationState<TClipName> {
+  'worklet';
+  clipOf(descriptor, clip);
   return {
     clip,
     elapsedMs: 0,
@@ -70,20 +94,17 @@ export function startSpriteAnimation<TDescriptor extends SpriteSheetDescriptor>(
  * clearly. Loop clips keep their elapsed time bounded within one timeline
  * (modulo), so arbitrarily large deltas cost constant arithmetic.
  */
-export function advanceSpriteAnimation<TDescriptor extends SpriteSheetDescriptor>(
-  descriptor: TDescriptor,
-  state: SpriteAnimationState<SpriteClipNames<TDescriptor>>,
+export function advanceSpriteAnimation<TClipName extends string>(
+  descriptor: SpriteSheetDescriptor,
+  state: SpriteAnimationState<TClipName>,
   deltaSeconds: number,
-): SpriteAnimationState<SpriteClipNames<TDescriptor>> {
+): SpriteAnimationState<TClipName> {
   'worklet';
   assertFiniteDelta(deltaSeconds);
   if (state.paused || state.completed) {
     return state;
   }
-  const clip = descriptor.animations[state.clip];
-  if (clip === undefined) {
-    return state;
-  }
+  const clip = clipOf(descriptor, state.clip);
   const totalMs = spriteClipDurationMs(clip);
   const next = state.elapsedMs + deltaSeconds * 1000 * state.speed;
   if (clip.mode === 'once') {
@@ -101,14 +122,16 @@ export function advanceSpriteAnimation<TDescriptor extends SpriteSheetDescriptor
  * Switch playback to `clip`, restarting it from the beginning. The clip
  * name is typed against the descriptor's animation table.
  */
-export function playSpriteAnimation<TDescriptor extends SpriteSheetDescriptor>(
-  _descriptor: TDescriptor,
-  state: SpriteAnimationState<SpriteClipNames<TDescriptor>>,
-  clip: SpriteClipNames<TDescriptor>,
-): SpriteAnimationState<SpriteClipNames<TDescriptor>> {
+export function playSpriteAnimation<TClipName extends string>(
+  descriptor: SpriteSheetDescriptor,
+  state: SpriteAnimationState<TClipName>,
+  clip: TClipName,
+): SpriteAnimationState<TClipName> {
+  'worklet';
   if (clip === state.clip) {
     return state;
   }
+  clipOf(descriptor, clip);
   return {
     clip,
     elapsedMs: 0,

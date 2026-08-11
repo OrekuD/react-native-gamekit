@@ -176,6 +176,19 @@ describe('animation playback state (T7.3)', () => {
     assert.throws(() => advanceSpriteAnimation(descriptor, state, Number.POSITIVE_INFINITY), /finite/);
   });
 
+  it('rejects unknown clips at runtime with a structured error', () => {
+    const descriptor = sheet();
+    assert.throws(
+      () => startSpriteAnimation(descriptor, 'dash' as 'idle' | 'pop' | 'single'),
+      /ASSET_UNKNOWN_CLIP/,
+    );
+    const state = startSpriteAnimation(descriptor, 'idle');
+    assert.throws(
+      () => playSpriteAnimation(descriptor, state, 'dash' as 'idle' | 'pop' | 'single'),
+      /ASSET_UNKNOWN_CLIP/,
+    );
+  });
+
   it('playback helpers are worklet-compatible and capture no native objects', () => {
     const descriptor = sheet();
     const state = startSpriteAnimation(descriptor, 'idle');
