@@ -21,11 +21,12 @@ import {
   type SpriteSheetDescriptor,
 } from '../src/index';
 
-// The static module handle is a number in React Native. `require` of a
-// missing file never runs here: this file is type-checked only.
-const logo = require('./assets/logo.png') as number;
-const playerSheet = require('./assets/player.png') as number;
-const enemiesSheet = require('./assets/enemies.png') as number;
+// The static module handle is the number returned by `require(...)` in
+// React Native (`image(require('./assets/logo.png'))`). This file is
+// type-checked only, so the handles are plain numeric constants.
+const logo = 42;
+const playerSheet = 43;
+const enemiesSheet = 44;
 
 export const gameAssets = defineAssets({
   boot: {

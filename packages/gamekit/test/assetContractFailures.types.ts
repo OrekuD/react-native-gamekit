@@ -15,12 +15,12 @@
  * Reserved-separator keys, invalid rectangles, empty clips, and duration
  * ranges are runtime validations (T7.2) and are intentionally absent here.
  */
-import { defineAssets, defineGame, defineScene, image, spriteSheet, startSpriteAnimation } from '../src/index';
+import { defineGame, defineScene, image, spriteSheet, startSpriteAnimation } from '../src/index';
 import { useGameAssets } from '../src/react';
 
 import { gameAssets, otherAssets } from './assetsManifest.types';
 
-const handle = require('./assets/logo.png') as number;
+const handle = 42; // static require(...) module handle
 
 // --- Unknown group names ----------------------------------------------------
 
