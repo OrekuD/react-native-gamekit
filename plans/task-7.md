@@ -647,18 +647,33 @@ or performance-feedback changes into the asset implementation commits.
   and Atlas batch exist.
 - [ ] Record exact RN, Expo, Skia, Reanimated, Worklets, RNGH, `expo-asset`, iOS,
   and Android versions that Task 7 starts from.
-- [ ] Confirm root imports remain headless and React Native resolves package
+- [x] Confirm root imports remain headless and React Native resolves package
   source while default Node/package resolution uses built output.
 
-#### Done when
+#### Done — T7.0 gate passed (2026-08-11)
 
-- Existing work is attributable and Task 7 starts from a known commit.
-- The current physical-touch regression is not present.
-- The baseline and dependency table have a stable location in the existing
-  performance docs.
-- No Task 7 feature code is included in this gate commit.
-- The existing frame pipeline is not reopened unless a later sprite benchmark
-  identifies a new measured bottleneck.
+- The dirty tree was split into attributable commits: session pointer-preserving
+  transitions, F2/F3 pointer adapter, package source resolution, GameView
+  context stabilization, portrait Brick Breaker + perf-lab definition, docs
+  guide, playground config, F1 lab fixes, F4 diagnostics, F5 deep-freeze keys,
+  F6 binding epochs (SHAs recorded in `plans/performance-tasks.md`).
+- F1–F6 reconciled with code + evidence in `plans/performance-tasks.md` (F7
+  stays device-gated and open).
+- Live simulator baseline (dev-mode, iPhone 17 Pro Max simulator, iOS 26.5)
+  through the mounted pipeline: idle-active display 299 / commits 298 / ui
+  16.63 ms p50; engine-drag commits 299, input-to-commit 17.00 ms p50/p95/p99,
+  ui 16.63; native-drag raw 58 / forwarded 39 / sampled 297 / committed 295 /
+  presented 295, input→present 16/33/34 ms; stall display 289 / commits 289 /
+  catch-up 4 / ui 16.63 p50.
+- Dependency snapshot Task 7 starts from: React Native 0.86.2, Expo SDK 57
+  (expo ~57.0.10), React 19.2.3, Skia 2.11.0, Reanimated 4.5.3, Worklets
+  0.10.3, RNGH 3.1.0, `expo-asset` ~57.0.8 (peer-aligned), Safe Area Context
+  ~5.7.0, iOS 26.5 simulator / Android builds pending the device matrix.
+- Headless root import proven: requiring `react-native-gamekit` loads no
+  Expo/Skia/Reanimated/Gesture-Handler module; Metro consumes package `src/`
+  while Node resolves built `lib/`.
+- No Task 7 feature code landed in this gate.
+
 
 ---
 
