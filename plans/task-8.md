@@ -574,6 +574,17 @@ the per-binding presentation/pointer layer that must reset for a new session.
       back-before-start, play/back, reopen freshness; SF close-while-loading,
       ready, reopen cycles; lab attach/close/reopen; rapid open/close ×6 —
       all green, zero redboxes).
+- [x] T8.9 follow-up (native hit testing): the gameplay stage is
+      `pointerEvents="box-none"` (rendered from the layout contract; the
+      headless test now asserts the rendered policy and the source wiring).
+      Delivery was restored (lab raw 0 → 2: the touch down reaches the
+      pointer adapter), but RNGH 3.1 on the iOS 26.5 simulator delivers at
+      most down/up edges and no move events — the paddle cannot track on
+      the simulator. The whole chain (coalescer begin/move/end → layout
+      epoch → binding dispatch → session input) is verified consistent;
+      this is the RNGH-simulator delivery limitation class already listed
+      in the device matrix and stays **device-gated** for the drag
+      acceptance rows.
 - [ ] Validate on a physical iPhone and iPad when hardware is available —
       **device-gated**.
 - [ ] Validate Android hardware back and touch interaction on an Android

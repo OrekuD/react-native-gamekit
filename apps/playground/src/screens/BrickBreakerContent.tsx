@@ -75,7 +75,11 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
         <View aria-hidden style={styles.topBarSide} />
       </View>
 
-      <View style={styles.stage} testID={BRICK_BREAKER_LAYOUT.stage.testID}>
+      <View
+        pointerEvents={BRICK_BREAKER_LAYOUT.stage.pointerEvents}
+        style={styles.stage}
+        testID={BRICK_BREAKER_LAYOUT.stage.testID}
+      >
         <GameHud hud={hud} />
 
         {hud.awaitingStart ? (
