@@ -6,7 +6,7 @@
  * for the enemy field. No sprite position or animation frame is held in
  * React state; the select mappers run on the UI runtime.
  */
-import { GameSprite, GameWorld2D, SpriteBatch, type GameRendererProps } from 'react-native-gamekit/react';
+import { GameSprite, GameWorld2D, SpriteBatch, type GameRendererProps } from 'rn-gamekit/react';
 import type { SharedValue } from 'react-native-reanimated';
 
 import { spriteFieldAssets, type PlaySnapshot, type SpriteFieldDefinition } from './spriteFieldGame';

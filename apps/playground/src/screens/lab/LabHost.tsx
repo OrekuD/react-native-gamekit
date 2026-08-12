@@ -21,9 +21,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { runOnUI, useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import type { GameSession } from 'react-native-gamekit';
-import type { GamePointerInstrumentation, GameViewInstrumentation } from 'react-native-gamekit/react';
-import { createAnimationFrameDriver, createGameSessionWithDriver } from 'react-native-gamekit/testing';
+import type { GameSession } from 'rn-gamekit';
+import type { GamePointerInstrumentation, GameViewInstrumentation } from 'rn-gamekit/react';
+import { createAnimationFrameDriver, createGameSessionWithDriver } from 'rn-gamekit/testing';
 
 import {
   brickBreakerPerformanceDefinition,

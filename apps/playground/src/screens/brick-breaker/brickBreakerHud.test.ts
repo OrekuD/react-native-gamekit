@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { hudEqual, selectHud } from './brickBreakerHud.ts';
 import { brickBreakerDefinition } from './brickBreakerGame.ts';
-import { createGameSessionWithDriver, ManualFrameDriver } from 'react-native-gamekit/testing';
+import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
 
 function makePlayFrame(score: number): Parameters<typeof selectHud>[0] {
   const driver = new ManualFrameDriver();

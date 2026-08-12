@@ -5,7 +5,7 @@ A React Native game toolkit for mobile and tablet, built on Expo. This repositor
 | Path | Package | Purpose |
 | --- | --- | --- |
 | `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library: fixed-step headless session, named scenes and transitions, button/pointer input, viewport math, and a React/Skia adapter. |
-| `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android: the first runtime slice and the Brick Breaker reference game. |
+| `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android with shape, Brick Breaker, sprite, and performance examples. |
 | `apps/docs` | `@react-native-gamekit/docs` | Fumadocs (Next.js) documentation site. |
 
 Product and architecture research lives in [`REACT_NATIVE_GAMEKIT_RESEARCH.md`](./REACT_NATIVE_GAMEKIT_RESEARCH.md).
@@ -70,6 +70,7 @@ Node for deterministic tests:
 - `Viewport2D` headless math — `fit`, `fill`, and `extend-world` modes;
   `resolveViewport2D`, `worldToSurface`, `surfaceToWorld`,
   `containsSurfacePoint`.
+- Typed local assets, sprite-sheet clips, and deterministic animation state.
 
 The React entry (`react-native-gamekit/react`) adds:
 
@@ -77,12 +78,13 @@ The React entry (`react-native-gamekit/react`) adds:
   surface, binds `AppState`, and never renders per-frame React state.
 - `GamePointerInput` — Gesture Handler adapter that feeds logical coordinates
   through the shared viewport.
+- `useGameAssets`, `Sprite`, `GameSprite`, and `SpriteBatch` — reference-counted
+  loading and retained/Atlas-backed sprite rendering.
 
-The playground ships two games: the first runtime slice (a moving Skia circle)
-and Brick Breaker (three scenes, pointer paddle, deterministic collisions,
-win/lose/restart). See the docs for the walkthrough.
+The playground includes a moving-shape bootstrap, Brick Breaker, a sprite-field
+and animation showcase, and the Performance Lab. See the docs for walkthroughs.
 
-Assets, physics, audio, haptics, broader input adapters, and 3D are explicitly
+Physics, audio, haptics, broader input adapters, tilemaps, and 3D are explicitly
 future work.
 
 ## Workspace commands
@@ -120,9 +122,6 @@ The first supported line (validated in the playground):
 | React Native Gesture Handler | `~3.1.0` |
 | React Native Reanimated | `4.5.3` |
 | React Native Worklets | `0.10.3` |
-| React Native Safe Area Context | `~5.7.0` |
 | Expo Asset | `~57.0.8` |
-| Expo Audio | `~57.0.3` |
-| Expo Haptics | `~57.0.1` |
 
 See `apps/docs/content/docs/compatibility.mdx` for the documented compatibility page.

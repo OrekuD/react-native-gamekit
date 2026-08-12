@@ -17,7 +17,7 @@ import {
   type CommitFrame,
   type GameSession,
   type SceneSnapshot,
-} from 'react-native-gamekit';
+} from 'rn-gamekit';
 
 export const BRICK_BREAKER_CONFIG = {
   /** Authored logical world size, resolved onto the surface by Viewport2D. */

@@ -12,7 +12,7 @@ const {
   spriteFieldAssets,
   SPRITE_FIELD_CONFIG,
 } = await import('./spriteFieldGame.ts');
-const { createGameSessionWithDriver, ManualFrameDriver } = await import('react-native-gamekit/testing');
+const { createGameSessionWithDriver, ManualFrameDriver } = await import('rn-gamekit/testing');
 type PlaySnapshot = {
   playerX: number;
   playerY: number;

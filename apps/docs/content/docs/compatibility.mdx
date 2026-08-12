@@ -16,18 +16,14 @@ The first supported compatibility line is validated in the playground:
 | React Native Gesture Handler | `~3.1.0` |
 | React Native Reanimated | `4.5.3` |
 | React Native Worklets | `0.10.3` |
-| React Native Safe Area Context | `~5.7.0` |
 | Expo Asset | `~57.0.8` |
-| Expo Audio | `~57.0.3` |
-| Expo Haptics | `~57.0.1` |
 
 ## Native singletons
 
-Skia, Gesture Handler, Reanimated, Worklets, Safe Area Context, and the
-required Expo modules are native singletons. They live in the playground's
-`dependencies`, the library's `peerDependencies`, and the library's exact
-`devDependencies`. Applications must contain exactly one compatible copy of
-every native peer.
+Skia, Gesture Handler, Reanimated, Worklets, and Expo Asset are native peers.
+They live in the playground's `dependencies`, the library's
+`peerDependencies`, and the library's exact `devDependencies`. Applications
+must contain exactly one compatible copy of every native peer.
 
 ## Platforms
 

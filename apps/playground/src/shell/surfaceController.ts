@@ -12,8 +12,8 @@
  * and disposal code paths.
  */
 import type { ComponentType } from 'react';
-import type { GameSession } from 'react-native-gamekit';
-import type { GameRendererProps } from 'react-native-gamekit/react';
+import type { GameSession } from 'rn-gamekit';
+import type { GameRendererProps } from 'rn-gamekit/react';
 
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps.ts';
 import {

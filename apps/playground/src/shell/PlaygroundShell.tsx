@@ -7,13 +7,13 @@ import {
   GameView,
   type GameRendererProps,
   type GameAssetsState,
-} from 'react-native-gamekit/react';
+} from 'rn-gamekit/react';
 import type {
   GameSession,
   PointerInputAction,
   SceneDefinitionMarker,
-} from 'react-native-gamekit';
-import { useGameAssets } from 'react-native-gamekit/react';
+} from 'rn-gamekit';
+import { useGameAssets } from 'rn-gamekit/react';
 
 import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreakerGame';
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
@@ -92,7 +92,7 @@ export function PlaygroundShell() {
   // Asset display state (loading/error/ready) for the active Sprite Field
   // request; the slot itself only transitions on readiness.
   const [assetState, setAssetState] = useState<
-    | { readonly requestId: number; readonly state: GameAssetsState<import('react-native-gamekit').AssetGroupMap> }
+    | { readonly requestId: number; readonly state: GameAssetsState<import('rn-gamekit').AssetGroupMap> }
     | undefined
   >(undefined);
   const handleAssetReady = useCallback(
@@ -103,7 +103,7 @@ export function PlaygroundShell() {
   );
   const handleAssetState = useCallback(
     (requestId: number, state: unknown) => {
-      setAssetState({ requestId, state: state as GameAssetsState<import('react-native-gamekit').AssetGroupMap> });
+      setAssetState({ requestId, state: state as GameAssetsState<import('rn-gamekit').AssetGroupMap> });
     },
     [],
   );
@@ -244,7 +244,7 @@ function GameSurface({
   readonly onExit: () => void;
   readonly onOpenGame: (gameId: PlaygroundGameId) => void;
   readonly onRunSurfaceEvent?: (event: RunSurfaceEvent) => void;
-  readonly assetState?: GameAssetsState<import('react-native-gamekit').AssetGroupMap>;
+  readonly assetState?: GameAssetsState<import('rn-gamekit').AssetGroupMap>;
 }) {
   const reduceMotion = useReducedMotion();
   // Explicit two-state visibility: opening fades to 1; closing fades to 0

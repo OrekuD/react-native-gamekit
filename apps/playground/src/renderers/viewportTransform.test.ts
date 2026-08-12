@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { resolveViewport2D } from 'react-native-gamekit';
+import { resolveViewport2D } from 'rn-gamekit';
 import { surfacePoint } from './viewportTransform.ts';
 
 const WORLD = { width: 320, height: 180 };

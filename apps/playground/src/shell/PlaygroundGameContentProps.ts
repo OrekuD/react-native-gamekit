@@ -1,5 +1,5 @@
-import type { GameSession } from 'react-native-gamekit';
-import type { GameAssetsState } from 'react-native-gamekit/react';
+import type { GameSession } from 'rn-gamekit';
+import type { GameAssetsState } from 'rn-gamekit/react';
 import type { PlaygroundGameId } from '../catalog/games';
 import type { RunSurfaceEvent } from './surfaceSlot';
 
@@ -23,6 +23,6 @@ export interface PlaygroundGameContentProps {
   readonly onRunSurfaceEvent?: (event: RunSurfaceEvent) => void;
   /** The shell-owned asset loading state for asset-backed games (T7 R2). */
   readonly assetState?: GameAssetsState<
-    import('react-native-gamekit').AssetGroupMap
+    import('rn-gamekit').AssetGroupMap
   >;
 }

@@ -1,4 +1,4 @@
-import type { ResolvedViewport2D } from 'react-native-gamekit';
+import type { ResolvedViewport2D } from 'rn-gamekit';
 
 /** A logical world point mapped onto the surface. */
 export interface SurfacePoint {

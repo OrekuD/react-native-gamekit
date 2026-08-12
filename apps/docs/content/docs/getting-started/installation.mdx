@@ -14,6 +14,18 @@ supported requirement.
 - Node.js `>=22.13.0`
 - pnpm 11
 
+## Install in an application
+
+```sh
+npm install react-native-gamekit
+npx expo install expo-asset @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets
+npx expo prebuild
+```
+
+Wrap the application root in `GestureHandlerRootView`. Native libraries are
+peer dependencies: the application owns one compatible copy of each while
+GameKit declares the exact compatibility line it was validated against.
+
 ## Install the workspace
 
 ```sh
@@ -45,14 +57,12 @@ pnpm ios       # iOS / iPadOS simulator
 pnpm android   # Android emulator
 ```
 
-The playground runs the first complete runtime slice: a fixed-step headless
-session drives one interpolated Skia object, and a pressable semantic action
-changes its speed. The overlay retains live window diagnostics for rotation,
-resize, and iPad split-view checks.
+The playground includes shape, Brick Breaker, sprite-sheet animation, asset
+loading, batching, and performance examples. It also covers rotation, resize,
+and iPad split-view behavior.
 
 ## Package consumers
 
-For a regular app, the package declares `react`, `react-native`, and `expo` as
-peer dependencies along with the native singletons (Skia, Gesture Handler,
-Reanimated, Worklets, Safe Area Context, and the required Expo modules). Your
+For a regular app, the package declares `react`, `react-native`, `expo`,
+`expo-asset`, Skia, Gesture Handler, Reanimated, and Worklets as peers. Your
 application must contain exactly one compatible copy of every native peer.

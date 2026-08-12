@@ -1,7 +1,7 @@
 import { Rect } from '@shopify/react-native-skia';
 import { useDerivedValue } from 'react-native-reanimated';
 
-import type { GameRendererProps } from 'react-native-gamekit/react';
+import type { GameRendererProps } from 'rn-gamekit/react';
 
 /**
  * The neutral Home binding's renderer (T8.4).

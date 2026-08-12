@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { GameSession } from 'react-native-gamekit';
+import type { GameSession } from 'rn-gamekit';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 
 /**

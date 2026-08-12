@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { createGameSessionWithDriver, ManualFrameDriver } from 'react-native-gamekit/testing';
+import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
 import { brickBreakerDefinition } from '../brick-breaker/brickBreakerGame.ts';
 
 /**

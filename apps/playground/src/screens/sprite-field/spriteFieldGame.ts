@@ -18,7 +18,7 @@ import {
   type GameAssetManifest,
   type GameSession,
   type SpriteAnimationState,
-} from 'react-native-gamekit';
+} from 'rn-gamekit';
 
 export const spriteFieldAssets = defineAssets({
   boot: {

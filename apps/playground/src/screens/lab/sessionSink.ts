@@ -1,4 +1,4 @@
-import type { SessionDiagnostics } from 'react-native-gamekit/testing';
+import type { SessionDiagnostics } from 'rn-gamekit/testing';
 
 import type { PerfSummary } from './summary';
 

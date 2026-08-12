@@ -1,81 +1,130 @@
-# react-native-gamekit
+# React Native GameKit
 
-A headless-first 2D game toolkit for React Native and Expo, built for mobile
-and tablet.
+A headless-first 2D game toolkit for React Native and Expo, built for phones
+and tablets.
 
-> **Status: early runtime.** The package now includes a provisional fixed-step
-> session, functional scenes, button input snapshots, and a Skia `GameView`.
-> The API remains provisional until reference games validate it.
+> **0.1 preview:** React Native GameKit is usable for small 2D games and
+> prototypes, but its API may change before 1.0.
 
-## Install
+## What is included
+
+- deterministic fixed-step game sessions;
+- immutable functional scenes and scene transitions;
+- semantic button and multi-touch-safe pointer input;
+- phone, tablet, rotation, and split-view viewport mapping;
+- React Native Skia rendering with Reanimated interpolation;
+- typed local images, sprite sheets, animation clips, and asset loading;
+- retained sprites and Atlas-backed sprite batching;
+- a native-free root entry for headless tests.
+
+## Requirements
+
+Version 0.1 targets the Expo SDK 57 compatibility set:
+
+| Package | Supported version |
+| --- | --- |
+| React Native | `~0.86.2` |
+| React | `^19.2.3` |
+| Expo | `~57.0.10` |
+| React Native Skia | `2.11.0` |
+| Gesture Handler | `~3.1.0` |
+| Reanimated | `4.5.3` |
+| Worklets | `0.10.3` |
+
+Expo Go is not required or supported. Use an Expo development build and
+`expo prebuild`, or a bare React Native app configured with Expo Modules.
+
+## Installation
 
 ```sh
-pnpm add react-native-gamekit
+npm install rn-gamekit
+npx expo install expo-asset @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets
+npx expo prebuild
 ```
 
-React, React Native, Expo, Skia, Reanimated, Gesture Handler, Worklets, Safe
-Area Context, and required Expo modules are native peer dependencies. The
-application owns them and must contain exactly one compatible copy of each.
+Wrap the application with Gesture Handler's root view:
 
-## Define and run a game
+```tsx
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
+export default function App() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* Your application */}
+    </GestureHandlerRootView>
+  );
+}
+```
+
+Native libraries are peer dependencies. The application owns them so there is
+exactly one native copy, while GameKit releases declare the versions they were
+validated against.
+
+## Define a game
 
 ```ts
-import { createGameSession, defineGame, defineScene } from 'react-native-gamekit';
+import {
+  createGameSession,
+  defineGame,
+  defineScene,
+} from 'rn-gamekit';
 
-const definition = defineGame({
+const game = defineGame({
   viewport: {
-    logicalSize: { width: 320, height: 180 },
-    scale: 'fit',
-    overflow: 'letterbox',
+    logicalSize: { width: 320, height: 480 },
+    mode: 'fit',
   },
-  assets: [],
   input: {
-    boost: { type: 'button' },
+    move: { type: 'pointer' },
   },
   scenes: {
     play: defineScene({
-      actions: ['boost'],
-      create: () => ({ x: 0 }),
-      update: ({ state, input, deltaSeconds }) => ({
-        x: state.x + (input.button('boost').held ? 180 : 60) * deltaSeconds,
-      }),
-      snapshot: ({ state }) => ({ x: state.x }),
+      actions: ['move'],
+      create: () => ({ x: 160, y: 240 }),
+      update: ({ state, input }) => {
+        const pointer = input.pointer('move');
+        return pointer.active && pointer.position !== undefined
+          ? { x: pointer.position.x, y: pointer.position.y }
+          : state;
+      },
+      snapshot: ({ state }) => state,
     }),
   },
   initialScene: 'play',
 });
 
-const game = createGameSession(definition);
-game.start();
-game.input.press('boost');
-game.input.release('boost');
-game.pause();
-game.dispose();
+const session = createGameSession(game);
+session.start();
 ```
 
-The simulation advances at a fixed 60 Hz by default. Presentation frequency
-is independent, so a 120 Hz iPad can draw more often without changing game
-speed. Input is sampled once into an immutable frame for each simulation tick.
+Mount the session through the native entry point:
 
-## Mount Skia
+```tsx
+import {
+  GamePointerInput,
+  GameView,
+} from 'rn-gamekit/react';
 
-`GameView` is isolated in the React/native entry point so the main package can
-still be imported by headless Node tests:
-
-```ts
-import { GameView } from 'react-native-gamekit/react';
+<GameView game={session} renderer={GameRenderer}>
+  <GamePointerInput game={session} action="move" />
+</GameView>;
 ```
 
-It accepts an externally owned session and a stable Skia renderer component.
-Presentation frames arrive through Reanimated shared values; React is not the
-per-frame store. See the repository playground for the complete moving-circle
-example.
+`rn-gamekit` contains the headless definition, session, viewport,
+asset-manifest, and animation APIs. `rn-gamekit/react` contains the
+Skia renderer, native pointer adapter, asset loader, sprites, and sprite
+batching. `rn-gamekit/testing` contains deterministic frame drivers
+for Node tests.
 
-## Current boundary
+See the [repository documentation](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/docs/content/docs)
+and [Expo playground](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground)
+for complete examples.
 
-This slice intentionally does not include scene transitions, assets, ECS,
-physics, gesture mappings, axes/pointers, audio, haptics, or generalized
-viewport conversion.
+## Current scope
+
+The 0.1 release focuses on performant 2D foundations. Physics, tilemaps,
+audio, haptics, game-level navigation, save data, and 3D rendering are not yet
+part of the public package.
 
 ## License
 

@@ -6,7 +6,7 @@
  * an empty snapshot, created and disposed with the surface. It exists so
  * loading and error UI can be represented without a running gameplay session.
  */
-import { createGameSession, defineGame, defineScene, type GameSession } from 'react-native-gamekit';
+import { createGameSession, defineGame, defineScene, type GameSession } from 'rn-gamekit';
 
 const idleScene = defineScene({
   actions: [],

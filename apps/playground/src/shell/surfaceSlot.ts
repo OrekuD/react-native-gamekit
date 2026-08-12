@@ -20,8 +20,8 @@
  * generation that replaced it. Only then is it disposable — exactly once.
  */
 import type { ComponentType } from 'react';
-import type { GameSession } from 'react-native-gamekit';
-import type { GameRendererProps } from 'react-native-gamekit/react';
+import type { GameSession } from 'rn-gamekit';
+import type { GameRendererProps } from 'rn-gamekit/react';
 
 export type SurfaceStatus = 'neutral' | 'loading' | 'ready';
 
@@ -40,8 +40,8 @@ export interface RetirementRecord {
 /** A Performance Lab run attachment: session + the instrumentation bound to it. */
 export interface RunSurfaceAttachment {
   readonly session: GameSession;
-  readonly pointer: import('react-native-gamekit/react').GamePointerInstrumentation;
-  readonly view: import('react-native-gamekit/react').GameViewInstrumentation;
+  readonly pointer: import('rn-gamekit/react').GamePointerInstrumentation;
+  readonly view: import('rn-gamekit/react').GameViewInstrumentation;
 }
 
 /** An explicit ownership transfer between a lab host and the shell. */

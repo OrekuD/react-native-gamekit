@@ -1,4 +1,4 @@
-import { createAnimationFrameDriver, createGameSessionWithDriver } from 'react-native-gamekit/testing';
+import { createAnimationFrameDriver, createGameSessionWithDriver } from 'rn-gamekit/testing';
 
 import {
   brickBreakerPerformanceDefinition,

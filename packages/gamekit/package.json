@@ -1,8 +1,28 @@
 {
-  "name": "react-native-gamekit",
-  "version": "0.0.0",
+  "name": "rn-gamekit",
+  "version": "0.1.0",
   "description": "A headless-first 2D game toolkit for React Native and Expo, built for mobile and tablet.",
   "license": "MIT",
+  "keywords": [
+    "react-native",
+    "expo",
+    "game-engine",
+    "game-development",
+    "2d",
+    "skia"
+  ],
+  "homepage": "https://github.com/OrekuD/react-native-gamekit#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OrekuD/react-native-gamekit.git",
+    "directory": "packages/gamekit"
+  },
+  "bugs": {
+    "url": "https://github.com/OrekuD/react-native-gamekit/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./lib/module/index.js",
   "source": "./src/index.ts",
   "types": "./lib/typescript/src/index.d.ts",
@@ -32,6 +52,7 @@
     "lib",
     "src",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {
@@ -51,13 +72,10 @@
     "@shopify/react-native-skia": "2.11.0",
     "expo": "~57.0.10",
     "expo-asset": "~57.0.8",
-    "expo-audio": "~57.0.3",
-    "expo-haptics": "~57.0.1",
     "react": "^19.2.3",
     "react-native": "~0.86.2",
     "react-native-gesture-handler": "~3.1.0",
     "react-native-reanimated": "4.5.3",
-    "react-native-safe-area-context": "~5.7.0",
     "react-native-worklets": "0.10.3"
   },
   "devDependencies": {
@@ -69,15 +87,12 @@
     "eslint": "^9.39.0",
     "expo": "57.0.10",
     "expo-asset": "57.0.8",
-    "expo-audio": "57.0.3",
-    "expo-haptics": "57.0.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
     "react-native-builder-bob": "^0.43.0",
     "react-native-gesture-handler": "3.1.0",
     "react-native-reanimated": "4.5.3",
-    "react-native-safe-area-context": "5.7.0",
     "react-native-worklets": "0.10.3",
     "react-test-renderer": "19.2.3",
     "tsx": "^4.19.0",

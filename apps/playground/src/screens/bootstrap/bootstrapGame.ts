@@ -1,4 +1,4 @@
-import { createGameSession, defineGame, defineScene, type GameSession } from 'react-native-gamekit';
+import { createGameSession, defineGame, defineScene, type GameSession } from 'rn-gamekit';
 
 const LOGICAL_WIDTH = 320;
 const LOGICAL_HEIGHT = 180;

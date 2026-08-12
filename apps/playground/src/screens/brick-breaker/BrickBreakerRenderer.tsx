@@ -1,7 +1,7 @@
 import { Circle, Fill, Group, Rect, select } from '@shopify/react-native-skia';
 import { useDerivedValue } from 'react-native-reanimated';
 
-import type { GameRendererProps } from 'react-native-gamekit/react';
+import type { GameRendererProps } from 'rn-gamekit/react';
 import {
   BRICK_BREAKER_CONFIG,
   TOTAL_BRICKS,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { resolveViewport2D } from 'react-native-gamekit';
+import { resolveViewport2D } from 'rn-gamekit';
 import { fitGameStage } from './fitGameStage.ts';
 
 const logicalSize = Object.freeze({ width: 320, height: 480 });
