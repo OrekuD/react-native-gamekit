@@ -31,6 +31,11 @@ export class ViewportBinding {
     return this.#resolved;
   }
 
+  /** The latest native surface measurement, retained across viewport swaps. */
+  get surfaceSize(): SurfaceSize | undefined {
+    return this.#lastSurfaceSize;
+  }
+
   /** Monotonic counter incremented on every layout revision. */
   get revision(): number {
     return this.#revision;
@@ -75,4 +80,25 @@ export class ViewportBinding {
   dispose(): void {
     this.#listeners.clear();
   }
+}
+
+/**
+ * Return the existing binding when its authored viewport is unchanged, or
+ * create a replacement that immediately resolves against the already-mounted
+ * native surface. React Native does not guarantee another `onLayout` event
+ * when only the game/viewport changes and the View's dimensions stay equal.
+ */
+export function bindingForViewport(
+  config: Viewport,
+  previous: ViewportBinding | null,
+): ViewportBinding {
+  if (previous?.config === config) {
+    return previous;
+  }
+
+  const replacement = new ViewportBinding(config);
+  if (previous?.surfaceSize !== undefined) {
+    replacement.setSurfaceSize(previous.surfaceSize);
+  }
+  return replacement;
 }

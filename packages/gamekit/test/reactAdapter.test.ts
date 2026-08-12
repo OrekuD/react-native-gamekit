@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type { InputController } from '../src/core/input/types.ts';
 import { createPointerBinding, PointerBinding, type PointerPacket } from '../src/react/pointerBinding.ts';
 import { bindAppLifecycle, type AppLifecycleSource } from '../src/react/bindAppLifecycle.ts';
-import { ViewportBinding } from '../src/react/viewportBinding.ts';
+import { bindingForViewport, ViewportBinding } from '../src/react/viewportBinding.ts';
 import { resolveViewport2D, type ResolvedViewport2D } from '../src/viewport2d/index.ts';
 
 const viewport = { logicalSize: { width: 320, height: 180 }, mode: 'fit' } as const;
@@ -208,6 +208,26 @@ describe('PointerBinding', () => {
     unsubscribe();
     binding.setSurfaceSize({ width: 390, height: 844 });
     assert.equal(revisions, 2);
+  });
+
+  it('preserves the measured surface when replacing the authored viewport', () => {
+    const initial = new ViewportBinding({
+      logicalSize: { width: 320, height: 480 },
+      mode: 'fit',
+    });
+    initial.setSurfaceSize({ width: 390, height: 844 });
+
+    const replacement = bindingForViewport(viewport, initial);
+
+    assert.notEqual(replacement, initial);
+    assert.deepEqual(replacement.surfaceSize, { width: 390, height: 844 });
+    assert.equal(replacement.resolved?.scale, 390 / 320);
+    assert.deepEqual(replacement.resolved?.logicalBounds, {
+      x: 0,
+      y: 0,
+      width: 320,
+      height: 180,
+    });
   });
 
   it('treats a zero-sized layout as invalid and recovers', () => {

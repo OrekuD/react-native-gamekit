@@ -26,7 +26,7 @@ import { advanceAlpha } from './alphaClock';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
 import type { GameViewInstrumentation } from './instrumentation';
-import { ViewportBinding } from './viewportBinding';
+import { bindingForViewport, ViewportBinding } from './viewportBinding';
 
 /** Stable imperative values supplied to a Skia renderer component. */
 export interface GameRendererProps<
@@ -253,9 +253,7 @@ export function GameView<
   const instrumentationRef = useRef(instrumentation);
 
   const bindingRef = useRef<ViewportBinding | null>(null);
-  if (bindingRef.current === null || bindingRef.current.config !== game.viewport) {
-    bindingRef.current = new ViewportBinding(game.viewport);
-  }
+  bindingRef.current = bindingForViewport(game.viewport, bindingRef.current);
   const binding = bindingRef.current;
   const viewportValue = useSharedValue<ResolvedViewport2D | undefined>(undefined);
   const viewportContext = useMemo<GameViewport>(
@@ -266,6 +264,10 @@ export function GameView<
   useEffect(() => {
     instrumentationRef.current = instrumentation;
   }, [instrumentation]);
+
+  useEffect(() => {
+    viewportValue.value = binding.resolved;
+  }, [binding, viewportValue]);
 
   useEffect(
     () => () => {
