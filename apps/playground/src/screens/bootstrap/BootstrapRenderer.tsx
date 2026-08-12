@@ -2,7 +2,7 @@ import { Circle } from '@shopify/react-native-skia';
 import { useDerivedValue } from 'react-native-reanimated';
 
 import { type GameRendererProps } from 'react-native-gamekit/react';
-import { bootstrapDefinition } from '../games/bootstrapGame';
+import { bootstrapDefinition } from './bootstrapGame';
 
 /**
  * Renderer authoring only logical coordinates; the shared viewport supplies

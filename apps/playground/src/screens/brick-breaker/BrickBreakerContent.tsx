@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { BrickBreakerSession } from '../games/brickBreakerGame';
-import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
+import type { BrickBreakerSession } from './brickBreakerGame';
+import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import { BRICK_BREAKER_LAYOUT } from './brickBreakerLayout';
 import { hudEqual, selectHud, type HudState } from './brickBreakerHud';
 import { createHudObserver } from './hudObserver';

@@ -26,7 +26,7 @@ import { advanceAlpha } from './alphaClock';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
 import type { GameViewInstrumentation } from './instrumentation';
-import { bindingForViewport, ViewportBinding } from './viewportBinding';
+import { bindingForViewport, type ViewportBinding } from './viewportBinding';
 
 /** Stable imperative values supplied to a Skia renderer component. */
 export interface GameRendererProps<

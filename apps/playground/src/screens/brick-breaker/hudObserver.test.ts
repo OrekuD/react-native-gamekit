@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { BrickBreakerRenderFrame } from '../games/brickBreakerGame.ts';
+import type { BrickBreakerRenderFrame } from './brickBreakerGame.ts';
 import { hudEqual, selectHud, type HudState } from './brickBreakerHud.ts';
 import { createHudObserver } from './hudObserver.ts';
 

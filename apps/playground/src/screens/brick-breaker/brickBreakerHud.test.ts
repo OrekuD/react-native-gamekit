@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { hudEqual, selectHud } from './brickBreakerHud.ts';
-import { brickBreakerDefinition } from '../games/brickBreakerGame.ts';
+import { brickBreakerDefinition } from './brickBreakerGame.ts';
 import { createGameSessionWithDriver, ManualFrameDriver } from 'react-native-gamekit/testing';
 
 function makePlayFrame(score: number): Parameters<typeof selectHud>[0] {

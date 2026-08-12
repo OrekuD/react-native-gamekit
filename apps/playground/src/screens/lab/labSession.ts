@@ -3,7 +3,7 @@ import { createAnimationFrameDriver, createGameSessionWithDriver } from 'react-n
 import {
   brickBreakerPerformanceDefinition,
   type BrickBreakerSession,
-} from '../games/brickBreakerGame';
+} from '../brick-breaker/brickBreakerGame';
 import { createSummarySink } from './sessionSink';
 import { PerfSummary } from './summary';
 

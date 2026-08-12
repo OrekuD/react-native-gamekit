@@ -15,11 +15,11 @@ import type {
 } from 'react-native-gamekit';
 import { useGameAssets } from 'react-native-gamekit/react';
 
-import { createBrickBreakerSession } from '../games/brickBreakerGame';
-import { createBootstrapGameSession } from '../games/bootstrapGame';
-import { createLabSession } from '../perf/labSession';
-import { createSpriteFieldSession, spriteFieldAssets } from '../games/spriteFieldGame';
-import { createIdleSession } from '../games/idleSession';
+import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreakerGame';
+import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
+import { createLabSession } from '../screens/lab/labSession';
+import { createSpriteFieldSession, spriteFieldAssets } from '../screens/sprite-field/spriteFieldGame';
+import { createIdleSession } from './idleSession';
 import type { PlaygroundGameId } from '../catalog/games';
 import { usePlaygroundStore } from '../state/playgroundStore';
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps';
@@ -34,15 +34,15 @@ import {
   type SlotAssets,
   type SurfaceSlot,
 } from './surfaceSlot';
-import HomeScreen from '../screens/HomeScreen';
-import BrickBreakerContent from '../screens/BrickBreakerContent';
-import BootstrapContent from '../screens/BootstrapContent';
-import LabContent from '../perf/LabContent';
-import SpriteFieldContent from '../screens/SpriteFieldContent';
-import { BrickBreakerRenderer } from '../renderers/BrickBreakerRenderer';
-import { BootstrapRenderer } from '../renderers/BootstrapRenderer';
+import HomeScreen from '../screens/home/HomeScreen';
+import BrickBreakerContent from '../screens/brick-breaker/BrickBreakerContent';
+import BootstrapContent from '../screens/bootstrap/BootstrapContent';
+import LabContent from '../screens/lab/LabContent';
+import SpriteFieldContent from '../screens/sprite-field/SpriteFieldContent';
+import { BrickBreakerRenderer } from '../screens/brick-breaker/BrickBreakerRenderer';
+import { BootstrapRenderer } from '../screens/bootstrap/BootstrapRenderer';
 import { NeutralRenderer } from '../renderers/NeutralRenderer';
-import { SpriteFieldRenderer } from '../renderers/SpriteFieldRenderer';
+import { SpriteFieldRenderer } from '../screens/sprite-field/SpriteFieldRenderer';
 
 /** The GameView's scene-map parameter when the surface treats games opaquely. */
 type SceneDefinitionMarkerMap = Record<string, SceneDefinitionMarker>;

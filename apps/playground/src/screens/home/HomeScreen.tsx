@@ -8,7 +8,7 @@ import {
 import { StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { PLAYGROUND_GAMES, type PlaygroundGameId } from "../catalog/games";
+import { PLAYGROUND_GAMES, type PlaygroundGameId } from "../../catalog/games";
 
 /** Catalog surface for the playground examples. */
 export default function HomeScreen({

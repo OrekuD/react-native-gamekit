@@ -28,7 +28,7 @@ import { createAnimationFrameDriver, createGameSessionWithDriver } from 'react-n
 import {
   brickBreakerPerformanceDefinition,
   type BrickBreakerSession,
-} from '../games/brickBreakerGame';
+} from '../brick-breaker/brickBreakerGame';
 import type { LabRunController, PerfScenarioId } from './labRun';
 import { createSummarySink, generateDragSchedule } from './sessionSink';
 import { PerfSummary } from './summary';
@@ -38,7 +38,7 @@ import {
   uiBucketIndex,
   type UiTransfer,
 } from './uiMetrics';
-import type { RunSurfaceEvent } from '../shell/surfaceSlot.ts';
+import type { RunSurfaceEvent } from '../../shell/surfaceSlot.ts';
 
 /** Let the mounted pipeline settle before scripted engine input begins. */
 const INPUT_AT_MS = 300;

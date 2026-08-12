@@ -15,7 +15,6 @@ import {
   defineScene,
   image,
   spriteSheet,
-  startSpriteAnimation,
   type GameAssetManifest,
   type GameSession,
   type SpriteAnimationState,
@@ -23,28 +22,64 @@ import {
 
 export const spriteFieldAssets = defineAssets({
   boot: {
-    background: image(require('../../assets/player.png')),
+    background: image(require('../../../assets/kenney/tiny-farm.png')),
   },
   gameplay: {
-    player: spriteSheet(require('../../assets/player.png'), {
+    player: spriteSheet(require('../../../assets/kenney/platformer-player.png'), {
       frames: {
-        'idle-0': { x: 0, y: 0, width: 32, height: 32 },
-        'idle-1': { x: 32, y: 0, width: 32, height: 32 },
-        'run-0': { x: 0, y: 32, width: 32, height: 32 },
-        'run-1': { x: 32, y: 32, width: 32, height: 32 },
+        'idle-front': { x: 0, y: 196, width: 66, height: 92 },
+        'idle-stand': { x: 67, y: 196, width: 66, height: 92 },
+        'run-01': { x: 0, y: 0, width: 72, height: 97 },
+        'run-02': { x: 73, y: 0, width: 72, height: 97 },
+        'run-03': { x: 146, y: 0, width: 72, height: 97 },
+        'run-04': { x: 0, y: 98, width: 72, height: 97 },
+        'run-05': { x: 73, y: 98, width: 72, height: 97 },
+        'run-06': { x: 146, y: 98, width: 72, height: 97 },
+        'run-07': { x: 219, y: 0, width: 72, height: 97 },
+        'run-08': { x: 292, y: 0, width: 72, height: 97 },
+        'run-09': { x: 219, y: 98, width: 72, height: 97 },
+        'run-10': { x: 365, y: 0, width: 72, height: 97 },
+        'run-11': { x: 292, y: 98, width: 72, height: 97 },
+        jump: { x: 438, y: 93, width: 67, height: 94 },
+        duck: { x: 365, y: 98, width: 69, height: 71 },
+        hurt: { x: 438, y: 0, width: 69, height: 92 },
       },
       animations: {
-        idle: { frames: ['idle-0', 'idle-1'], frameDurationMs: 220, mode: 'loop' },
-        run: { frames: ['run-0', 'run-1'], frameDurationMs: 110, mode: 'loop' },
+        idle: {
+          frames: ['idle-front', 'idle-stand'],
+          frameDurationMs: 420,
+          mode: 'loop',
+        },
+        walk: {
+          frames: [
+            'run-01',
+            'run-02',
+            'run-03',
+            'run-04',
+            'run-05',
+            'run-06',
+            'run-07',
+            'run-08',
+            'run-09',
+            'run-10',
+            'run-11',
+          ],
+          frameDurationMs: 75,
+          mode: 'loop',
+        },
+        jump: { frames: ['jump'], frameDurationMs: 500, mode: 'once' },
+        duck: { frames: ['duck'], frameDurationMs: 500, mode: 'loop' },
+        hurt: { frames: ['hurt'], frameDurationMs: 500, mode: 'once' },
       },
     }),
-    enemies: spriteSheet(require('../../assets/enemies.png'), {
+    enemies: spriteSheet(require('../../../assets/kenney/tiny-farm.png'), {
       frames: {
-        'enemy-0': { x: 0, y: 0, width: 16, height: 16 },
-        'enemy-1': { x: 16, y: 0, width: 16, height: 16 },
+        sheep: { x: 0, y: 160, width: 16, height: 16 },
+        cow: { x: 16, y: 160, width: 16, height: 16 },
+        chicken: { x: 32, y: 160, width: 16, height: 16 },
       },
       animations: {
-        wander: { frames: ['enemy-0', 'enemy-1'], frameDurationMs: 260, mode: 'loop' },
+        wander: { frames: ['sheep'], frameDurationMs: 260, mode: 'loop' },
       },
     }),
   },
@@ -69,11 +104,29 @@ export interface EnemySnapshot {
   readonly animation: SpriteAnimationState<'wander'>;
 }
 
+export const PLAYER_ANIMATION_MODES = [
+  'auto',
+  'idle',
+  'walk',
+  'jump',
+  'duck',
+  'hurt',
+] as const;
+
+export type PlayerAnimationMode = (typeof PLAYER_ANIMATION_MODES)[number];
+export type PlayerAnimationClip = Exclude<PlayerAnimationMode, 'auto'>;
+
+export function nextPlayerAnimationMode(current: PlayerAnimationMode): PlayerAnimationMode {
+  const index = PLAYER_ANIMATION_MODES.indexOf(current);
+  return PLAYER_ANIMATION_MODES[(index + 1) % PLAYER_ANIMATION_MODES.length] ?? 'auto';
+}
+
 export interface PlaySnapshot {
   readonly playerX: number;
   readonly playerY: number;
   readonly facing: 'left' | 'right';
-  readonly animation: SpriteAnimationState<'idle' | 'run'>;
+  readonly animationMode: PlayerAnimationMode;
+  readonly animation: SpriteAnimationState<PlayerAnimationClip>;
   readonly enemies: readonly EnemySnapshot[];
   readonly score: number;
   readonly elapsed: number;
@@ -83,7 +136,8 @@ export interface PlayState {
   readonly playerX: number;
   readonly playerY: number;
   readonly facing: 'left' | 'right';
-  readonly animation: SpriteAnimationState<'idle' | 'run'>;
+  readonly animationMode: PlayerAnimationMode;
+  readonly animation: SpriteAnimationState<PlayerAnimationClip>;
   readonly enemies: readonly EnemySnapshot[];
   readonly score: number;
   readonly elapsed: number;
@@ -97,15 +151,16 @@ const WORLD_RIGHT = 304;
 function initialEnemies(): readonly EnemySnapshot[] {
   const enemies: EnemySnapshot[] = [];
   const columns = 6;
+  const animalFrames = ['sheep', 'cow', 'chicken'] as const;
   for (let index = 0; index < SPRITE_FIELD_CONFIG.enemyCount; index += 1) {
     const column = index % columns;
     const row = Math.floor(index / columns);
     enemies.push({
-      frame: 'enemy-0',
+      frame: animalFrames[index % animalFrames.length] ?? 'sheep',
       x: WORLD_LEFT + 24 + column * SPRITE_FIELD_CONFIG.enemySpacing,
       y: WORLD_TOP + 40 + row * 34,
       rotation: 0,
-      scale: 1,
+      scale: 2,
       visible: true,
       animation: { clip: 'wander', elapsedMs: 0, paused: false, speed: 1, completed: false },
     });
@@ -116,9 +171,10 @@ function initialEnemies(): readonly EnemySnapshot[] {
 /** Pick the clip from movement (deterministic scene rule). */
 export function selectPlayerClip(
   moving: boolean,
-  previous: SpriteAnimationState<'idle' | 'run'>,
-): SpriteAnimationState<'idle' | 'run'> {
-  const wanted = moving ? 'run' : 'idle';
+  mode: PlayerAnimationMode,
+  previous: SpriteAnimationState<PlayerAnimationClip>,
+): SpriteAnimationState<PlayerAnimationClip> {
+  const wanted: PlayerAnimationClip = mode === 'auto' ? (moving ? 'walk' : 'idle') : mode;
   return previous.clip === wanted
     ? previous
     : { ...previous, clip: wanted, elapsedMs: 0, completed: false };
@@ -135,14 +191,16 @@ export const spriteFieldDefinition = defineGame({
   assets: spriteFieldAssets,
   input: {
     primary: { type: 'pointer', description: 'Move the player toward the pointer' },
+    cycleAnimation: { type: 'button', description: 'Show the next player animation' },
   },
   scenes: {
     play: defineScene({
-      actions: ['primary'],
+      actions: ['primary', 'cycleAnimation'],
       create: (): PlayState => ({
         playerX: 160,
         playerY: 420,
         facing: 'right',
+        animationMode: 'auto',
         animation: { clip: 'idle', elapsedMs: 0, paused: false, speed: 1, completed: false },
         enemies: initialEnemies(),
         score: 0,
@@ -150,6 +208,9 @@ export const spriteFieldDefinition = defineGame({
       }),
       update: ({ state, input, deltaSeconds }): PlayState => {
         const pointer = input.pointer('primary');
+        const animationMode = input.button('cycleAnimation').pressed
+          ? nextPlayerAnimationMode(state.animationMode)
+          : state.animationMode;
         let playerX = state.playerX;
         let playerY = state.playerY;
         let moving = false;
@@ -168,9 +229,9 @@ export const spriteFieldDefinition = defineGame({
         }
         const animation = advanceSpriteAnimation(
           spriteFieldAssets.gameplay.player as never,
-          selectPlayerClip(moving, state.animation),
+          selectPlayerClip(moving, animationMode, state.animation),
           deltaSeconds,
-        ) as SpriteAnimationState<'idle' | 'run'>;
+        ) as SpriteAnimationState<PlayerAnimationClip>;
         const facing: 'left' | 'right' =
           pointer.position !== undefined && pointer.position.x < state.playerX - 2
             ? 'left'
@@ -181,12 +242,9 @@ export const spriteFieldDefinition = defineGame({
             enemy.animation,
             deltaSeconds,
           ) as SpriteAnimationState<'wander'>;
-          const elapsed = next.elapsedMs / 1000;
           const drift = Math.sin(state.elapsed * 0.8 + enemy.x * 0.05) * SPRITE_FIELD_CONFIG.enemyDrift;
-          const frame = next.elapsedMs < 130 ? 'enemy-0' : 'enemy-1';
           return {
             ...enemy,
-            frame,
             x: enemy.x + drift * deltaSeconds * 2,
             animation: next,
           };
@@ -197,6 +255,7 @@ export const spriteFieldDefinition = defineGame({
           playerX,
           playerY,
           facing,
+          animationMode,
           animation,
           enemies,
           score,
@@ -207,6 +266,7 @@ export const spriteFieldDefinition = defineGame({
         playerX: context.state.playerX,
         playerY: context.state.playerY,
         facing: context.state.facing,
+        animationMode: context.state.animationMode,
         animation: { ...context.state.animation },
         enemies: context.state.enemies.map((enemy) => ({ ...enemy, animation: { ...enemy.animation } })),
         score: context.state.score,

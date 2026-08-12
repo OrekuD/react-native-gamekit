@@ -1,4 +1,4 @@
-import type { BrickBreakerRenderFrame } from '../games/brickBreakerGame';
+import type { BrickBreakerRenderFrame } from './brickBreakerGame';
 
 /**
  * Low-frequency HUD selection for the Brick Breaker screen.

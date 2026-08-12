@@ -9,11 +9,10 @@
 import { GameSprite, GameWorld2D, SpriteBatch, type GameRendererProps } from 'react-native-gamekit/react';
 import type { SharedValue } from 'react-native-reanimated';
 
-import type { PlaySnapshot, SpriteFieldDefinition } from '../games/spriteFieldGame';
+import { spriteFieldAssets, type PlaySnapshot, type SpriteFieldDefinition } from './spriteFieldGame';
 
 type RendererProps = GameRendererProps<SpriteFieldDefinition['scenes'], typeof spriteFieldAssets>;
 
-import { spriteFieldAssets } from '../games/spriteFieldGame';
 
 export function SpriteFieldRenderer({ frame, alpha, viewport, assets }: RendererProps) {
   if (assets === undefined) {
@@ -35,6 +34,7 @@ export function SpriteFieldRenderer({ frame, alpha, viewport, assets }: Renderer
             y: current.playerY,
             clip: current.animation.clip,
             elapsedMs: current.animation.elapsedMs,
+            scale: 0.7,
             flipX: current.facing === 'left',
           };
         }}

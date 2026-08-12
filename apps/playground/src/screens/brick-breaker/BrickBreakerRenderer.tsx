@@ -6,8 +6,8 @@ import {
   BRICK_BREAKER_CONFIG,
   TOTAL_BRICKS,
   type BrickBreakerDefinition,
-} from '../games/brickBreakerGame';
-import { interpolatePaddle } from './interpolation';
+} from './brickBreakerGame';
+import { interpolatePaddle } from '../../renderers/interpolation';
 
 type RendererProps = GameRendererProps<BrickBreakerDefinition['scenes']>;
 type CommitValue = RendererProps['frame'];

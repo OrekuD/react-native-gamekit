@@ -14,8 +14,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 
-import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
-import { type SpriteFieldSession, type PlaySnapshot } from '../games/spriteFieldGame';
+import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
+import { type SpriteFieldSession, type PlaySnapshot } from './spriteFieldGame';
 
 export default function SpriteFieldContent({
   game,
@@ -28,13 +28,21 @@ export default function SpriteFieldContent({
   const state = assetState ?? { status: 'loading' as const, progress: 0, retry: () => undefined };
   const ready = state.status === 'ready';
   const session = ready ? (game as SpriteFieldSession) : null;
-  const [hud, setHud] = useState<{ score: number; clip: string } | null>(null);
+  const [hud, setHud] = useState<{
+    score: number;
+    clip: string;
+    animationMode: PlaySnapshot['animationMode'];
+  } | null>(null);
 
   // Render-phase: initialize the HUD from the real session exactly when it
   // becomes available (the sanctioned adjust-during-render pattern).
   if (session !== null && hud === null) {
     const play = session.getRenderFrame().current as PlaySnapshot;
-    setHud({ score: play.score, clip: play.animation.clip });
+    setHud({
+      score: play.score,
+      clip: play.animation.clip,
+      animationMode: play.animationMode,
+    });
   }
 
   // Low-frequency overlay: subscribed only to the real session's commits.
@@ -47,9 +55,14 @@ export default function SpriteFieldContent({
       setHud((previous) =>
         previous !== null &&
         previous.score === snapshot.score &&
-        previous.clip === snapshot.animation.clip
+        previous.clip === snapshot.animation.clip &&
+        previous.animationMode === snapshot.animationMode
           ? previous
-          : { score: snapshot.score, clip: snapshot.animation.clip },
+          : {
+              score: snapshot.score,
+              clip: snapshot.animation.clip,
+              animationMode: snapshot.animationMode,
+            },
       );
     }).remove;
   }, [session]);
@@ -76,6 +89,31 @@ export default function SpriteFieldContent({
                 ? 'ready'
                 : `score ${hud.score} · ${hud.clip}`}
         </Text>
+      </View>
+
+      <View pointerEvents="box-none" style={styles.animationControls}>
+        <Pressable
+          accessibilityLabel={`Change player animation. Current mode: ${hud?.animationMode ?? 'auto'}`}
+          accessibilityRole="button"
+          disabled={session === null}
+          onPress={() => {
+            if (session === null) {
+              return;
+            }
+            session.input.press('cycleAnimation');
+            session.input.release('cycleAnimation');
+          }}
+          style={({ pressed }) => [
+            styles.animationButton,
+            pressed && styles.animationButtonPressed,
+            session === null && styles.animationButtonDisabled,
+          ]}
+        >
+          <Text style={styles.animationButtonLabel}>
+            State: {hud?.animationMode ?? 'auto'}
+          </Text>
+          <Text style={styles.animationButtonHint}>Tap for next</Text>
+        </Pressable>
       </View>
 
       {state.status === 'error' ? (
@@ -130,6 +168,40 @@ const styles = StyleSheet.create({
   meta: {
     color: '#94a3b8',
     fontSize: 12,
+  },
+  animationControls: {
+    alignItems: 'center',
+    bottom: 20,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  animationButton: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 23, 42, 0.88)',
+    borderColor: 'rgba(148, 163, 184, 0.32)',
+    borderRadius: 18,
+    borderWidth: 1,
+    minWidth: 144,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+  },
+  animationButtonPressed: {
+    backgroundColor: 'rgba(14, 165, 233, 0.34)',
+  },
+  animationButtonDisabled: {
+    opacity: 0.45,
+  },
+  animationButtonLabel: {
+    color: '#f8fafc',
+    fontSize: 14,
+    fontWeight: '800',
+    textTransform: 'capitalize',
+  },
+  animationButtonHint: {
+    color: '#94a3b8',
+    fontSize: 10,
+    marginTop: 2,
   },
   retry: {
     alignSelf: 'center',

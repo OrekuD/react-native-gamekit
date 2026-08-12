@@ -9,7 +9,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { GameSession } from 'react-native-gamekit';
-import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
+import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 
 /**
  * First runtime slice content: the header and the boost control.

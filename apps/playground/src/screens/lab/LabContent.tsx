@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { PlaygroundGameContentProps } from '../shell/PlaygroundGameContentProps';
-import type { RunSurfaceEvent } from '../shell/surfaceSlot.ts';
+import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
+import type { RunSurfaceEvent } from '../../shell/surfaceSlot.ts';
 import LabHost from './LabHost';
 import { LabRunController, issueRunId, type PerfScenarioId, type ScenarioResult } from './labRun';
 import { runOpenCloseCycles } from './scenarios';
