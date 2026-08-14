@@ -460,8 +460,10 @@ export const brickBreakerPerformanceDefinition = defineGame({
 /**
  * Create a fresh Brick Breaker session owned by the calling screen.
  *
- * The playground screen owns exactly one session and disposes it on final
- * unmount; the definition above remains static and shareable.
+ * Deliberately imperative (not useGameSession): the persistent playground
+ * shell owns sessions through its surface controller, which must retire and
+ * dispose sessions across game swaps, background/foreground, and the asset
+ * readiness boundary. The definition above remains static and shareable.
  */
 export function createBrickBreakerSession(): BrickBreakerSession {
   return createGameSession(brickBreakerDefinition);

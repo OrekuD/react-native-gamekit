@@ -70,5 +70,8 @@ export function createBootstrapGameSession(): GameSession<
   typeof bootstrapDefinition['scenes'],
   typeof bootstrapDefinition['input']
 > {
+  // Deliberately imperative: the persistent playground shell owns sessions
+  // through its surface controller (swap retirement, disposal, reopen
+  // freshness); this is not a conventional mounted screen.
   return createGameSession(bootstrapDefinition);
 }

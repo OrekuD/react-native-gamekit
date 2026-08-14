@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { GamePointerInput, GameView, useGameSession } from 'rn-gamekit/react';
 import { paddleGame } from './game';

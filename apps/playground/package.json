@@ -13,8 +13,8 @@
     "build": "expo export --platform ios --output-dir dist",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test src/**/*.test.ts",
-    "test:coverage": "node --experimental-strip-types --experimental-test-coverage --test src/**/*.test.ts"
+    "test": "node --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "test:coverage": "node --experimental-strip-types --experimental-test-coverage --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@expo/ui": "~57.0.9",

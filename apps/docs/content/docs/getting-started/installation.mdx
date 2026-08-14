@@ -1,68 +1,120 @@
 ---
 title: Installation
-description: Set up the playground with local native development builds.
+description: Add React Native Gamekit to an Expo app and run a native dev build.
 ---
 
-# Installation
-
-React Native GameKit is consumed from the `react-native-gamekit` package. The
-playground uses **local native development builds** — Expo Go is not a
-supported requirement.
+You'll need an Expo project and a few minutes. By the end of this page you'll have a native dev build running React Native Gamekit, ready for your first scene.
 
 ## Requirements
 
-- Node.js `>=22.13.0`
-- pnpm 11
+React Native Gamekit is validated against one compatibility line, and the playground exercises that exact line on iOS, iPadOS, and Android:
 
-## Install in an application
+| Dependency | Version |
+| --- | --- |
+| Expo | SDK 57 (`~57.0.10`) |
+| React Native | `0.86.2` |
+| React | `19.2.3` |
+| React Native Skia | `2.11.0` |
+| React Native Gesture Handler | `~3.1.0` |
+| React Native Reanimated | `4.5.3` |
+| React Native Worklets | `0.10.3` |
+| Expo Asset | `~57.0.8` |
+
+## Install the package
+
+The package is called `rn-gamekit`. Pick your package manager once and the docs will remember it:
+
+<Tabs items={['npm', 'yarn', 'pnpm', 'bun']} groupId="package-manager" persist>
+  <Tab value="npm">
+    ```sh
+    npm install rn-gamekit
+    ```
+  </Tab>
+  <Tab value="yarn">
+    ```sh
+    yarn add rn-gamekit
+    ```
+  </Tab>
+  <Tab value="pnpm">
+    ```sh
+    pnpm add rn-gamekit
+    ```
+  </Tab>
+  <Tab value="bun">
+    ```sh
+    bun add rn-gamekit
+    ```
+  </Tab>
+</Tabs>
+
+## Install the native peers
+
+Gamekit doesn't ship native code. Skia, Gesture Handler, Reanimated, Worklets, and Expo Asset are native modules that your app owns, and Gamekit declares the exact version line it was validated against. Your app ends up with exactly one copy of each native module, which is what native modules want.
+
+Use `expo install` so the versions match your SDK:
+
+<Tabs items={['npm', 'yarn', 'pnpm', 'bun']} groupId="package-manager" persist>
+  <Tab value="npm">
+    ```sh
+    npx expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+  <Tab value="yarn">
+    ```sh
+    yarn expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+  <Tab value="pnpm">
+    ```sh
+    pnpm expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+  <Tab value="bun">
+    ```sh
+    bunx expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+</Tabs>
+
+{/* prettier-ignore */}
+> [!IMPORTANT]
+> The peer versions in your `package.json` need to match the validated line in the table above. If you're upgrading an existing project, check the [Compatibility](../compatibility) page before you bump anything.
+
+## Generate the native projects
+
+Expo Go can't run this. Gamekit needs the Skia, Gesture Handler, and Reanimated runtimes, which are native modules, so you need a development build. Generate the iOS and Android projects with:
 
 ```sh
-npm install react-native-gamekit
-npx expo install expo-asset @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets
 npx expo prebuild
 ```
 
-Wrap the application root in `GestureHandlerRootView`. Native libraries are
-peer dependencies: the application owns one compatible copy of each while
-GameKit declares the exact compatibility line it was validated against.
+The `ios` and `android` folders are generated, so keep them out of version control. Change native configuration through `app.json` and config plugins, then regenerate. Expo calls this Continuous Native Generation (CNG), and it's the workflow the playground itself uses.
 
-## Install the workspace
+## Wrap the app root
 
-```sh
-git clone https://github.com/OrekuD/react-native-gamekit.git
-cd react-native-gamekit
-pnpm install
+Gesture Handler needs the root of your component tree wrapped in `GestureHandlerRootView`:
+
+```tsx
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+
+export default function App() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* your game goes here */}
+    </GestureHandlerRootView>
+  );
+}
 ```
 
-## Generate native projects
-
-The `ios` and `android` directories are produced by Expo Continuous Native
-Generation (CNG). They are never committed — change native configuration
-through `app.json` and config plugins only.
+## Run the dev build
 
 ```sh
-pnpm expo:prebuild
+npx expo run:ios     # iOS simulator
+npx expo run:android # Android emulator
 ```
 
-Regenerate from a clean state with:
+The first build compiles the native modules, so give it a few minutes. Later builds are fast.
 
-```sh
-pnpm expo:prebuild:clean
-```
+## What's next
 
-## Run the playground
-
-```sh
-pnpm ios       # iOS / iPadOS simulator
-pnpm android   # Android emulator
-```
-
-The playground includes shape, Brick Breaker, sprite-sheet animation, asset
-loading, batching, and performance examples. It also covers rotation, resize,
-and iPad split-view behavior.
-
-## Package consumers
-
-For a regular app, the package declares `react`, `react-native`, `expo`,
-`expo-asset`, Skia, Gesture Handler, Reanimated, and Worklets as peers. Your
-application must contain exactly one compatible copy of every native peer.
+You have a running dev build. Now build something you can play: [Create your first game](./create-your-first-game).

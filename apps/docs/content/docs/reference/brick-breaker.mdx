@@ -8,11 +8,11 @@ description: How the reference game owns its session, uses named scenes, shares 
 Brick Breaker is the Task 3 reference game. It is a small but complete
 single-player arcade loop: ready → play → game-over → ready, a pointer-driven
 paddle, deterministic ball/wall, ball/paddle, and ball/brick collision, score,
-win, loss, and restart — all running on the provisional GameKit API.
+win, loss, and restart — all running on the provisional Gamekit API.
 
 The game lives in
-[`apps/playground/src/screens/brick-breaker/brickBreakerGame.ts`](https://github.com/OrekuD/react-native-gamekit/blob/main/apps/playground/src/screens/brick-breaker/brickBreakerGame.ts)
-and is fully headless: it imports only `react-native-gamekit`, declares no
+[`apps/playground/src/screens/brick-breaker/brickBreakerGame.ts`](https://github.com/OrekuD/rn-gamekit/blob/main/apps/playground/src/screens/brick-breaker/brickBreakerGame.ts)
+and is fully headless: it imports only `rn-gamekit`, declares no
 React, Skia, or Gesture Handler types, and is driven in Node tests with a
 manual frame driver.
 
@@ -34,24 +34,27 @@ Winning freezes the ball in play and waits for a press that calls
 
 ## Session ownership and cleanup
 
-The screen owns exactly one session and disposes it on final unmount:
+A conventional screen owns its session through `useGameSession`:
 
-```ts
-const [session] = useState(() => createBrickBreakerSession());
-
-useEffect(
-  () => () => {
-    session.dispose();
-  },
-  [session],
-);
+```tsx
+const session = useGameSession(brickBreakerDefinition);
 ```
 
-`GameView` starts the session while mounted and pauses it on unmount and app
-backgrounding, but never disposes it — the creator owns disposal. Navigation
-focus is playground policy: `useFocusEffect` pauses the session when the
-screen loses focus and resumes it on focus, so the game never runs invisibly
-under a pushed screen.
+The hook creates the session, disposes it exactly once when it is replaced or
+the screen unmounts, and is safe under Strict Mode. `GameView` borrows the
+session: it starts it while mounted and pauses it on unmount and app
+backgrounding, but never disposes it. Callers must not dispose a hook-owned
+session.
+
+The playground shell is deliberately different: its persistent surface
+controller creates and retires sessions imperatively so games reopen through
+fresh, generation-tracked sessions with their own presentation and pointer
+bindings. Headless tests use the same imperative model with
+`createGameSessionWithDriver` and an explicit dispose.
+
+Navigation focus is playground policy: `useFocusEffect` pauses the session
+when the screen loses focus and resumes it on focus, so the game never runs
+invisibly under a pushed screen.
 
 ## One viewport for drawing and input
 
@@ -93,7 +96,7 @@ headlessly.
 ## Headless tests
 
 `brickBreakerGame.test.ts` drives the real game with the
-`react-native-gamekit/testing` entry (`createGameSessionWithDriver` plus a
+`rn-gamekit/testing` entry (`createGameSessionWithDriver` plus a
 `ManualFrameDriver`), covering: entering play with the ball in motion, paddle
 clamping, each collision type, wall containment, loss, win, the full scene
 cycle, and identical checkpoints at 30, 60, and 120 Hz presentation. The

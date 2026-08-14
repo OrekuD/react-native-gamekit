@@ -1,4 +1,4 @@
-export const appName = 'React Native GameKit';
+export const appName = 'React Native Gamekit';
 export const docsRoute = '/docs';
 
 export const gitConfig = {

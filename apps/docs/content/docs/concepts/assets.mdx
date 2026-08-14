@@ -1,11 +1,11 @@
 ---
 title: Assets
-description: Declare, load, and own local game assets with React Native GameKit.
+description: Declare, load, and own local game assets with React Native Gamekit.
 ---
 
 # Assets
 
-GameKit assets are **local static module handles** declared next to the game
+Gamekit assets are **local static module handles** declared next to the game
 definition, validated before decoding, and owned through an explicit lease
 model. There are no remote URLs in this version: a future descriptor will add
 network sources with caching, retry, and security policy.
@@ -13,7 +13,7 @@ network sources with caching, retry, and security policy.
 ## Declare a manifest
 
 ```ts
-import { defineAssets, image, spriteSheet } from 'react-native-gamekit';
+import { defineAssets, image, spriteSheet } from 'rn-gamekit';
 
 export const gameAssets = defineAssets({
   boot: {
@@ -57,7 +57,7 @@ const game = defineGame({
 ## Load with honest states
 
 ```tsx
-import { useGameAssets } from 'react-native-gamekit/react';
+import { useGameAssets } from 'rn-gamekit/react';
 
 function SpriteGameScreen() {
   const state = useGameAssets(gameAssets, { groups: ['boot', 'gameplay'] });

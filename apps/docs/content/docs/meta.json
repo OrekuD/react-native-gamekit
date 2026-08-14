@@ -1,11 +1,10 @@
 {
-  "title": "React Native GameKit",
+  "title": "React Native Gamekit",
   "pages": [
     "index",
     "---Getting Started---",
     "getting-started/installation",
     "getting-started/create-your-first-game",
-    "getting-started/create-your-first-sprite-game",
     "getting-started/repository",
     "---Concepts---",
     "concepts/game-definition",

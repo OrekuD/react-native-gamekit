@@ -15,6 +15,11 @@ import { PerfSummary } from './summary';
  * play), so the Skia canvas never remounts between runs. The summary is a
  * placeholder holder: each run's host swaps in its own summary object.
  */
+/**
+ * Deliberately imperative: a lab run is a shell-owned attachment with its
+ * own frame driver and instrumentation, transferred to and retired by the
+ * surface controller, never a conventional mounted screen.
+ */
 export function createLabSession(): BrickBreakerSession {
   const summary = new PerfSummary();
   return createGameSessionWithDriver(brickBreakerPerformanceDefinition, {

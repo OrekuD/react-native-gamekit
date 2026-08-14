@@ -16,7 +16,7 @@ infers the state returned by `create`, the renderer-specific snapshot, the
 actions the scene reads, and the scene names it may transition to.
 
 ```ts
-import { createGameSession, defineGame, defineScene } from 'react-native-gamekit';
+import { createGameSession, defineGame, defineScene } from 'rn-gamekit';
 
 const game = defineGame({
   viewport: {
@@ -95,7 +95,7 @@ material model.
 ## Skia GameView
 
 ```tsx
-import { GameView, GamePointerInput } from 'react-native-gamekit/react';
+import { GameView, GamePointerInput } from 'rn-gamekit/react';
 
 <GameView game={session} renderer={MySkiaRenderer}>
   <GamePointerInput game={session} action="primary" />
@@ -106,9 +106,35 @@ The Skia renderer receives shared `frame`, `surfaceSize`, and `viewport`
 values. They update without placing positions or tick counters in React state.
 Static React children remain available for HUD and accessible controls.
 `GameView` starts the externally owned session while mounted, pauses it on
-cleanup and app backgrounding, and never disposes it — the creator owns
-disposal. `GamePointerInput` converts touches through the same resolved
-viewport, so hit testing and drawing always agree.
+cleanup and app backgrounding, and never disposes it. `GamePointerInput`
+converts touches through the same resolved viewport, so hit testing and
+drawing always agree.
+
+## Who owns the session
+
+There are exactly three ownership layers, and a call site should pick one.
+
+**The hook owner.** A conventional mounted screen calls
+`useGameSession(definition)` from `rn-gamekit/react`. The hook creates the
+session in a commit-phase effect, publishes it, and disposes it exactly once
+when the definition is replaced or the owner unmounts. It is safe under
+Strict Mode, never returns a disposed or definition-mismatched session, and
+returns `undefined` only until a session is committed. Do not call
+`session.dispose()` on a hook-owned session.
+
+**The imperative owner.** Headless tests, non-React programs, and custom
+surface controllers create a session with `createGameSession()` (or
+`createGameSessionWithDriver()` for deterministic frames) and dispose it with
+an explicit `try/finally`. Nothing in React owns that session.
+
+**The borrowed presenter.** `GameView` binds a session while mounted: it
+starts it, pauses it on unmount and app backgrounding, and never terminally
+disposes it. Both owners above hand their session to `GameView`; neither
+hands over disposal.
+
+An asset-backed game adds one more rule on top: mount the session-owning
+component only after `useGameAssets()` reports `ready`. The hook never loads
+assets itself.
 
 ## Current boundary
 
@@ -118,5 +144,5 @@ sheets, and deterministic animation. Physics, audio, broader input adapters
 (keyboard, gamepad, virtual sticks), tilemaps, and 3D are future work.
 
 See the
-[research document](https://github.com/OrekuD/react-native-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md)
+[research document](https://github.com/OrekuD/rn-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md)
 for the full architecture direction.

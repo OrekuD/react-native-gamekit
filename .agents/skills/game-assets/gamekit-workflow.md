@@ -46,6 +46,28 @@ const state = useGameAssets(assets, { groups: ['gameplay'] });
 </GameWorld2D>
 ```
 
+## Session ownership (Task 9 — agents writing game screens)
+
+Pick exactly one owner per call site:
+
+- **Conventional mounted screen**: `useGameSession(definition)` from
+  `rn-gamekit/react`. The hook creates the session, disposes it exactly once
+  on replacement or unmount, and is Strict Mode safe. It returns `undefined`
+  only until a session is committed; render a deliberate fallback for that
+  frame. Never call `session.dispose()` on a hook-owned session.
+- **Headless scripts, tests, non-React owners**: `createGameSession()` (or
+  `createGameSessionWithDriver()` for deterministic frames) with an explicit
+  `try/finally` dispose.
+- **Persistent surfaces, session swapping, asset-readiness orchestration**:
+  explicit controller ownership (the playground shell's `SurfaceController`
+  is the reference model). Do not migrate these to the hook.
+
+`GameView` always borrows: it starts a session while mounted, pauses it on
+unmount and app backgrounding, and never terminally disposes it.
+
+Definitions normally live at module scope. Asset-backed games mount the
+session-owning child only after `useGameAssets()` reports `ready`.
+
 ## Checklist (reject these)
 
 - [ ] No per-frame React state: positions/frames live in the scene snapshot
@@ -58,6 +80,12 @@ const state = useGameAssets(assets, { groups: ['gameplay'] });
 - [ ] No untyped asset strings: lookups use the typed descriptor reference
       (`assets.get(manifest.group.name)`), never `'group/name'` strings.
 - [ ] No remote URLs: sources are static `require(...)` module handles only.
+- [ ] No hook-plus-manual ownership: never combine `useGameSession` with a
+      manual `session.dispose()`; the hook owns terminal disposal.
+- [ ] No per-render definitions: `defineGame()` belongs at module scope,
+      never inside a component render.
+- [ ] No delayed disposal: no timers, animation frames, or deferred calls to
+      guess whether an unmount is real; dispose in the effect cleanup.
 - [ ] Sessions are created only after assets are ready and disposed once on
       close.
 
@@ -93,6 +121,39 @@ The playground shell owns every session through one `SurfaceController`
 **One sprite** — see `sprites.mdx`. **One clip** — see `sprite-animation.mdx`.
 **One batch** — see `sprite-batching.mdx`. The docs pages are compiled from
 the same fixtures as the package tests.
+
+## Recipes
+
+React screen with a hook-owned session:
+
+```tsx
+function GameScreen() {
+  const session = useGameSession(myGame);
+
+  if (session === undefined) {
+    return null;
+  }
+
+  return (
+    <GameView game={session} renderer={MyRenderer}>
+      <GamePointerInput game={session} action="primary" />
+    </GameView>
+  );
+}
+```
+
+Headless test with an imperative owner:
+
+```ts
+const driver = new ManualFrameDriver();
+const session = createGameSessionWithDriver(myGame, { frameDriver: driver });
+try {
+  session.start();
+  // drive frames and assert
+} finally {
+  session.dispose();
+}
+```
 
 ## Diagnostics
 

@@ -97,18 +97,36 @@ const session = createGameSession(game);
 session.start();
 ```
 
-Mount the session through the native entry point:
+In React, own the session with `useGameSession` and hand it to the native
+entry point:
 
 ```tsx
 import {
   GamePointerInput,
   GameView,
+  useGameSession,
 } from 'rn-gamekit/react';
 
-<GameView game={session} renderer={GameRenderer}>
-  <GamePointerInput game={session} action="move" />
-</GameView>;
+function GameScreen() {
+  const session = useGameSession(game);
+
+  if (session === undefined) {
+    return null;
+  }
+
+  return (
+    <GameView game={session} renderer={GameRenderer}>
+      <GamePointerInput game={session} action="move" />
+    </GameView>
+  );
+}
 ```
+
+The hook creates the session, disposes it exactly once on replacement or
+unmount, and is safe under Strict Mode. `GameView` borrows the session: it
+starts it while mounted, pauses it on unmount and backgrounding, and never
+disposes it. For headless tests and non-React owners, keep the imperative
+`createGameSession()` / `try/finally dispose()` path shown above.
 
 `rn-gamekit` contains the headless definition, session, viewport,
 asset-manifest, and animation APIs. `rn-gamekit/react` contains the
@@ -116,8 +134,8 @@ Skia renderer, native pointer adapter, asset loader, sprites, and sprite
 batching. `rn-gamekit/testing` contains deterministic frame drivers
 for Node tests.
 
-See the [repository documentation](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/docs/content/docs)
-and [Expo playground](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground)
+See the [repository documentation](https://github.com/OrekuD/rn-gamekit/tree/main/apps/docs/content/docs)
+and [Expo playground](https://github.com/OrekuD/rn-gamekit/tree/main/apps/playground)
 for complete examples.
 
 ## Current scope

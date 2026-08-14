@@ -1,11 +1,11 @@
 ---
 title: Sprite Animation
-description: Deterministic, fixed-step sprite animation with React Native GameKit.
+description: Deterministic, fixed-step sprite animation with React Native Gamekit.
 ---
 
 # Sprite Animation
 
-Animation time comes from GameKit, never the wall clock. Animation state is
+Animation time comes from Gamekit, never the wall clock. Animation state is
 plain serializable data in the scene snapshot, advanced from fixed-step game
 time; the renderer only presents it. The same input and elapsed game time
 select the same sprite frame at 30/60/90/120 Hz.
@@ -31,7 +31,7 @@ animations: {
 ## Advance from scene state
 
 ```ts
-import { advanceSpriteAnimation, startSpriteAnimation } from 'react-native-gamekit';
+import { advanceSpriteAnimation, startSpriteAnimation } from 'rn-gamekit';
 
 const initial = startSpriteAnimation(playerSheet, 'idle');
 

@@ -284,6 +284,13 @@ export type SpriteFieldSession = GameSession<
 >;
 export type SpriteFieldManifest = GameAssetManifest<typeof spriteFieldAssets>;
 
+/**
+ * Create a fresh Sprite Field session owned by the shell.
+ *
+ * Deliberately imperative: the shell creates this gameplay session only
+ * after the asset lease is ready (the ready-child ownership boundary) and
+ * owns its disposal through the surface controller.
+ */
 export function createSpriteFieldSession(): SpriteFieldSession {
   return createGameSession(spriteFieldDefinition);
 }

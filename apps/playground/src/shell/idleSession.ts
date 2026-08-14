@@ -26,6 +26,8 @@ const idleDefinition = defineGame({
 });
 
 export function createIdleSession(): GameSession {
+  // Deliberately imperative: the neutral placeholder is surface machinery
+  // (created and disposed with the surface), not a mounted screen.
   // The placeholder is treated opaquely by the surface; the concrete scene
   // types differ only in their generic parameters, so the cast is contained.
   return createGameSession(idleDefinition) as unknown as GameSession;

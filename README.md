@@ -4,7 +4,7 @@ A React Native game toolkit for mobile and tablet, built on Expo. This repositor
 
 | Path | Package | Purpose |
 | --- | --- | --- |
-| `packages/gamekit` | `react-native-gamekit` | The publishable TypeScript library: fixed-step headless session, named scenes and transitions, button/pointer input, viewport math, and a React/Skia adapter. |
+| `packages/gamekit` | `rn-gamekit` | The publishable TypeScript library: fixed-step headless session, named scenes and transitions, button/pointer input, viewport math, and a React/Skia adapter. |
 | `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android with shape, Brick Breaker, sprite, and performance examples. |
 | `apps/docs` | `@react-native-gamekit/docs` | Fumadocs (Next.js) documentation site. |
 
@@ -57,7 +57,7 @@ pnpm build:docs
 
 ## Current API surface (provisional)
 
-The headless entry (`react-native-gamekit`) imports nothing native and runs in
+The headless entry (`rn-gamekit`) imports nothing native and runs in
 Node for deterministic tests:
 
 - `defineGame` / `defineScene` — static, type-checked game definitions with
@@ -72,7 +72,7 @@ Node for deterministic tests:
   `containsSurfacePoint`.
 - Typed local assets, sprite-sheet clips, and deterministic animation state.
 
-The React entry (`react-native-gamekit/react`) adds:
+The React entry (`rn-gamekit/react`) adds:
 
 - `GameView` — mounts a Skia canvas, resolves the viewport from the mounted
   surface, binds `AppState`, and never renders per-frame React state.
