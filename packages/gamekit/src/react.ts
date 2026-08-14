@@ -1,4 +1,5 @@
 export { GameView } from './react/GameView';
+export { useGameSession } from './react/useGameSession';
 export { createGameAssetStore } from './react/assets/decodeSkiaImage';
 export { useGameAssets, stableGroupsKey } from './react/assets/useGameAssets';
 export type { GameAssetsState } from './react/assets/useGameAssets';
