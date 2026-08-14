@@ -375,17 +375,17 @@ complex than a conventional screen owner.
 
 Make the new API available without changing the native-free root contract.
 
-- [ ] Export `useGameSession` and its intentionally public types from
+- [x] Export `useGameSession` and its intentionally public types from
       `packages/gamekit/src/react.ts`.
-- [ ] Do not export it from the headless `rn-gamekit` root.
-- [ ] Confirm `import 'rn-gamekit'` still evaluates no React, React Native,
+- [x] Do not export it from the headless `rn-gamekit` root.
+- [x] Confirm `import 'rn-gamekit'` still evaluates no React, React Native,
       Skia, Gesture Handler, Reanimated, or Worklets module.
-- [ ] Confirm `import { useGameSession } from 'rn-gamekit/react'` resolves in
+- [x] Confirm `import { useGameSession } from 'rn-gamekit/react'` resolves in
       source, built module, TypeScript declaration, Metro, and package tarball
       paths.
-- [ ] Inspect source maps and declarations for accidental internal test types
+- [x] Inspect source maps and declarations for accidental internal test types
       or absolute machine paths.
-- [ ] Add the hook to the package changelog under the next unreleased version;
+- [x] Add the hook to the package changelog under the next unreleased version;
       do not rewrite the published `0.1.0` entry.
 
 ### T9.5 — Rewrite the canonical paddle tutorial fixture

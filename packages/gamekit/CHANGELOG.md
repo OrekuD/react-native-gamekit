@@ -2,6 +2,14 @@
 
 All notable changes to React Native GameKit will be documented in this file.
 
+## Unreleased
+
+### Added
+
+- `useGameSession(definition)` from `rn-gamekit/react`: React-owned session
+  creation and terminal disposal, safe under Strict Mode, with exact
+  scene/input type inference from the game definition.
+
 ## 0.1.0 - 2026-08-12
 
 First public preview.

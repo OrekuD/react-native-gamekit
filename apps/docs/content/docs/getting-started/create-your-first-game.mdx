@@ -1,213 +1,272 @@
 ---
-title: Create Your First Game
-description: Build and render a small interactive 2D scene with React Native GameKit.
+title: Create your first game
+description: Build a tiny playable paddle game with React Native Gamekit, step by step.
 ---
 
-# Create Your First Game
+You're going to build a tiny paddle game. A ball bounces around a 320 by 180 world, your finger moves the paddle, and missing the ball resets it to the middle. It's small enough to read in one sitting and it touches every part of the runtime: a game definition, a scene, pointer input, a renderer, and the React mount.
 
-This example creates one scene containing a circle that follows your finger.
-It covers the complete GameKit path: define the simulation, create a session,
-render it with Skia, and connect native pointer input.
+By the end you'll have something playable on your device, not just a screen with a circle on it.
 
-Complete [Installation](./installation) before starting. Your app must run as a
-native development build; Expo Go is not a supported requirement.
+## 1. Install the package
 
-## Create the game screen
+If you haven't already, follow [Installation](./installation) to set up a dev build. You'll need `rn-gamekit` plus the native peers in your project:
 
-Add a screen such as `MyFirstGameScreen.tsx`:
+<Tabs items={['npm', 'yarn', 'pnpm', 'bun']} groupId="package-manager" persist>
+  <Tab value="npm">
+    ```sh
+    npm install rn-gamekit
+    npx expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+  <Tab value="yarn">
+    ```sh
+    yarn add rn-gamekit
+    yarn expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+  <Tab value="pnpm">
+    ```sh
+    pnpm add rn-gamekit
+    pnpm expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+  <Tab value="bun">
+    ```sh
+    bun add rn-gamekit
+    bunx expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    ```
+  </Tab>
+</Tabs>
 
-```tsx
-import { Circle, Fill, Group, select } from '@shopify/react-native-skia';
-import { useEffect, useState } from 'react';
-import { StyleSheet } from 'react-native';
-import { useDerivedValue } from 'react-native-reanimated';
+## 2. Define the game
 
-import {
-  createGameSession,
-  defineGame,
-  defineScene,
-} from 'react-native-gamekit';
-import {
-  GamePointerInput,
-  GameView,
-  type GameRendererProps,
-} from 'react-native-gamekit/react';
+A game definition is static data: a viewport, the input actions your game declares, and the scenes it can show. Creating it allocates no runtime state.
 
-const WORLD_WIDTH = 320;
-const WORLD_HEIGHT = 180;
-const PLAYER_RADIUS = 12;
+```ts
+// game.ts
+import { defineGame, defineScene } from 'rn-gamekit';
 
-const playScene = defineScene({
-  actions: ['move'],
+const WIDTH = 320;
+const HEIGHT = 180;
+const PADDLE = { width: 48, height: 10, y: 164 };
+const BALL = { radius: 6 };
 
-  create: () => ({
-    x: WORLD_WIDTH / 2,
-    y: WORLD_HEIGHT / 2,
-  }),
-
-  update: ({ state, input }) => {
-    const pointer = input.pointer('move');
-    const position = pointer.position;
-
-    if (
-      !pointer.active ||
-      position === undefined ||
-      (position.x === state.x && position.y === state.y)
-    ) {
-      return state;
-    }
-
-    return { x: position.x, y: position.y };
-  },
-
-  snapshot: ({ state }) => state,
-});
-
-const gameDefinition = defineGame({
+export const paddleGame = defineGame({
   viewport: {
-    logicalSize: { width: WORLD_WIDTH, height: WORLD_HEIGHT },
+    logicalSize: { width: WIDTH, height: HEIGHT },
     mode: 'fit',
   },
-
   input: {
-    move: { type: 'pointer' },
+    steer: { type: 'pointer', description: 'Move the paddle' },
   },
-
   scenes: {
     play: playScene,
   },
-
   initialScene: 'play',
 });
+```
 
-type RendererProps = GameRendererProps<
-  typeof gameDefinition.scenes
->;
+The viewport declares the logical world your game thinks in. `fit` scales that world to whatever screen it lands on, letterboxing when the aspect ratios differ. Input actions are semantic names, not raw events: the game says "steer", and the platform decides how fingers become steers.
 
-function GameRenderer({ frame, alpha, viewport }: RendererProps) {
-  const worldTransform = useDerivedValue(() => {
-    const surface = viewport.value;
+## 3. Write the play scene
 
-    return [
-      { translateX: surface?.offsetX ?? 0 },
-      { translateY: surface?.offsetY ?? 0 },
-      { scale: surface?.scale ?? 0 },
-    ];
-  });
+A scene owns its state and decides how it changes every tick. Gamekit runs a fixed step: the same simulation, at the same speed, on any device.
 
-  const player = useDerivedValue(() => {
-    const commit = frame.value;
+```ts
+// game.ts
+const playScene = defineScene({
+  actions: ['steer'],
+  create: () => ({
+    paddleX: WIDTH / 2,
+    ball: { x: WIDTH / 2, y: HEIGHT / 2, vx: 90, vy: 70 },
+  }),
+  update: ({ state, input, deltaSeconds }) => {
+    const steer = input.pointer('steer');
 
-    if (commit.scene !== 'play') {
-      return { x: 0, y: 0, radius: 0 };
+    // The pointer position is already in logical world coordinates.
+    // Clamp the paddle so it can't leave the world.
+    const paddleX =
+      steer.active && steer.position !== undefined
+        ? Math.min(Math.max(steer.position.x, PADDLE.width / 2), WIDTH - PADDLE.width / 2)
+        : state.paddleX;
+
+    let { x, y, vx, vy } = state.ball;
+    x += vx * deltaSeconds;
+    y += vy * deltaSeconds;
+
+    // Bounce off the side walls and the ceiling.
+    if (x - BALL.radius <= 0 || x + BALL.radius >= WIDTH) vx = -vx;
+    if (y - BALL.radius <= 0) vy = -vy;
+
+    // Bounce off the paddle, only when the ball is on its row.
+    const onPaddleRow = y + BALL.radius >= PADDLE.y && y + BALL.radius <= PADDLE.y + PADDLE.height;
+    if (onPaddleRow && x >= paddleX - PADDLE.width / 2 && x <= paddleX + PADDLE.width / 2) {
+      vy = -Math.abs(vy);
     }
 
-    return {
-      x:
-        commit.previous.x +
-        (commit.current.x - commit.previous.x) * alpha.value,
-      y:
-        commit.previous.y +
-        (commit.current.y - commit.previous.y) * alpha.value,
-      radius: PLAYER_RADIUS,
-    };
-  });
+    // Missed: put the ball back in the middle.
+    if (y - BALL.radius > HEIGHT) {
+      return { paddleX, ball: { x: WIDTH / 2, y: HEIGHT / 2, vx: 90, vy: 70 } };
+    }
 
-  return (
-    <>
-      <Fill color="#0f172a" />
-      <Group transform={worldTransform}>
-        <Circle
-          cx={select(player, 'x')}
-          cy={select(player, 'y')}
-          r={select(player, 'radius')}
-          color="#a78bfa"
-        />
-      </Group>
-    </>
-  );
-}
-
-export function MyFirstGameScreen() {
-  const [session] = useState(() => createGameSession(gameDefinition));
-
-  useEffect(() => {
-    return () => session.dispose();
-  }, [session]);
-
-  return (
-    <GameView game={session} renderer={GameRenderer} style={styles.game}>
-      <GamePointerInput game={session} action="move" />
-    </GameView>
-  );
-}
-
-const styles = StyleSheet.create({
-  game: {
-    flex: 1,
+    return { paddleX, ball: { x, y, vx, vy } };
   },
 });
 ```
 
-Mount `MyFirstGameScreen` from your app or navigation layer. Touch and drag
-inside the game surface to move the circle.
+The update receives the previous state and returns the next one. That's the whole model: `state` in, `state` out, nothing else mutated. `input.pointer('steer')` gives you the sampled pointer: whether it's `active`, its logical `position`, and one-tick edges like `pressed`. `deltaSeconds` is the constant fixed-step duration, so movement math stays the same at any frame rate.
 
-## What each part owns
+## 4. Snapshot what the renderer should draw
 
-### `defineScene`
+The renderer never sees your scene state. Each tick you hand it a small snapshot, which keeps the presentation side free to change without touching the simulation.
 
-The scene owns the rules for one part of the game:
+```ts
+// game.ts
+const playScene = defineScene({
+  actions: ['steer'],
+  create: () => ({ ... }),
+  update: ({ ... }) => { ... },
+  snapshot: ({ state }) => ({
+    paddle: { x: state.paddleX, y: PADDLE.y, width: PADDLE.width, height: PADDLE.height },
+    ball: { x: state.ball.x, y: state.ball.y, radius: BALL.radius },
+  }),
+});
+```
 
-- `create` returns its initial authoritative state;
-- `update` receives one immutable input snapshot per fixed simulation tick and
-  returns the next state;
-- `snapshot` exposes the compact data needed by the renderer.
+The final `game.ts` declares the scene before the definition, because the definition references it. The assembled file order is: constants, scene, definition.
 
-Return a new object when state changes. Returning the existing `state` object is
-the correct no-change path; never mutate it.
+## 5. Draw it with Skia
 
-### `defineGame`
+The renderer is a React component that reads the committed snapshot and draws in logical coordinates. The viewport shared value supplies the scale and letterbox offset, so drawing and touch hit-testing always agree. The shared values are passed to Skia directly, so they re-evaluate on the UI runtime without triggering React re-renders:
 
-The game definition connects the logical viewport, semantic input actions, and
-named scenes. It is static configuration and does not start a game by itself.
-The `fit` viewport preserves the 320 × 180 world on phones and tablets while
-letterboxing when the surface has a different aspect ratio.
+```tsx
+// Renderer.tsx
+import { Circle, Rect } from '@shopify/react-native-skia';
+import { useDerivedValue } from 'react-native-reanimated';
+import type { GameRendererProps } from 'rn-gamekit/react';
+import { paddleGame } from './game';
 
-### `createGameSession`
+export function PaddleRenderer({
+  frame,
+  viewport,
+}: GameRendererProps<typeof paddleGame['scenes']>) {
+  const paddleX = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.paddle.x * surface.scale + surface.offsetX;
+  });
+  const paddleY = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.paddle.y * surface.scale + surface.offsetY;
+  });
+  const paddleWidth = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.paddle.width * surface.scale;
+  });
+  const paddleHeight = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.paddle.height * surface.scale;
+  });
 
-The session is the live, stateful instance. This screen creates it once and
-owns its cleanup. `GameView` starts the session while mounted and pauses it when
-the app backgrounds or the view unmounts, but it deliberately does not dispose
-the externally owned session.
+  const ballX = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.ball.x * surface.scale + surface.offsetX;
+  });
+  const ballY = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.ball.y * surface.scale + surface.offsetY;
+  });
+  const ballRadius = useDerivedValue(() => {
+    const surface = viewport.value;
+    const value = frame.value;
+    if (surface === undefined || value.scene !== 'play') {
+      return 0;
+    }
+    return value.current.ball.radius * surface.scale;
+  });
 
-### `GameRenderer`
+  return (
+    <>
+      <Rect x={paddleX} y={paddleY} width={paddleWidth} height={paddleHeight} color="#334155" />
+      <Circle cx={ballX} cy={ballY} r={ballRadius} color="#0ea5e9" />
+    </>
+  );
+}
+```
 
-The renderer is a fixed Skia component tree. It receives shared values instead
-of React state:
+`frame` holds the latest committed snapshot. It's a shared value, so the renderer reads it on the UI runtime without triggering React re-renders. If you ever want buttery motion between commits, the `alpha` prop interpolates between the previous and current snapshots; the Brick Breaker walkthrough shows that pattern.
 
-- `frame` contains the previous and current simulation snapshots;
-- `alpha` is the UI-runtime interpolation fraction between those snapshots;
-- `viewport` maps logical world coordinates onto the current phone or tablet
-  surface.
+## 6. Mount the game
 
-The grouped `player` value and Skia `select()` calls keep the moving entity on
-one derived mapper. The entire world transform is applied once to the parent
-`Group`.
+Hand the definition to `useGameSession` and let `GameView` present it:
 
-### `GamePointerInput`
+```tsx
+// App.tsx
+import { StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GamePointerInput, GameView, useGameSession } from 'rn-gamekit/react';
+import { paddleGame } from './game';
+import { PaddleRenderer } from './Renderer';
 
-The pointer adapter covers the game surface and forwards logical coordinates to
-the declared `move` action. The scene reads that action during its next fixed
-simulation tick. Drawing and hit testing use the same resolved viewport, so
-touches continue to line up after rotation and resizing.
+export default function App() {
+  const session = useGameSession(paddleGame);
 
-## The important boundary
+  if (session === undefined) {
+    return null;
+  }
 
-Do not put positions, velocities, timers, or tick counters in React state.
-React owns the screen, the session lifetime, and static overlays. The GameKit
-session owns simulation state, while Reanimated and Skia present committed
-snapshots on the UI runtime.
+  return (
+    <GestureHandlerRootView style={styles.root}>
+      <GameView game={session} renderer={PaddleRenderer} style={StyleSheet.absoluteFill}>
+        <GamePointerInput game={session} action="steer" />
+      </GameView>
+    </GestureHandlerRootView>
+  );
+}
+```
 
-Next, read [Game Definition and Session](../concepts/game-definition) for the
-full scene contract and [Scenes and Transitions](../concepts/scenes-and-transitions)
-when your game needs menus, levels, or game-over states.
+The hook owns creation and terminal disposal, and it's safe under Strict Mode: every development rehearsal session is disposed exactly once, and a disposed session is never returned. `undefined` means React hasn't committed a live session for the definition yet, which happens on the first render and while a definition replacement is being created. Rendering `null` for that frame is the deliberate fallback.
+
+`GameView` borrows the session: it starts it while mounted, pauses it when the app backgrounds, and never terminally disposes it. Because the hook owns disposal, don't call `session.dispose()` on a hook-owned session. For headless tests and non-React owners, `createGameSession()` with an explicit `try/finally` dispose remains the imperative path.
+
+## 7. Run it
+
+```sh
+npx expo run:ios
+```
+
+Drag anywhere on the screen. The paddle follows your finger, the ball bounces, and a miss puts the ball back in the middle. That's a game loop, pointer input, a viewport, a renderer, and a session lifecycle, all working together.
+
+## The boundary that matters
+
+Notice what never happened: no `useState` for the paddle, no re-renders per frame, no React anywhere near the simulation. The game runs headless at a fixed step; React only presents the latest snapshot. That boundary is the whole design of React Native Gamekit, and it's what makes the simulation deterministic and testable. Every concept page from here builds on it.
+
+## What's next
+
+- [Game definition and session](../concepts/game-definition) — what `defineGame` and `createGameSession` really own
+- [Scenes and transitions](../concepts/scenes-and-transitions) — more than one scene, and how to move between them
+- [Viewport and coordinate spaces](../concepts/viewport) — the three modes and the shared math behind drawing and input
+- [Pointer input](../concepts/pointer-input) — actions, ownership, and the edges you can read
