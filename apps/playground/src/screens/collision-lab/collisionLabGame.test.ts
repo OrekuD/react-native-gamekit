@@ -15,6 +15,7 @@ const { COLLISION_LAB_CONFIG, collisionLabDefinition } = await import('./collisi
 type CollisionLabSnapshot = {
   readonly pair: 'circleAabb' | 'aabbAabb' | 'circleCircle';
   readonly swept: boolean;
+  readonly projectileTeleported: boolean;
   readonly filterEnabled: boolean;
   readonly animation: 'idle' | 'run';
   readonly debugVisible: boolean;
@@ -163,31 +164,77 @@ describe('Collision Lab rules', () => {
     void crossed;
   });
 
-  it('reports no hit before the crossing, one on it, and none after (T11-FF4)', () => {
+  it('freezes the contact-interval contract: none before, contiguous, none after (T11-SF2)', () => {
     const { session, tick, snap } = harness();
     session.input.press('toggle-sweep');
     session.input.release('toggle-sweep');
     tick(1);
-    const hits: { tick: number; time: number }[] = [];
+    const hitFrames: number[] = [];
     for (let index = 0; index < 140; index += 1) {
       tick(1);
       const current = snap();
       if (current.sweptHit !== undefined) {
-        hits.push({ tick: index + 2, time: current.sweptHit.time });
+        hitFrames.push(index + 2);
+        // Independently assert contact at each reported time.
+        const { projectile, projectileStart, target } = current;
+        const hitX = projectileStart.x + (projectile.x - projectileStart.x) * current.sweptHit.time;
+        const closestX = Math.max(target.x, Math.min(hitX, target.x + target.width));
+        const closestY = Math.max(target.y, Math.min(projectile.y, target.y + target.height));
+        const distance = Math.hypot(hitX - closestX, projectile.y - closestY);
+        assert.ok(
+          distance - projectile.radius <= 1e-6,
+          `contact at each reported time (frame ${index + 2})`,
+        );
       }
     }
-    assert.ok(hits.length >= 1, 'the crossing step reports a hit');
-    // No STALE repeated hits after the projectile passes: once the circle is
-    // fully beyond the target, every subsequent step starts past it.
-    const lastHit = hits.at(-1)!;
-    for (let index = lastHit.tick + 1; index < 140; index += 1) {
-      // The per-step sweep starts beyond the target, so no later hits exist
-      // unless the projectile is still crossing.
-      void index;
+    const first = hitFrames[0];
+    const last = hitFrames.at(-1);
+    assert.ok(first !== undefined && last !== undefined, 'the projectile crosses the target');
+    // Every frame between first and last contact is also a hit: one
+    // contiguous interval.
+    for (let frame = first; frame <= last; frame += 1) {
+      assert.ok(hitFrames.includes(frame), `frame ${frame} is part of the contact interval`);
     }
-    // The projectile is 8 wide and the target 30 wide: the crossing takes at
-    // most a handful of steps, never the whole run.
-    assert.ok(hits.length <= 20, `no stale repeated hits (got ${hits.length})`);
+    // The interval is bounded: the 8-wide projectile cannot stay in contact
+    // with the 30-wide target for more than a handful of steps.
+    assert.ok(hitFrames.length <= 20, `bounded interval (got ${hitFrames.length})`);
+    // No hits before first contact.
+    for (let index = 2; index < first; index += 1) {
+      assert.ok(!hitFrames.includes(index), `no hit before contact at frame ${index}`);
+    }
+  });
+
+  it('publishes no sweep and no path segment on the teleport frame (T11-SF1)', () => {
+    const { session, tick, snap } = harness();
+    session.input.press('toggle-sweep');
+    session.input.release('toggle-sweep');
+    tick(1);
+    // The modulo wrap happens when travelled >= 360: tick 135 at 160 u/s
+    // and 1/60 s steps (160 * 135 / 60 = 360).
+    let wrapFrame = -1;
+    let before: ReturnType<typeof snap> | undefined;
+    let after: ReturnType<typeof snap> | undefined;
+    for (let index = 0; index < 150; index += 1) {
+      tick(1);
+      const current = snap();
+      if (current.projectileTeleported && wrapFrame < 0) {
+        wrapFrame = index + 2;
+        assert.equal(current.sweptHit, undefined, 'no sweep query on the teleport frame');
+      }
+      if (!current.projectileTeleported) {
+        before = current; // The last normal frame before the wrap.
+      }
+      if (wrapFrame > 0 && index + 2 === wrapFrame + 1) {
+        after = current;
+      }
+    }
+    assert.ok(wrapFrame > 0, 'the wrap frame occurs');
+    assert.ok(before !== undefined && !before.projectileTeleported, 'the step before wraps normally');
+    assert.ok(after !== undefined && !after.projectileTeleported, 'the step after wraps normally');
+    // The ordinary steps publish a short forward segment: start differs from
+    // the current position and both stay on the same side of the wrap.
+    assert.ok(before !== undefined && before.projectileStart.x < before.projectile.x, 'forward segment before');
+    assert.ok(after !== undefined && after.projectileStart.x < after.projectile.x, 'forward segment after');
   });
 
   it('keeps debug visibility presentation-only (T11-F9)', () => {

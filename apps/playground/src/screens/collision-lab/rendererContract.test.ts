@@ -49,13 +49,20 @@ describe('Collision Lab renderer UI-runtime contract', () => {
     );
     assert.ok(workletBodies.length >= 10, `found ${workletBodies.length} derived worklets`);
     for (const body of workletBodies) {
-      for (const call of body.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
+      // Strip line comments and block comments before the inventory so
+      // prose cannot masquerade as a call.
+      const code = body
+        .split('\n')
+        .filter((line) => !line.trim().startsWith('//'))
+        .join('\n')
+        .replace(/\/\*[\s\S]*?\*\//g, '');
+      for (const call of code.matchAll(/([A-Za-z_$][\w$]*)\s*\(/g)) {
         const name = call[1];
         if (KEYWORDS.has(name)) {
           continue;
         }
         if (!ALLOWED_WORKLET_CALLS.has(name)) {
-          assert.fail(`worklet calls non-worklet function ${name}: ${body.slice(0, 80)}`);
+          assert.fail(`worklet calls non-worklet function ${name}: ${code.slice(0, 80)}`);
         }
       }
     }
@@ -65,6 +72,17 @@ describe('Collision Lab renderer UI-runtime contract', () => {
     const returnSection = source.slice(source.indexOf('return ('));
     const valueReads = [...returnSection.matchAll(/\.value\b/g)];
     assert.equal(valueReads.length, 0, 'the React return path has no shared-value reads');
+  });
+
+  it('keeps every allowlisted helper workletized (SF4)', () => {
+    for (const helper of ALLOWED_WORKLET_CALLS) {
+      if (helper === 'Math') {
+        continue;
+      }
+      const definition = source.match(new RegExp(`function ${helper}\\([\\s\\S]*?\\n}`));
+      assert.ok(definition !== null, `${helper} is defined`);
+      assert.ok(definition[0].includes("'worklet'"), `${helper} carries the worklet directive`);
+    }
   });
 
   it('keeps the collider overlay topology fixed (FF2)', () => {

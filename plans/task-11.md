@@ -2,12 +2,12 @@
 
 ## Status
 
-**Follow-up review: T11-FF1 through T11-FF8 addressed.** Commit `8e9c302`
-repaired the first review's core findings; the follow-up review below found
-remaining UI-runtime, reactivity, React-publication, reference-example,
-immutability, hot-path, and completion-record gaps, and the follow-up fix
-record at the end of the feedback section documents their repair. The
-complete automated gate is green; physical-device rows remain open.
+**Second follow-up review: changes still required.** Commits `e53fe5a`,
+`ad7caec`, and `783085a` repair the main UI-runtime, retained-overlay,
+pre-setter HUD, spatial-hash immutability, and guide-sync problems. The second
+follow-up below found a visible wrap-path bug, remaining sweep allocations,
+and evidence/record claims that are not established by their named tests. The
+reported complete automated gate is green; physical-device rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -1782,3 +1782,179 @@ use `r1 + r2`.
 - [ ] Sweep correctness remains green without per-call corner/root arrays or
       closures.
 - [ ] Plan, code, tests, docs, and device-gated rows report the same status.
+
+## Second follow-up feedback — review of `e53fe5a`, `ad7caec`, and `783085a`
+
+This review is limited to the three cited Task 11 follow-up commits. It does
+not rerun the complete repository gate already reported by the implementation
+agent. The implementation is materially closer: headless collider projection,
+direct shared-value Skia props, pre-setter HUD dedupe, frozen spatial-query
+results, occupied-cell bounds, and exact MDX/fixture synchronization are all
+present.
+
+### T11-SF1 — Suppress the rendered sweep path on the teleport frame
+
+**Priority:** Important
+
+The scene correctly skips `sweepCircleAabb2D` when the modulo position wraps,
+but it always publishes `projectileStart.x = projectilePrevX`. On the wrap
+frame the previous position is near the right edge and the current position is
+back at the left edge, so the two values are not equal. The renderer hides a
+teleport only when start and end are equal; it therefore draws the exact
+reverse/world-spanning line that T11-FF4 required it to suppress.
+
+The new rules tests do not advance to or assert the wrap frame.
+
+#### Required approach
+
+- [ ] Publish an explicit `projectileTeleported`/`sweepPathVisible` fact, or
+      set `projectileStart` equal to the current position on a wrap frame.
+- [ ] Make the renderer consume that published semantic fact rather than
+      rediscovering a teleport by comparing transformed floating-point
+      coordinates.
+- [ ] Keep the collision query disabled on the teleport frame as it is now.
+
+#### RED-first evidence
+
+- [ ] Advance the headless scene to the exact modulo wrap and assert no sweep
+      query result and no drawable path segment are published.
+- [ ] Assert the steps immediately before and after the wrap retain their
+      ordinary short forward segments.
+
+### T11-SF2 — Decide and test contact-state versus one-hit semantics
+
+**Priority:** Important
+
+The follow-up record says the lab proves “no hit, one hit, no stale repeat.”
+The actual sweep returns `time: 0` on every step that starts in contact, which
+is the documented raw-query behavior. The test named “one on it, and none
+after” permits as many as 20 hit frames. Its purported post-hit loop contains
+only `void index`, and the preceding test ends with `void crossed` instead of
+asserting that a crossing happened. These tests can pass without proving the
+stated transition contract.
+
+Do not weaken the core sweep's correct starting-overlap behavior to satisfy a
+demo. Freeze what the lab intends to teach.
+
+#### Required approach
+
+- [ ] If the lab teaches raw collision state, document an active-contact
+      interval and allow repeated `time: 0` results only while the shapes
+      genuinely remain in contact.
+- [ ] If the lab teaches an enter/hit event, derive that edge in scene state
+      and publish the hit once when contact changes from absent to present.
+- [ ] Make the HUD wording match the selected state/event semantics.
+- [ ] Remove empty assertion loops and `void` placeholders from acceptance
+      tests.
+
+#### RED-first evidence
+
+- [ ] Assert every frame before first contact is `undefined`.
+- [ ] Assert either exactly one entry event, or one contiguous and bounded
+      contact interval, according to the frozen lab contract.
+- [ ] Assert every frame after separation through the wrap is `undefined`.
+- [ ] Independently assert contact at each reported time.
+
+### T11-SF3 — Finish the claimed allocation-free sweep miss path
+
+**Priority:** Important
+
+The corner descriptors and root arrays are gone, but the function still
+creates a per-call `accept` closure. It also calls `collideCircleAabb2D` before
+the sweep; that manifold computes and allocates a closest-point object even on
+a miss. Consequently the fix record's “no per-call arrays or closures” and
+the source comment's “nothing is allocated until a hit” are false.
+
+The timing benchmark is useful throughput evidence, but it does not establish
+the allocation claim.
+
+#### Required approach
+
+- [ ] Replace the local `accept` closure with inline scalar candidate updates
+      or a module-level helper that returns no object and captures no state.
+- [ ] Use the allocation-free `intersectsCircleAabb2D` predicate for the
+      starting-overlap check; call `collideCircleAabb2D` only after the
+      predicate confirms contact.
+- [ ] Keep scalar best-candidate fields and allocate/freeze only the public
+      hit records on an actual hit.
+- [ ] Correct the code and plan comments if any intentional allocation
+      remains.
+
+#### RED-first evidence
+
+- [ ] Add structural evidence that the sweep body contains no locally created
+      function or array.
+- [ ] Record miss-path allocation separately from hit-path timing; do not use
+      the 1000-hit/1000-miss aggregate as proof of zero allocations.
+- [ ] Keep all exact Minkowski, contact-point, translation, and tie suites
+      green.
+
+### T11-SF4 — Make the focused tests prove every recorded claim
+
+**Priority:** Important
+
+Several automated claims are broader than their tests:
+
+- `labHud.test.tsx` says Pair, Sweep, Filter, Anim, and Debug each publish
+  once, but the publication test presses only Pair.
+- `rendererContract.test.ts` allowlists helper names but does not verify that
+  each allowlisted helper still contains a `'worklet'` directive. Its regex
+  also matches only one arrow-function spelling, so typed callbacks can be
+  skipped silently.
+- The overlay test checks source strings only. It does not change the shared
+  snapshot/viewport and prove that four mounted Skia nodes react without a
+  React rerender.
+- The rebuild-after-move guide test proves the collider disappears from the
+  old query, but never queries its new bounds to prove it is found there.
+
+#### Required approach
+
+- [ ] Table-drive all five HUD actions and count exactly one publication per
+      action, followed by unchanged commits with no further publication.
+- [ ] Parse the TSX with the TypeScript AST, or test transformed worklet
+      metadata, instead of relying on a partial regular expression. Verify
+      every locally called helper is actually workletized.
+- [ ] Mount the fixed overlay topology with controllable shared values;
+      change visibility, position, and viewport, then assert reactive Skia
+      props without remounting the nodes or rerendering the parent.
+- [ ] Query both the old and new locations after the documented spatial-index
+      rebuild.
+
+#### RED-first evidence
+
+- [ ] Each named test must fail when its corresponding behavior is removed;
+      avoid source checks whose allowlist can outlive the required directive.
+- [ ] Keep device evidence separate: source/mounted tests reduce risk but do
+      not replace the open physical-device rows.
+
+### T11-SF5 — Reconcile the plan instead of adding another prose-only record
+
+**Priority:** Important
+
+T11-FF8 explicitly required checking the matching original F1-F10 and
+follow-up evidence boxes after each verified fix. The plan instead changes the
+top status and adds a prose record while every original feedback and follow-up
+checkbox remains open. The record also claims no per-call closure and complete
+semantic-transition coverage, both contradicted by the current code/tests.
+
+#### Required approach
+
+- [ ] Keep the status at “second follow-up review: changes still required”
+      until T11-SF1 through T11-SF4 are resolved.
+- [ ] Correct or remove the unsupported closure, one-hit, and all-actions
+      claims immediately.
+- [ ] After focused fixes, check each completed F1-F10, FF1-FF8, and SF item
+      with its exact code/test evidence; leave genuinely optional alternatives
+      and device rows open.
+- [ ] Record the resolving commit hashes and focused suite names once, without
+      adding a third contradictory completion narrative.
+
+#### Second follow-up acceptance
+
+- [ ] The teleport frame publishes and draws no sweep path.
+- [ ] Lab hit/contact semantics are explicit and directly asserted.
+- [ ] The circle sweep creates no local closure or miss-path manifold object.
+- [ ] HUD, renderer, and guide tests prove every behavior named in the fix
+      record.
+- [ ] Task status, feedback checkboxes, prose records, code, and device rows
+      agree.

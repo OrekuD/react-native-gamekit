@@ -126,7 +126,7 @@ describe('Collision Lab HUD publication contract', () => {
     act(() => session.dispose());
   });
 
-  it('publishes exactly once per semantic transition (FF3)', () => {
+  it('publishes exactly once per semantic transition for all five actions (SF4)', () => {
     const { session, driver } = createHarness();
     let publishes = 0;
     act(() => session.start());
@@ -137,26 +137,30 @@ describe('Collision Lab HUD publication contract', () => {
     });
     const initial = publishes;
 
-    const pressPair = (): void => {
-      session.input.press('cycle-pair');
-      session.input.release('cycle-pair');
+    const actions = ['cycle-pair', 'toggle-sweep', 'toggle-filter', 'cycle-anim', 'toggle-debug'] as const;
+    for (const action of actions) {
+      session.input.press(action);
+      session.input.release(action);
       timeline += 1000 / 60;
       act(() => {
         driver.fireNext(timeline);
       });
-    };
+      publishes; // read for the assertion below
+    }
+    assert.equal(
+      publishes,
+      initial + actions.length,
+      'each of the five actions publishes exactly once',
+    );
 
-    pressPair();
-    assert.equal(publishes, initial + 1, 'the pair transition publishes once');
-    pressPair();
-    assert.equal(publishes, initial + 2, 'the second pair transition publishes once');
+    // Unchanged steady-state commits publish nothing afterwards.
     for (let index = 0; index < 30; index += 1) {
       timeline += 1000 / 60;
       act(() => {
         driver.fireNext(timeline);
       });
     }
-    assert.equal(publishes, initial + 2, 'steady-state commits publish nothing');
+    assert.equal(publishes, initial + actions.length, 'steady-state commits publish nothing');
 
     act(() => session.dispose());
   });
@@ -219,11 +223,11 @@ describe('Collision Lab HUD publication contract', () => {
       texts = renderer.root
         .findAll((node) => (node.type as string) === 'text')
         .map((node) => node.children.map((child) => String(child)).join(''));
-      if (texts.some((text) => text.includes('hit at t='))) {
+      if (texts.some((text) => text.includes('sweep contact yes'))) {
         break;
       }
     }
-    const sweepLine = texts.find((text) => text.includes('hit at t='));
+    const sweepLine = texts.find((text) => text.includes('sweep contact yes'));
     assert.ok(sweepLine !== undefined, 'the sweep time is visible when a hit exists');
     const contactLine = texts.find((text) => text.includes('point ('));
     assert.ok(contactLine !== undefined, 'the contact point is visible');

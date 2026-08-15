@@ -70,8 +70,12 @@ describe('broad-phase guide example', () => {
     // The enemy moves far away; rebuild as documented.
     colliders.set('enemy', placeCollider2D(rectangleCollider2D({ offset: { x: 0, y: 0 }, width: 20, height: 20 }), { x: 260, y: 40 }));
     index = build();
-    const candidates = querySpatialHash2D(index, worldColliderBounds2D(moving));
-    assert.ok(!candidates.includes('enemy'), 'the rebuilt index reflects the new position');
+    const oldCandidates = querySpatialHash2D(index, worldColliderBounds2D(moving));
+    assert.ok(!oldCandidates.includes('enemy'), 'the old query no longer finds the enemy');
+    // The documented rebuild must find the enemy at its NEW position.
+    const movedEnemy = colliders.get('enemy')!;
+    const newCandidates = querySpatialHash2D(index, worldColliderBounds2D(movedEnemy));
+    assert.ok(newCandidates.includes('enemy'), 'the new query finds the enemy at its new bounds');
   });
 
   it('reports the overlapping enemy but not the distant coin or itself', () => {

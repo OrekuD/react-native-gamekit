@@ -102,6 +102,8 @@ export const LAB_SPRITE_COLLIDERS = {
 export interface CollisionLabSnapshot {
   readonly pair: LabPairId;
   readonly swept: boolean;
+  /** True on the modulo wrap frame: no sweep query and no path segment. */
+  readonly projectileTeleported: boolean;
   readonly filterEnabled: boolean;
   readonly debugVisible: boolean;
   readonly animation: LabAnimationId;
@@ -119,42 +121,64 @@ export interface CollisionLabSnapshot {
   readonly box: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 }
 
+interface LabSceneState {
+  pair: LabPairId;
+  swept: boolean;
+  filterEnabled: boolean;
+  debugVisible: boolean;
+  animation: LabAnimationId;
+  projectileTicks: number;
+  projectileX: number;
+  previousProjectileX: number;
+  projectileWrapped: boolean;
+}
+
 const labScene = defineScene({
   actions: ['cycle-pair', 'toggle-sweep', 'toggle-filter', 'cycle-anim', 'toggle-debug'],
-  create: () => ({
+  create: (): LabSceneState => ({
     pair: 'circleAabb' as LabPairId,
     swept: false,
     filterEnabled: false,
     debugVisible: true,
     animation: 'idle' as LabAnimationId,
     projectileTicks: 0,
+    projectileX: COLLISION_LAB_CONFIG.projectile.x,
+    previousProjectileX: COLLISION_LAB_CONFIG.projectile.x,
+    projectileWrapped: false,
   }),
   update: ({ state, input }) => {
     const pair: LabPairId =
       state.pair === 'circleAabb' ? 'aabbAabb' : state.pair === 'aabbAabb' ? 'circleCircle' : 'circleAabb';
     const animation: LabAnimationId = state.animation === 'idle' ? 'run' : 'idle';
     const swept = input.button('toggle-sweep').pressed ? !state.swept : state.swept;
+    // The projectile advances exactly one tick while swept and freezes
+    // (keeps its position) when swept is off. The wrap comparison uses the
+    // actually published previous position (T11-SF1), so the modulo reset
+    // is detected on exactly one frame despite floating-point drift.
+    const nextTicks = swept ? state.projectileTicks + 1 : state.projectileTicks;
+    const stepSeconds = 1 / 60;
+    const span = COLLISION_LAB_CONFIG.logicalWidth + 40;
+    const raw = COLLISION_LAB_CONFIG.projectile.vx * stepSeconds * nextTicks;
+    const currentX = COLLISION_LAB_CONFIG.projectile.x + (raw % span);
     return {
       pair: input.button('cycle-pair').pressed ? pair : state.pair,
       swept,
       filterEnabled: input.button('toggle-filter').pressed ? !state.filterEnabled : state.filterEnabled,
       debugVisible: input.button('toggle-debug').pressed ? !state.debugVisible : state.debugVisible,
       animation: input.button('cycle-anim').pressed ? animation : state.animation,
-      // The projectile advances exactly one tick while swept and freezes
-      // (keeps its position) when swept is off.
-      projectileTicks: swept ? state.projectileTicks + 1 : state.projectileTicks,
+      projectileTicks: nextTicks,
+      projectileX: currentX,
+      previousProjectileX: state.projectileTicks > 0 ? state.projectileX : COLLISION_LAB_CONFIG.projectile.x,
+      projectileWrapped: state.projectileTicks > 0 && currentX < state.projectileX,
     };
   },
   snapshot: ({ state }): CollisionLabSnapshot => {
     const { ball, box, projectile, target, sprite, cellSize, filterA, filterB } = COLLISION_LAB_CONFIG;
-    const stepSeconds = 1 / 60;
-    const worldSpan = COLLISION_LAB_CONFIG.logicalWidth + 40;
-    const travelled = projectile.vx * stepSeconds * state.projectileTicks;
-    const previousTravelled = Math.max(0, travelled - projectile.vx * stepSeconds);
-    const projectileX = projectile.x + (travelled % worldSpan);
-    const projectilePrevX = projectile.x + (previousTravelled % worldSpan);
-    // The modulo wrap is an explicit teleport: never sweep across the world.
-    const wrapped = projectileX < projectilePrevX;
+    const projectileX = state.projectileX;
+    const projectilePrevX = state.previousProjectileX;
+    // The modulo wrap is an explicit teleport (state-detected): never sweep
+    // across the world.
+    const wrapped = state.projectileWrapped;
 
     // Static contact for the selected pair.
     let staticHit: CollisionHit2D | undefined;
@@ -210,6 +234,7 @@ const labScene = defineScene({
     return {
       pair: state.pair,
       swept: state.swept,
+      projectileTeleported: wrapped,
       filterEnabled: state.filterEnabled,
       debugVisible: state.debugVisible,
       animation: state.animation,

@@ -176,7 +176,7 @@ export function LabHud({
           : `normal (${display.hit.nx.toFixed(2)}, ${display.hit.ny.toFixed(2)}) depth ${display.hit.depth.toFixed(2)} point (${display.hit.px.toFixed(1)}, ${display.hit.py.toFixed(1)})`}
       </Text>
       <Text style={styles.hudLine}>
-        sweep {display.sweptActive ? `hit at t=${display.sweptHitTime?.toFixed(3)}` : 'no hit'} · candidates {display.candidates}
+        sweep contact {display.sweptActive ? `yes (entry t=${display.sweptHitTime?.toFixed(3)})` : 'no'} · candidates {display.candidates}
       </Text>
     </View>
   );

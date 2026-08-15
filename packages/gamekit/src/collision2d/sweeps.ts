@@ -28,6 +28,7 @@ import {
   assertValidVector2D,
 } from '../geometry/validation';
 import { collideAabbAabb2D, collideCircleAabb2D, type CollisionHit2D } from './manifolds';
+import { intersectsCircleAabb2D } from './intersections';
 import { intersectSegmentAabb2D } from './segments';
 
 /** Earliest impact of a swept circle against an AABB. */
@@ -88,9 +89,14 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
   assertValidVector2D(displacement, 'displacement');
   assertValidAabb2D(target, 'target');
 
-  const startingOverlap = collideCircleAabb2D(circle, target);
-  if (startingOverlap !== undefined) {
-    return hitFromManifold(0, startingOverlap);
+  // The starting-overlap check uses the allocation-free predicate; the
+  // manifold (and its contact object) runs only after contact is confirmed
+  // (T11-SF3).
+  if (intersectsCircleAabb2D(circle, target)) {
+    const overlap = collideCircleAabb2D(circle, target);
+    if (overlap !== undefined) {
+      return hitFromManifold(0, overlap);
+    }
   }
   if (displacement.x === 0 && displacement.y === 0) {
     return undefined;
@@ -114,37 +120,34 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
   let bestPX = 0;
   let bestPY = 0;
 
-  const accept = (time: number, nx: number, ny: number, px: number, py: number): void => {
-    if (time < 0 || time > 1 || (hasBest && bestTime < time)) {
-      return;
-    }
-    if (!hasBest || time < bestTime) {
-      hasBest = true;
-      bestTime = time;
-      bestNX = nx;
-      bestNY = ny;
-      bestPX = px;
-      bestPY = py;
-    }
-  };
-
   // Face candidates: the four expanded faces, valid within the face extent.
+  // The accept logic is inlined as scalar updates (no local closure).
   if (dx !== 0) {
     const faceX = dx > 0 ? minX - radius : maxX + radius;
     const time = (faceX - x0) / dx;
     const yAt = y0 + dy * time;
-    if (yAt >= minY && yAt <= maxY) {
+    if (yAt >= minY && yAt <= maxY && time >= 0 && time <= 1 && (!hasBest || bestTime >= time)) {
       // The contact point is the closest point on the ORIGINAL target to
       // the impact position (both coordinates clamped).
-      accept(time, dx > 0 ? -1 : 1, 0, clamp(faceX, minX, maxX), clamp(yAt, minY, maxY));
+      hasBest = true;
+      bestTime = time;
+      bestNX = dx > 0 ? -1 : 1;
+      bestNY = 0;
+      bestPX = clamp(faceX, minX, maxX);
+      bestPY = clamp(yAt, minY, maxY);
     }
   }
   if (dy !== 0) {
     const faceY = dy > 0 ? minY - radius : maxY + radius;
     const time = (faceY - y0) / dy;
     const xAt = x0 + dx * time;
-    if (xAt >= minX && xAt <= maxX) {
-      accept(time, 0, dy > 0 ? -1 : 1, clamp(xAt, minX, maxX), clamp(faceY, minY, maxY));
+    if (xAt >= minX && xAt <= maxX && time >= 0 && time <= 1 && (!hasBest || bestTime >= time)) {
+      hasBest = true;
+      bestTime = time;
+      bestNX = 0;
+      bestNY = dy > 0 ? -1 : 1;
+      bestPX = clamp(xAt, minX, maxX);
+      bestPY = clamp(faceY, minY, maxY);
     }
   }
 

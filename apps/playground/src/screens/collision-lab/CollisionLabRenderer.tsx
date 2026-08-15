@@ -40,7 +40,7 @@ const COLLIDER_COLORS: Record<string, string> = {
  * arrives as reactive shared values, and visibility is a zero-size policy so
  * toggling Debug never rebuilds the canvas or the tree.
  */
-const COLLIDER_TOPOLOGY = [
+export const COLLIDER_TOPOLOGY = [
   { label: 'body', kind: 'aabb' as const },
   { label: 'hurtbox', kind: 'circle' as const },
   { label: 'attack', kind: 'aabb' as const },
@@ -54,7 +54,7 @@ interface ColliderOverlayProps {
   readonly snap: SharedValue<CollisionLabSnapshot | undefined>;
 }
 
-function ColliderOverlay({ index, kind, world, snap }: ColliderOverlayProps) {
+export function ColliderOverlay({ index, kind, world, snap }: ColliderOverlayProps) {
   // One reactive shared value per Skia prop (T11-FF2): the React tree is
   // built from the fixed topology only, never from a shared `.value` read.
   const x = useDerivedValue(() => {
@@ -322,17 +322,15 @@ export function CollisionLabRenderer({
     'worklet';
     const surface = world.value;
     const value = snap.value;
-    if (surface === undefined || value === undefined || !value.swept) {
+    // The published teleport fact hides the path (SF1); the scene also
+    // suppresses the sweep query on that frame.
+    if (surface === undefined || value === undefined || !value.swept || value.projectileTeleported) {
       return '';
     }
     const sx = toSurfaceX(value.projectileStart.x, surface.scale, surface.offsetX);
     const sy = toSurfaceY(value.projectileStart.y, surface.scale, surface.offsetY);
     const ex = toSurfaceX(value.projectile.x, surface.scale, surface.offsetX);
     const ey = toSurfaceY(value.projectile.y, surface.scale, surface.offsetY);
-    // The wrap teleport sets projectileStart == projectile: hide the path.
-    if (sx === ex && sy === ey) {
-      return '';
-    }
     return `M ${sx} ${sy} L ${ex} ${ey}`;
   });
 
