@@ -57,6 +57,7 @@ function assertFinitePosition(position: Point2D): void {
 export function createInputBuffer<TInput extends InputMap>(
   input: TInput,
   assertLive: () => void,
+  isRejectingInput: () => boolean = () => false,
 ): InputBuffer<Extract<keyof TInput, string>> {
   type ActionName = Extract<keyof TInput, string>;
   const states = new Map<ActionName, MutableInputState>();
@@ -119,6 +120,9 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     press(action: ActionName) {
       assertLive();
+      if (isRejectingInput()) {
+        return;
+      }
       acceptedCount += 1;
       const state = getButton(action);
       state.pressed ||= !state.held;
@@ -126,6 +130,9 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     release(action: ActionName) {
       assertLive();
+      if (isRejectingInput()) {
+        return;
+      }
       acceptedCount += 1;
       const state = getButton(action);
       state.released ||= state.held;
@@ -133,6 +140,9 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     begin(action: ActionName, pointerId: number, position: Point2D) {
       assertLive();
+      if (isRejectingInput()) {
+        return;
+      }
       assertFinitePointerId(pointerId);
       assertFinitePosition(position);
       const state = getPointer(action);
@@ -160,6 +170,9 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     move(action: ActionName, pointerId: number, position: Point2D) {
       assertLive();
+      if (isRejectingInput()) {
+        return;
+      }
       assertFinitePointerId(pointerId);
       assertFinitePosition(position);
       const state = getPointer(action);
@@ -175,6 +188,9 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     end(action: ActionName, pointerId: number) {
       assertLive();
+      if (isRejectingInput()) {
+        return;
+      }
       assertFinitePointerId(pointerId);
       const state = getPointer(action);
       if (!state.ownsSlot || state.pointerId !== pointerId) {
@@ -188,6 +204,9 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     cancel(action: ActionName) {
       assertLive();
+      if (isRejectingInput()) {
+        return;
+      }
       const state = getState(action);
       if (state.kind === 'button') {
         acceptedCount += 1;

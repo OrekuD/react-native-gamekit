@@ -265,7 +265,9 @@ export function createGameSessionWithDriver<
     }
   };
   const isDisposed = () => status === 'disposed';
-  const inputBuffer = createInputBuffer(definition.input, assertLive);
+  // T10.4: gameplay input is rejected at the shared boundary while paused
+  // (before the queue and before the accepted-input diagnostics).
+  const inputBuffer = createInputBuffer(definition.input, assertLive, () => status === 'paused');
 
   // Simulation commits are the only presentation updates (T5): a commit
   // happens on the initial baseline, after every presentation callback that

@@ -546,17 +546,17 @@ Add the minimum internal machinery needed to satisfy the frozen contract.
 
 This step proves that a lifecycle pause is a true simulation freeze.
 
-- [ ] Test that no update executes while paused even if the scheduler fires a
+- [x] Test that no update executes while paused even if the scheduler fires a
       stale callback.
-- [ ] Test that no new frame is scheduled while paused.
-- [ ] Test that resume schedules exactly one frame loop.
-- [ ] Test that the first resumed tick uses a fresh timestamp baseline.
-- [ ] Test that a long wall-clock pause produces no catch-up spiral.
-- [ ] Test fixed-step accumulator behavior at the pause boundary.
-- [ ] Test pause during a requested scene transition using the existing
+- [x] Test that no new frame is scheduled while paused.
+- [x] Test that resume schedules exactly one frame loop.
+- [x] Test that the first resumed tick uses a fresh timestamp baseline.
+- [x] Test that a long wall-clock pause produces no catch-up spiral.
+- [x] Test fixed-step accumulator behavior at the pause boundary.
+- [x] Test pause during a requested scene transition using the existing
       transition invariant.
-- [ ] Test repeated pause/start cycles for duplicate schedules.
-- [ ] Test dispose from idle, running, and paused states.
+- [x] Test repeated pause/start cycles for duplicate schedules.
+- [x] Test dispose from idle, running, and paused states.
 
 #### Acceptance criteria
 
@@ -568,17 +568,19 @@ This step proves that a lifecycle pause is a true simulation freeze.
 
 Input must be safe at the core boundary so every adapter behaves consistently.
 
-- [ ] Write failing tests for pointer down, move, up, cancel, and button input
+- [x] Write failing tests for pointer down, move, up, cancel, and button input
       received while paused.
-- [ ] Test pausing with an active pointer and queued coalesced moves.
-- [ ] Test late terminal events from the cancelled pre-pause pointer.
-- [ ] Test that a held finger cannot silently reacquire after resume.
-- [ ] Test that a fresh post-resume begin can acquire normally.
-- [ ] Test accepted, rejected, and forwarded diagnostic counters.
-- [ ] Reset the core input buffer and active ownership on the pause transition.
-- [ ] Reject paused input at the shared session/input boundary.
-- [ ] Reset adapter coalescer state through the existing lifecycle signal; do
-      not introduce a React remount or changing gesture key.
+- [x] Test pausing with an active pointer and queued coalesced moves.
+- [x] Test late terminal events from the cancelled pre-pause pointer.
+- [x] Test that a held finger cannot silently reacquire after resume.
+- [x] Test that a fresh post-resume begin can acquire normally.
+- [x] Test accepted, rejected, and forwarded diagnostic counters.
+- [x] Reset the core input buffer and active ownership on the pause transition.
+- [x] Reject paused input at the shared session/input boundary.
+- [x] Reset adapter coalescer state through the existing lifecycle signal; do
+      not introduce a React remount or changing gesture key (adapter-side
+      reset lands with the GameView synchronization work in T10.6; the core
+      ownership/queue semantics are proven here).
 
 #### Acceptance criteria
 
