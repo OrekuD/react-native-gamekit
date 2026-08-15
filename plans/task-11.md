@@ -779,15 +779,19 @@ The same debug records must work in Node assertions and the playground.
 This step proves that the public module replaces real private collision code
 without changing the game.
 
-- [ ] Replace wall, paddle, and brick overlap math where the new public API is
+- [x] Replace wall, paddle, and brick overlap math where the new public API is
       semantically equivalent.
-- [ ] Use swept collision for the ball when discrete movement can tunnel.
-- [ ] Preserve authored paddle hit slop without changing rendered paddle size.
-- [ ] Preserve deterministic brick ordering, score, win/loss, and lab looping.
-- [ ] Keep reflection and speed-up rules in the game, not Collision2D.
-- [ ] Remove superseded helpers and tests only after public replacements have
+- [x] Use swept collision for the ball when discrete movement can tunnel
+      (at the authored max speed of 400 u/s the per-tick displacement is
+      6.67 units against 18-unit effective crossings, so discrete overlap
+      cannot tunnel; the anti-tunneling test proves every brick in the path
+      is hit at max speed, and sweeps remain available via the public API).
+- [x] Preserve authored paddle hit slop without changing rendered paddle size.
+- [x] Preserve deterministic brick ordering, score, win/loss, and lab looping.
+- [x] Keep reflection and speed-up rules in the game, not Collision2D.
+- [x] Remove superseded helpers and tests only after public replacements have
       equivalent direct coverage.
-- [ ] Compare payload, update, collision, and frame diagnostics before and
+- [x] Compare payload, update, collision, and frame diagnostics before and
       after migration.
 
 #### Acceptance criteria

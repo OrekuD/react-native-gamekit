@@ -11,9 +11,13 @@
  * results until a typed payload design lands.
  */
 import {
+  collideCircleAabb2D,
   createGameSession,
   defineGame,
   defineScene,
+  expandAabb2D,
+  intersectsAabbAabb2D,
+  type Aabb2D,
   type CommitFrame,
   type GameSession,
   type SceneSnapshot,
@@ -145,15 +149,23 @@ export function bounceBallOffPaddle(
   if (ball.vy <= 0) {
     return ball;
   }
+  // T11.7: the hit test is the public AABB-AABB predicate over the ball's
+  // bounding box and the paddle expanded by the authored collision slop.
+  // The rendered paddle keeps its authored size; the slop is collision-only.
   const { hitSlop } = BRICK_BREAKER_CONFIG.paddle;
-  const left = paddleX - paddleWidth / 2 - ball.radius - hitSlop.horizontal;
-  const right = paddleX + paddleWidth / 2 + ball.radius + hitSlop.horizontal;
-  if (ball.x < left || ball.x > right) {
-    return ball;
-  }
-  const top = paddleY - hitSlop.vertical;
-  const bottom = paddleY + paddleHeight + hitSlop.vertical;
-  if (ball.y + ball.radius < top || ball.y - ball.radius > bottom) {
+  const ballBox: Aabb2D = {
+    x: ball.x - ball.radius,
+    y: ball.y - ball.radius,
+    width: ball.radius * 2,
+    height: ball.radius * 2,
+  };
+  const paddleBox: Aabb2D = {
+    x: paddleX - paddleWidth / 2,
+    y: paddleY,
+    width: paddleWidth,
+    height: paddleHeight,
+  };
+  if (!intersectsAabbAabb2D(ballBox, expandAabb2D(paddleBox, { x: hitSlop.horizontal, y: hitSlop.vertical }))) {
     return ball;
   }
   const { paddleDeflection, maxBallVx, speedUpPerPaddleHit, maxBallSpeed } = BRICK_BREAKER_CONFIG;
@@ -168,14 +180,6 @@ export function bounceBallOffPaddle(
     vy *= ratio;
   }
   return { ...ball, x: ball.x, y: paddleY - ball.radius, vx, vy };
-}
-
-function circleRectOverlap(ball: BallBody, rect: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }): boolean {
-  const closestX = Math.max(rect.x, Math.min(ball.x, rect.x + rect.width));
-  const closestY = Math.max(rect.y, Math.min(ball.y, rect.y + rect.height));
-  const dx = ball.x - closestX;
-  const dy = ball.y - closestY;
-  return dx * dx + dy * dy <= ball.radius * ball.radius;
 }
 
 /**
@@ -200,7 +204,8 @@ export function collideBallWithBricks(
       continue;
     }
     const brick = BRICK_GRID[index]!;
-    if (!circleRectOverlap(nextBall, brick)) {
+    const hit = collideCircleAabb2D(nextBall, brick);
+    if (hit === undefined) {
       continue;
     }
     if (mutableBricks === undefined) {
@@ -209,12 +214,10 @@ export function collideBallWithBricks(
     }
     mutableBricks[index] = false;
     removed += 1;
-    const overlapLeft = nextBall.x + nextBall.radius - brick.x;
-    const overlapRight = brick.x + brick.width - (nextBall.x - nextBall.radius);
-    const overlapTop = nextBall.y + nextBall.radius - brick.y;
-    const overlapBottom = brick.y + brick.height - (nextBall.y - nextBall.radius);
-    const minimum = Math.min(overlapLeft, overlapRight, overlapTop, overlapBottom);
-    if (minimum === overlapLeft || minimum === overlapRight) {
+    // Reflect on the manifold's penetration axis; the reflection rule and
+    // the brick removal stay authored in the game (Collision2D reports
+    // geometry only).
+    if (Math.abs(hit.normal.x) > 0.5) {
       nextBall = { ...nextBall, vx: -nextBall.vx };
     } else {
       nextBall = { ...nextBall, vy: -nextBall.vy };

@@ -5,6 +5,7 @@ import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testi
 import {
   BRICK_BREAKER_CONFIG,
   BRICK_GRID,
+  TOTAL_BRICKS,
   ballLost,
   bounceBallOffPaddle,
   bounceBallOffWalls,
@@ -12,6 +13,7 @@ import {
   clampPaddle,
   collideBallWithBricks,
   initialBrickLiveness,
+  type BallBody,
   type BrickBreakerSession,
 } from './brickBreakerGame.ts';
 
@@ -403,5 +405,83 @@ describe('Brick Breaker headless gameplay', () => {
     );
     assert.equal(ball.x, 4);
     assert.equal(ball.vx, 40);
+  });
+});
+
+describe('T11.7 collision migration', () => {
+  it('never tunnels a brick at the maximum authored speed', () => {
+    // The ball at maxBallSpeed (400 u/s) crosses a brick row at the fixed
+    // step: every brick in the path must still be hit and removed.
+    const speed = BRICK_BREAKER_CONFIG.maxBallSpeed;
+    const stepSeconds = FIXED_STEP_MS / 1000;
+    const ball: BallBody = {
+      x: 160,
+      y: 40,
+      radius: BRICK_BREAKER_CONFIG.ball.radius,
+      vx: 0,
+      vy: speed,
+    };
+    // Step the ball at its max-speed per-tick displacement and accumulate
+    // removals: the discrete manifold must catch every brick in the path.
+    let bricks = initialBrickLiveness();
+    let removed = 0;
+    for (let step = 1; step <= 40; step += 1) {
+      const result = collideBallWithBricks(
+        { ...ball, y: ball.y + speed * stepSeconds * step },
+        bricks,
+      );
+      bricks = result.bricks;
+      removed += result.removed;
+    }
+    assert.ok(removed >= BRICK_BREAKER_CONFIG.bricks.columns, 'no brick is skipped at max speed');
+  });
+
+  it('preserves the paddle hit slop as collision-only forgiveness', () => {
+    const { paddle } = BRICK_BREAKER_CONFIG;
+    const paddleX = 160;
+    // The ball center sits OUTSIDE the rendered paddle edge but INSIDE the
+    // slop band: it must still bounce.
+    const ball: BallBody = {
+      x: paddleX + paddle.width / 2 + paddle.hitSlop.horizontal - 2,
+      y: paddle.y - 1,
+      radius: BRICK_BREAKER_CONFIG.ball.radius,
+      vx: 0,
+      vy: 100,
+    };
+    const next = bounceBallOffPaddle(ball, paddleX, paddle.y, paddle.width, paddle.height);
+    assert.ok(next.vy < 0, 'the slop band counts as a paddle hit');
+    assert.equal(next.y, paddle.y - ball.radius, 'the ball sits on the paddle after the bounce');
+
+    // Outside the slop band entirely (past the center band edge that
+    // includes the ball radius): no bounce.
+    const miss: BallBody = {
+      ...ball,
+      x: paddleX + paddle.width / 2 + paddle.hitSlop.horizontal + ball.radius + 2,
+    };
+    const unchanged = bounceBallOffPaddle(miss, paddleX, paddle.y, paddle.width, paddle.height);
+    assert.equal(unchanged.vy, 100, 'outside the slop band there is no paddle hit');
+  });
+
+  it('keeps deterministic brick ordering and full removal counts', () => {
+    const ball: BallBody = {
+      x: 160,
+      y: 68,
+      radius: BRICK_BREAKER_CONFIG.ball.radius,
+      vx: 0,
+      vy: 120,
+    };
+    const result = collideBallWithBricks(ball, initialBrickLiveness());
+    // The ball's box [156, 164] touches exactly columns 3 (124..160) and
+    // 4 (164..200, tangent) of the first row: deterministic, no surprises.
+    assert.equal(result.removed, 2, 'exactly the touched columns are removed');
+    assert.equal(result.bricks[3], false);
+    assert.equal(result.bricks[4], false);
+    assert.equal(result.bricks[2], true, 'untouched columns stay alive');
+    assert.equal(
+      result.bricks.slice(BRICK_BREAKER_CONFIG.bricks.columns).every((alive) => alive),
+      true,
+      'lower rows are untouched',
+    );
+    void TOTAL_BRICKS;
   });
 });
