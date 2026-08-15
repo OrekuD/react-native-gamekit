@@ -182,6 +182,82 @@ export function createGameSessionWithDriver<
     stepMs: fixedStepMs,
   }) as unknown as CommitFrame<TScenes>;
   const listeners = new Set<(frame: CommitFrame<TScenes>) => void>();
+  const statusListeners = new Set<(status: GameSessionStatus) => void>();
+  let deliveringStatus = false;
+  const queuedStatuses: GameSessionStatus[] = [];
+  let releaseStatusListeners = false;
+
+  // Deliver one transition pass to a snapshot. A throwing listener never
+  // aborts the pass: the remaining snapshot listeners still run, and the
+  // first failure is rethrown once every queued transition has been
+  // delivered (the transition itself is already authoritative).
+  const deliverStatusPass = (current: GameSessionStatus): unknown => {
+    let firstError: unknown;
+    for (const listener of [...statusListeners]) {
+      try {
+        listener(current);
+      } catch (error) {
+        if (firstError === undefined) {
+          firstError = error;
+        }
+      }
+    }
+    return firstError;
+  };
+
+  const notifyStatus = (): void => {
+    if (deliveringStatus) {
+      // Re-entrant transition from inside a listener: queue it so every
+      // listener observes complete states, never a half-applied transition.
+      queuedStatuses.push(status);
+      return;
+    }
+    deliveringStatus = true;
+    let firstError: unknown;
+    try {
+      const error = deliverStatusPass(status);
+      if (firstError === undefined) {
+        firstError = error;
+      }
+      while (queuedStatuses.length > 0) {
+        const queued = queuedStatuses.shift() as GameSessionStatus;
+        const queuedError = deliverStatusPass(queued);
+        if (firstError === undefined) {
+          firstError = queuedError;
+        }
+      }
+    } finally {
+      deliveringStatus = false;
+      if (releaseStatusListeners) {
+        releaseStatusListeners = false;
+        statusListeners.clear();
+      }
+    }
+    if (firstError !== undefined) {
+      throw firstError;
+    }
+  };
+
+  // Status becomes authoritative only after the command's scheduling and
+  // input side effects are safe; listeners then observe the committed value.
+  const setStatus = (next: GameSessionStatus): void => {
+    if (status === next) {
+      return;
+    }
+    status = next;
+    notifyStatus();
+  };
+
+  // Error-path pause: complete the transition and notify, but never let a
+  // status-listener failure mask the original error that caused the pause.
+  const pauseAndRethrow = (original: unknown): never => {
+    try {
+      pauseInternal();
+    } catch {
+      // The original error is the actionable one; listeners were notified.
+    }
+    throw original;
+  };
 
   const assertLive = () => {
     if (status === 'disposed') {
@@ -226,7 +302,6 @@ export function createGameSessionWithDriver<
     if (status !== 'running') {
       return;
     }
-    status = 'paused';
     generation += 1;
     if (frameHandle !== undefined) {
       options.frameDriver.cancelFrame(frameHandle);
@@ -235,14 +310,14 @@ export function createGameSessionWithDriver<
     previousTimestampMs = undefined;
     accumulatorMs = 0;
     inputBuffer.reset();
+    setStatus('paused');
   };
 
   const commitOrPause = () => {
     try {
       commit();
     } catch (error) {
-      pauseInternal();
-      throw error;
+      pauseAndRethrow(error);
     }
   };
 
@@ -402,8 +477,7 @@ export function createGameSessionWithDriver<
         try {
           commitTransition(pending, activeScene.state, undefined);
         } catch (error) {
-          pauseInternal();
-          throw error;
+          pauseAndRethrow(error);
         }
         commitOrPause();
         if (status !== 'running' || generation !== activeGeneration) {
@@ -513,8 +587,7 @@ export function createGameSessionWithDriver<
       } catch (error) {
         activeUpdateScope = undefined;
         updateInProgress = false;
-        pauseInternal();
-        throw error;
+        pauseAndRethrow(error);
       }
 
       if (catchUpSteps === maxCatchUpSteps && accumulatorMs >= fixedStepMs) {
@@ -558,11 +631,18 @@ export function createGameSessionWithDriver<
       if (status === 'running') {
         return;
       }
-      status = 'running';
+      const previous = status;
       previousTimestampMs = undefined;
       accumulatorMs = 0;
       const activeGeneration = ++generation;
-      schedule(activeGeneration);
+      try {
+        schedule(activeGeneration);
+      } catch (error) {
+        // Do not publish `running` when scheduling could not be established.
+        status = previous;
+        throw error;
+      }
+      setStatus('running');
     },
     pause() {
       assertLive();
@@ -617,12 +697,16 @@ export function createGameSessionWithDriver<
         options.frameDriver.cancelFrame(frameHandle);
         frameHandle = undefined;
       }
-      status = 'disposed';
       generation += 1;
       previousTimestampMs = undefined;
       accumulatorMs = 0;
       pendingTransition = undefined;
       inputBuffer.reset();
+      // `disposed` is delivered exactly once, including when dispose runs
+      // from inside a status listener; the listener set is released only
+      // after every queued transition has been delivered.
+      setStatus('disposed');
+      releaseStatusListeners = true;
       listeners.clear();
       activeScene.definition.dispose?.(activeScene.state);
     },
@@ -643,6 +727,20 @@ export function createGameSessionWithDriver<
           }
           removed = true;
           listeners.delete(listener);
+        },
+      });
+    },
+    addStatusListener(listener) {
+      assertLive();
+      statusListeners.add(listener);
+      let removed = false;
+      return Object.freeze({
+        remove() {
+          if (removed) {
+            return;
+          }
+          removed = true;
+          statusListeners.delete(listener);
         },
       });
     },

@@ -74,6 +74,20 @@ export interface GameSession<TScenes extends SceneMap = SceneMap, TInput extends
   /** Pause simulation and discard suspended wall time. */
   pause(): void;
   /**
+   * Observe lifecycle transitions at control frequency.
+   *
+   * The listener receives each actual status transition after it becomes
+   * authoritative (`idle`, `running`, `paused`, `disposed`); idempotent
+   * commands emit nothing, and no initial value is emitted on subscribe —
+   * read `status` for the snapshot. `disposed` is delivered exactly once
+   * before listeners are released. Listeners are called from a snapshot and
+   * a listener that issues another lifecycle command observes complete
+   * states; a throwing listener does not abort delivery, and the first
+   * failure is rethrown from the command after the pass completes. Status
+   * notifications are not render commits.
+   */
+  addStatusListener(listener: (status: GameSessionStatus) => void): GameSubscription;
+  /**
    * Transition to a declared scene.
    *
    * While running, the transition commits at the next fixed-step boundary.
