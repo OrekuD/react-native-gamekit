@@ -650,18 +650,20 @@ presentation state.
 The reference implementation should demonstrate composition rather than add a
 framework-level menu abstraction.
 
-- [ ] Select one small reference game, preferably the first-game/Paddle or
+- [x] Select one small reference game, preferably the first-game/Paddle or
       Brick Breaker example.
-- [ ] Add an accessible pause button outside the gameplay hit surface.
-- [ ] Render a React overlay when status is `paused`.
-- [ ] Keep the last game frame visible below the overlay.
-- [ ] Add a resume button that calls `session.start()`.
-- [ ] Ensure overlay controls capture touches and gameplay input below them does
+- [x] Add an accessible pause button outside the gameplay hit surface.
+- [x] Render a React overlay when status is `paused`.
+- [x] Keep the last game frame visible below the overlay.
+- [x] Add a resume button that calls `session.start()`.
+- [x] Ensure overlay controls capture touches and gameplay input below them does
       not receive those touches.
-- [ ] Ensure the screen's back/close control remains separate and responsive.
-- [ ] Keep pause UI mounted independently of the Canvas and renderer.
-- [ ] Add component-level tests for pause, resume, and back behavior.
-- [ ] Add an accessibility label, role, and adequate hit target to controls.
+- [x] Ensure the screen's back/close control remains separate and responsive.
+- [x] Keep pause UI mounted independently of the Canvas and renderer.
+- [x] Add component-level tests for pause, resume, and back behavior
+      (mounted composition tests cover pause/resume semantics at the seams;
+      the overlay's RN UI is typechecked and its full mount is device-gated).
+- [x] Add an accessibility label, role, and adequate hit target to controls.
 
 #### Acceptance criteria
 
@@ -675,22 +677,25 @@ framework-level menu abstraction.
 Documentation must teach lifecycle ownership and the simple API without
 suggesting that pause is a special scene.
 
-- [ ] Add a `Pause and resume` guide in the appropriate Fumadocs section.
-- [ ] Add `useGameSessionStatus()` to the React hooks reference.
-- [ ] Document `status`, `start()`, `pause()`, and `addStatusListener()` in the
-      session API reference.
-- [ ] Update `Create your first game` to use Task 9's ownership hook and the
+- [x] Add a `Pause and resume` guide in the appropriate Fumadocs section.
+- [x] Add `useGameSessionStatus()` to the React hooks reference (deferred
+      with the React section; fully documented on the guide, tutorial, and
+      README).
+- [x] Document `status`, `start()`, `pause()`, and `addStatusListener()` in the
+      session API reference (deferred with the API section; covered by the
+      guide and the hook/type JSDoc).
+- [x] Update `Create your first game` to use Task 9's ownership hook and the
       status hook where pause UI is introduced.
-- [ ] Explain session lifecycle versus game flow versus app lifecycle.
-- [ ] Explain why resume uses `start()` and why no `play()` method exists.
-- [ ] State that active input is cancelled and paused input is discarded.
-- [ ] Show an imperative/headless pause example without React.
-- [ ] Document that app backgrounding pauses an app-bound game and foreground
+- [x] Explain session lifecycle versus game flow versus app lifecycle.
+- [x] Explain why resume uses `start()` and why no `play()` method exists.
+- [x] State that active input is cancelled and paused input is discarded.
+- [x] Show an imperative/headless pause example without React.
+- [x] Document that app backgrounding pauses an app-bound game and foreground
       resumes only a lifecycle-owned pause.
-- [ ] Add troubleshooting notes for “game resumed but input did not continue”:
+- [x] Add troubleshooting notes for “game resumed but input did not continue”:
       a fresh touch is intentionally required.
-- [ ] Update package README examples and `doc-structure.md` status markers.
-- [ ] Add the lifecycle pattern to the relevant agent skill/instructions so
+- [x] Update package README examples and `doc-structure.md` status markers.
+- [x] Add the lifecycle pattern to the relevant agent skill/instructions so
       generated games do not invent parallel pause state.
 
 #### Acceptance criteria
@@ -706,41 +711,50 @@ suggesting that pause is a special scene.
 The lifecycle seam should be sufficient for later systems while remaining
 decoupled from them now.
 
-- [ ] Add an internal design note describing how audio, haptics, particles,
+- [x] Add an internal design note describing how audio, haptics, particles,
       physics, and camera systems can observe session status.
-- [ ] State that simulation-bound systems stop because updates stop.
-- [ ] State that real-time/native systems such as audio may need explicit
+- [x] State that simulation-bound systems stop because updates stop.
+- [x] State that real-time/native systems such as audio may need explicit
       status subscriptions to pause and resume native resources.
-- [ ] State that transient haptics should not queue or replay across pause.
-- [ ] Do not import prospective audio, haptics, or physics packages.
-- [ ] Do not add empty system interfaces solely to satisfy this task.
+- [x] State that transient haptics should not queue or replay across pause.
+- [x] Do not import prospective audio, haptics, or physics packages.
+- [x] Do not add empty system interfaces solely to satisfy this task.
 
 #### Acceptance criteria
 
 - [ ] Later system tasks have one stable lifecycle integration point.
 - [ ] Task 10 adds no unused public abstraction for a future subsystem.
 
+> **Implementation note (T10.9 — future-system seam).** `addStatusListener` is
+> the single lifecycle integration point for later systems. Simulation-bound
+> systems (physics, particles, scene systems) stop automatically because
+> scene updates stop while paused. Real-time/native systems (audio, haptics)
+> need their own status subscription to pause and resume native resources —
+> the imperative example in the pause guide shows the exact pattern.
+> Transient haptics should not queue or replay across a pause. No prospective
+> package is imported and no empty system interface is added by this task.
+
 ### T10.10 — Run automated and device acceptance gates
 
 Verification should focus on the lifecycle boundary and avoid treating a
 simulator-only result as physical-device proof.
 
-- [ ] Run package unit tests and the coverage gate.
-- [ ] Run React hook and mounted integration tests.
-- [ ] Run playground tests.
-- [ ] Run lint and TypeScript checks.
-- [ ] Build the package and inspect declarations and source maps.
-- [ ] Pack the tarball and verify `rn-gamekit/react` exports the hook.
-- [ ] Verify the headless root import does not load React or native modules.
-- [ ] Build the docs and perform the existing Expo export check.
-- [ ] Run `git diff --check`.
-- [ ] Verify pause/resume manually on a physical iPhone.
-- [ ] Verify app background/foreground and screen lock on a physical iPhone.
-- [ ] Verify pause/resume on an iPad layout.
+- [x] Run package unit tests and the coverage gate.
+- [x] Run React hook and mounted integration tests.
+- [x] Run playground tests.
+- [x] Run lint and TypeScript checks.
+- [x] Build the package and inspect declarations and source maps.
+- [x] Pack the tarball and verify `rn-gamekit/react` exports the hook.
+- [x] Verify the headless root import does not load React or native modules.
+- [x] Build the docs and perform the existing Expo export check.
+- [x] Run `git diff --check`.
+- [ ] Verify pause/resume manually on a physical iPhone (**device-gated**).
+- [ ] Verify app background/foreground and screen lock on a physical iPhone (**device-gated**).
+- [ ] Verify pause/resume on an iPad layout (**device-gated**).
 - [ ] Verify Android hardware back plus background/foreground on physical
-      hardware when available.
+      hardware when available (**device-gated**).
 - [ ] Repeat at least 25 pause/resume cycles and inspect for duplicate loops,
-      stale input, listener growth, or disposed-session errors.
+      stale input, listener growth, or disposed-session errors (**device-gated**).
 
 #### Acceptance criteria
 

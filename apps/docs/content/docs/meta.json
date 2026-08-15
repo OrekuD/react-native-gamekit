@@ -1,10 +1,14 @@
 {
   "title": "React Native Gamekit",
   "pages": [
-    "index",
+    "---Introduction---",
+    "introduction/what-is-react-native-gamekit",
+    "introduction/why-react-native-gamekit",
+    "introduction/supported-platforms",
     "---Getting Started---",
     "getting-started/installation",
     "getting-started/create-your-first-game",
+    "getting-started/project-structure",
     "getting-started/repository",
     "---Concepts---",
     "concepts/game-definition",
@@ -21,9 +25,10 @@
     "concepts/input-guide",
     "concepts/profiling",
     "---Reference---",
+    "---Guides---",
+    "guides/pause-and-resume",
     "reference/brick-breaker",
     "reference/results",
-    "reference/asset-errors",
-    "compatibility"
+    "reference/asset-errors"
   ]
 }

@@ -15,7 +15,7 @@ const sections = [
   {
     title: 'Compatibility',
     description: 'The tested Expo, React Native, and native peer lines.',
-    href: '/docs/compatibility',
+    href: '/docs/introduction/supported-platforms',
   },
 ] as const;
 

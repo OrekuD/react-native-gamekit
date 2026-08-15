@@ -128,6 +128,12 @@ starts it while mounted, pauses it on unmount and backgrounding, and never
 disposes it. For headless tests and non-React owners, keep the imperative
 `createGameSession()` / `try/finally dispose()` path shown above.
 
+Pause and resume are the same commands everywhere: `session.pause()` freezes
+the simulation and holds the last frame, `session.start()` resumes with a
+fresh clock baseline, gameplay input is cancelled and rejected while paused,
+and `useGameSessionStatus(session)` drives pause UI without a second state
+source.
+
 `rn-gamekit` contains the headless definition, session, viewport,
 asset-manifest, and animation APIs. `rn-gamekit/react` contains the
 Skia renderer, native pointer adapter, asset loader, sprites, and sprite

@@ -9,6 +9,14 @@ All notable changes to React Native GameKit will be documented in this file.
 - `useGameSession(definition)` from `rn-gamekit/react`: React-owned session
   creation and terminal disposal, safe under Strict Mode, with exact
   scene/input type inference from the game definition.
+- Observable pause/resume lifecycle: `GameSession.addStatusListener()` with
+  queued, snapshot-delivered notifications, and `useGameSessionStatus()`
+  from `rn-gamekit/react`.
+- Paused-input policy: gameplay input is cancelled on pause and rejected
+  while paused at the shared session/input boundary (never replayed).
+- `GameView` presentation follows core status; app backgrounding pauses and
+  foregrounding resumes only the lifecycle-owned pause, and an external
+  start while inactive is returned to paused.
 
 ## 0.1.0 - 2026-08-12
 

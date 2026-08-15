@@ -1,0 +1,101 @@
+---
+title: Pause and resume
+description: Freeze a session, hold the last frame, and resume without simulating the gap.
+---
+
+`session.pause()` freezes the simulation. `session.start()` starts it again. That's the whole lifecycle API, and it stays deliberately small: pausing a session freezes simulation, holds the last committed frame, cancels active gameplay input, and discards everything after that. It doesn't change scenes, reset the world, or spawn a special pause scene.
+
+## Pausing from React
+
+Observe the session status and derive the UI from it. The status hook is the single source of truth — don't keep a second `isPaused` state that can drift from the session:
+
+```tsx
+import { GamePointerInput, GameView, useGameSession, useGameSessionStatus } from 'rn-gamekit/react';
+import { paddleGame } from './game';
+import { PaddleRenderer } from './Renderer';
+
+export function PaddleGameScreen() {
+  const session = useGameSession(paddleGame);
+  const status = useGameSessionStatus(session);
+
+  if (session === undefined || status === undefined) {
+    return null;
+  }
+
+  return (
+    <GameView game={session} renderer={PaddleRenderer}>
+      <GamePointerInput game={session} action="steer" />
+      {status === 'running' ? (
+        <Pressable onPress={() => session.pause()} accessibilityRole="button">
+          <Text>Pause</Text>
+        </Pressable>
+      ) : null}
+      {status === 'paused' ? (
+        <View style={overlay}>
+          <Text>Paused</Text>
+          <Pressable onPress={() => session.start()} accessibilityRole="button">
+            <Text>Resume</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </GameView>
+  );
+}
+```
+
+The overlay renders above the game surface, so the last committed frame stays visible under it. One press pauses, one press resumes, and the overlay captures its own touches — the frozen gameplay below gets none.
+
+## What pause actually does
+
+- The frame loop is cancelled and the clock stops. Resume establishes a fresh timestamp baseline, so a pause that lasts an hour simulates exactly zero of that hour.
+- The last committed frame and interpolation state are held. The renderer isn't remounted; presentation simply stops advancing.
+- Active gameplay input is cancelled and new input is rejected while paused. Nothing is queued and nothing replays after resume.
+- The active scene and its state are preserved. Pausing is not a transition, a restart, or a disposal.
+
+## Resuming requires fresh input
+
+Because input is cancelled at the pause boundary, a finger that was down when you paused can't silently reacquire control after resume. If the game resumes but the paddle doesn't move, that's the contract working: touch the screen again. The pause overlay itself is React UI — it calls `session.start()` directly and needs no gameplay action.
+
+## Why `start()` resumes
+
+There is no `play()` and no `resume()` alias. `session.start()` starts an idle session and resumes a paused one; `play` stays available as a scene name for your own game flow. Lifecycle and game flow are separate concerns, and the API keeps them that way.
+
+## Three lifecycles, kept apart
+
+| Concern | Examples | Owner |
+| --- | --- | --- |
+| Session lifecycle | `idle`, `running`, `paused`, `disposed` | GameKit |
+| Game flow | ready, playing, game over, settings | Your scenes |
+| App lifecycle | active, inactive, background | React Native |
+
+Backgrounding is one cause of a session pause, but not the only one, and not a special one. `GameView` pauses a borrowed session when the app goes inactive, remembers that it caused the pause, and resumes on foreground only if it still owns it. A pause you started before backgrounding stays paused when you come back — foregrounding never overrides a user pause.
+
+## Pausing without React
+
+The same commands work anywhere, with the status subscription for observation:
+
+```ts
+const session = createGameSession(game);
+session.start();
+
+const subscription = session.addStatusListener((status) => {
+  if (status === 'paused') {
+    // Freeze audio, particles, or other real-time systems here.
+  }
+});
+
+session.pause();
+session.start();
+subscription.remove();
+session.dispose();
+```
+
+`status` is a snapshot getter, `addStatusListener` fires once per actual transition (idempotent commands stay silent), and `disposed` is delivered exactly once before listeners are released.
+
+## The ownership rules that don't change
+
+- `useGameSession()` owns disposal; the pause overlay never does.
+- `GameView` borrows, starts, pauses, and unbinds — it never disposes.
+- Pausing is never a substitute for disposal, and backgrounding never disposes anything.
+
+Future systems (audio, haptics, particles, physics) will observe the same status subscription to pause and resume their own resources; simulation-bound systems stop automatically because updates stop.

@@ -1,0 +1,74 @@
+---
+title: What is react native gamekit
+description: A headless-first 2D game toolkit for React Native and Expo.
+---
+
+react native gamekit is a headless-first 2D game toolkit for React Native and Expo. You define a game as data, a session runs it deterministically at a fixed step, and React presents the result through Skia. The simulation never touches React state, which keeps it fast, testable, and the same on every device.
+
+## A game is a definition
+
+You describe a game once with `defineGame`: a viewport, the input actions it declares, and the scenes it can show. A definition is plain configuration, fully typed, and safe to keep at module scope. Creating it allocates no runtime state.
+
+```ts
+import { defineGame, defineScene } from 'rn-gamekit';
+
+const game = defineGame({
+  viewport: { logicalSize: { width: 320, height: 180 }, mode: 'fit' },
+  input: {
+    steer: { type: 'pointer', description: 'Move the paddle' },
+  },
+  scenes: {
+    play: defineScene({
+      actions: ['steer'],
+      create: () => ({ x: 0 }),
+      update: ({ state, input }) => {
+        const steer = input.pointer('steer');
+        return steer.active && steer.position !== undefined ? { x: steer.position.x } : state;
+      },
+      snapshot: ({ state }) => ({ x: state.x }),
+    }),
+  },
+  initialScene: 'play',
+});
+```
+
+A scene owns its state and decides how it changes every tick. Each update receives the previous state and returns the next one, nothing else mutates, and the result is a small snapshot the renderer can draw.
+
+## A session runs it headlessly
+
+`useGameSession(game)` creates a live session and owns its disposal, or `createGameSession(game)` does the same imperatively for tests and non-React code. The session advances at a fixed step, so a phone presenting at 60 Hz and an iPad at 120 Hz run the same number of simulation ticks in the same wall time. The whole simulation runs in plain JavaScript and drives identically in Node tests and on a device.
+
+## React only presents
+
+`GameView` borrows the session and presents its commits through your Skia renderer; `GamePointerInput` feeds touches in through the same viewport the renderer draws with. Positions and tick counters live in shared values on the UI runtime, never in React state. React re-renders only when something static changes, like the HUD.
+
+```tsx
+import { GamePointerInput, GameView, useGameSession } from 'rn-gamekit/react';
+
+function GameScreen() {
+  const session = useGameSession(game);
+
+  if (session === undefined) {
+    return null;
+  }
+
+  return (
+    <GameView game={session} renderer={MyRenderer}>
+      <GamePointerInput game={session} action="steer" />
+    </GameView>
+  );
+}
+```
+
+## What's included
+
+- Fixed-step headless sessions with named scenes and deterministic transitions
+- Button and pointer input with ownership and edge sampling
+- Three viewport modes with shared surface-to-world math
+- Sprites, sprite sheets, animation clips, and Atlas-backed batching
+- Typed local asset manifests with reference-counted loading
+- A `testing` entry with a manual frame driver for deterministic tests
+
+## What it isn't yet
+
+There's no physics, camera, audio, or particle system, and no ECS layer. Collision is scene logic you write yourself. Those systems are planned; see the [Roadmap](./roadmap) for what's coming and what order it lands in.

@@ -19,10 +19,10 @@ builder through Guides, an expert straight to the API.
 ```
 Docs
 ├── Introduction
-│   ├── What is react native gamekit?   🆕
-│   ├── Why react native gamekit?       🆕
-│   ├── Requirements                    🆕
-│   ├── Supported platforms             📦 compatibility.mdx
+│   ├── What is react native gamekit?   ✅
+│   ├── Why react native gamekit?       ✅
+│   ├── Requirements                    🆕  (pending)
+│   ├── Supported platforms             ✅  ← compatibility.mdx
 │   └── Roadmap                         🆕  (physics, camera, audio, particles,
 │                                            storage, ECS, keyboard/gamepad,
 │                                            tilemaps, TypeDoc pipeline)
@@ -60,7 +60,7 @@ Docs
 │   ├── Move a paddle with touch        🆕
 │   ├── Detect collisions (no physics)  🆕
 │   ├── Animate a sprite                🆕
-│   ├── Pause a game                    🆕
+│   ├── Pause a game                    ✅
 │   ├── Transition between scenes       🆕
 │   ├── Build a HUD that doesn't re-render  🆕
 │   ├── Draw hundreds of sprites        🆕
@@ -113,7 +113,7 @@ No roadmap stubs in the nav — the Roadmap page carries the future.
 | `reference/brick-breaker.mdx` | Examples → Brick Breaker |
 | `reference/results.mdx` | Advanced → Profiling (performance results) |
 | `reference/asset-errors.mdx` | API Reference → Asset errors |
-| `compatibility.mdx` | Introduction → Supported platforms |
+| `compatibility.mdx` | Introduction → Supported platforms (✅, moved to `introduction/supported-platforms.mdx`) |
 | `index.mdx` | Site home (stays) |
 
 ## Archive

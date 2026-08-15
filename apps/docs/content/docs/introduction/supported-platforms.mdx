@@ -1,11 +1,22 @@
 ---
-title: Compatibility
-description: The tested Expo, React Native, React, and native peer lines.
+title: Supported platforms
+description: Where react native gamekit runs and the exact version line it validates against.
 ---
 
-# Compatibility
+react native gamekit targets phones and tablets running Expo SDK 57. The playground exercises the full toolkit on iOS, iPadOS, and Android, including rotation, resize, and iPad split view.
 
-The first supported compatibility line is validated in the playground:
+## Platforms
+
+- iOS and iPadOS, tablet enabled, both orientations
+- Android phones and tablets
+
+## Development builds, not Expo Go
+
+Expo Go can't run this. The toolkit needs the Skia, Gesture Handler, and Reanimated runtimes, which are native modules, so you need a development build generated with `expo prebuild`. That's the workflow the playground itself uses.
+
+## The validated compatibility line
+
+One line of versions is validated in the playground, and it's the line the package declares as its peer dependencies:
 
 | Dependency | Version |
 | --- | --- |
@@ -20,15 +31,4 @@ The first supported compatibility line is validated in the playground:
 
 ## Native singletons
 
-Skia, Gesture Handler, Reanimated, Worklets, and Expo Asset are native peers.
-They live in the playground's `dependencies`, the library's
-`peerDependencies`, and the library's exact `devDependencies`. Applications
-must contain exactly one compatible copy of every native peer.
-
-## Platforms
-
-- iOS and iPadOS (tablet enabled, both orientations)
-- Android (phones and tablets)
-
-Expo Go is **not** a supported requirement — the playground uses local native
-development builds via `expo prebuild` and `expo run:ios` / `expo run:android`.
+Skia, Gesture Handler, Reanimated, Worklets, and Expo Asset are native peers. Your app owns one compatible copy of each, and react native gamekit declares the exact line it was validated against. Applications must contain exactly one copy of every native peer.

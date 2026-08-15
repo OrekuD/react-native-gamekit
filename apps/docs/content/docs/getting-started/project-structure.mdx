@@ -1,0 +1,90 @@
+---
+title: Project structure
+description: The file layout for a react native gamekit game, file by file.
+---
+
+One game is one folder, and the folder is small: a definition file, a renderer, a screen, and your app root. The pieces line up with the ownership model, so the split isn't ceremony — each file has one job and one owner.
+
+```
+my-game/
+├── App.tsx               # root: GestureHandlerRootView + your screen
+├── GameScreen.tsx        # useGameSession + GameView + GamePointerInput
+├── game.ts               # definitions: defineGame / defineScene
+├── Renderer.tsx          # Skia renderer components
+├── assets/               # images and sprite sheets
+└── game.test.ts          # optional headless tests
+```
+
+## game.ts — the definitions
+
+Everything headless lives here: `defineGame`, your `defineScene`s, and the asset manifest. It imports only from `rn-gamekit`, never React or Skia, which is what makes it testable in Node and shareable between the screen and the tests.
+
+Definitions belong at module scope. A definition is immutable configuration, and session identity follows definition identity, so creating one inside a component render would churn sessions. Declare it once, import it everywhere.
+
+## Renderer.tsx — the presentation
+
+The renderer is a React component that reads the committed snapshot through shared values and draws with Skia. It receives `frame`, `alpha`, and `viewport` from `GameView`, converts logical coordinates with the viewport scale and offset, and never touches game state. No positions in React state, no per-frame re-renders, no gameplay mutation.
+
+## GameScreen.tsx — the owner
+
+This is the only file that creates a session:
+
+```tsx
+import { GamePointerInput, GameView, useGameSession } from 'rn-gamekit/react';
+import { paddleGame } from './game';
+import { PaddleRenderer } from './Renderer';
+
+export function GameScreen() {
+  const session = useGameSession(paddleGame);
+
+  if (session === undefined) {
+    return null;
+  }
+
+  return (
+    <GameView game={session} renderer={PaddleRenderer}>
+      <GamePointerInput game={session} action="steer" />
+    </GameView>
+  );
+}
+```
+
+`useGameSession` owns creation and terminal disposal; `GameView` borrows the session and starts and pauses it. The tutorial inlines this in `App.tsx` while the app has one screen. Once a second screen shows up, move it into its own file like this one.
+
+## App.tsx — the root
+
+Gesture Handler requires the root of the tree wrapped in `GestureHandlerRootView`. That's the whole job of this file:
+
+```tsx
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { GameScreen } from './GameScreen';
+
+export default function App() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <GameScreen />
+    </GestureHandlerRootView>
+  );
+}
+```
+
+## assets/ — static sources
+
+Images and sprite sheets live here and are referenced with static `require(...)` handles inside your asset manifest. The manifest types the lookups, so a renderer never addresses an asset by string.
+
+## game.test.ts — optional but worth it
+
+The same `game.ts` that the screen uses drives headless tests: `createGameSessionWithDriver` plus a `ManualFrameDriver` from `rn-gamekit/testing`, firing frames at exact timestamps and asserting exact state. The renderer and the screen never enter the test.
+
+## More than one game
+
+Add a second folder. Each game gets its own definition, renderer, and screen; the playground follows this pattern with Brick Breaker, Sprite Field, and the other examples, each in its own folder under `src/screens/`.
+
+## The rules in one breath
+
+- Definitions at module scope, never inside a render.
+- One owner per session: the hook for screens, `createGameSession` for tests and custom owners. Never both.
+- Never call `dispose()` on a hook-owned session.
+- No per-frame React state. If it changes every tick, it belongs in the scene snapshot.
+
+Working on the library itself instead of a game? The monorepo layout and workspace commands live on the [Repository](../getting-started/repository) page.

@@ -1,0 +1,39 @@
+---
+title: Why react native gamekit
+description: Deterministic simulation, a clean React boundary, and native presentation.
+---
+
+Most React Native game setups bolt a game loop onto React and fight re-renders all the way. react native gamekit inverts that: the simulation runs headless at a fixed step, and React's only job is presenting. That split is what makes the toolkit feel different, so here's what it buys you.
+
+## Deterministic simulation
+
+The game runs on a fixed step with immutable state transitions. The same inputs produce the same ticks at the same times, on a simulator, on a phone, and in a Node test. No wall-clock deltas, no frame-rate coupling, no "it worked on my device."
+
+## A simulation you can test without a device
+
+Because the session is headless, your game logic runs in plain Node with the `testing` entry: fire frames at exact timestamps, assert exact state. The reference games in this repository prove it — the Brick Breaker logic is fully covered by deterministic headless tests, not by tapping a simulator.
+
+## React stays out of the loop
+
+The simulation never triggers React renders. `GameView` presents commits through shared values on the UI runtime, so a 120 Hz display runs smoothly without a single re-render per frame. React re-renders only for things that change rarely, like the HUD. If you've ever profiled a game that re-rendered its whole tree every frame, you know why this matters.
+
+## Native presentation underneath
+
+Rendering happens through Skia, with Reanimated and Worklets carrying the UI-runtime work. The alpha clock interpolates between commits so presentation can run faster than simulation, and the sprite batch draws hundreds of sprites from one Atlas.
+
+## One compatibility line to reason about
+
+The toolkit validates exactly one line of Expo, React Native, and native peer versions, and the playground exercises it on iOS, iPadOS, and Android. Your app owns one copy of each native module; there's no matrix of version combinations to debug.
+
+## When it's the right fit
+
+- You want a real game loop with deterministic physics-style updates, not `setInterval` in a component.
+- You want gameplay logic that's testable in CI without a device.
+- You want to keep React for UI and HUD, not for per-frame state.
+
+## When it isn't yet
+
+- You need physics, camera systems, audio, or particles today. Those are planned, not in this version.
+- You want a batteries-included editor or scene graph. react native gamekit is code-first.
+
+If it sounds right, [Installation](../getting-started/installation) gets you running, and [Create your first game](../getting-started/create-your-first-game) has something playable in about twenty minutes.

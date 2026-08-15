@@ -34,18 +34,6 @@ function createSession() {
   return { session, driver };
 }
 
-function runFrames(
-  session: ReturnType<typeof createSession>['session'],
-  driver: ManualFrameDriver,
-  frames: number,
-  startMs: number,
-): void {
-  for (let index = 0; index < frames; index += 1) {
-    driver.fireNext(startMs + (index + 1) * FIXED_STEP_MS);
-  }
-  void session;
-}
-
 describe('pause and resume clock correctness', () => {
   it('executes no update while paused, even for a stale scheduler callback', () => {
     const { session, driver } = createSession();

@@ -14,16 +14,6 @@ export function baseOptions(): BaseLayoutProps {
         </span>
       ),
     },
-    links: [
-      {
-        text: 'Docs',
-        url: '/docs',
-      },
-      {
-        text: 'Getting Started',
-        url: '/docs/getting-started/installation',
-      },
-    ],
     githubUrl: `https://github.com/${gitConfig.user}/${gitConfig.repo}`,
   };
 }

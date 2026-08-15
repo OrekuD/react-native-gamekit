@@ -155,6 +155,19 @@ try {
 }
 ```
 
+## Pause and resume (Task 10 — agents adding pause UI)
+
+- Pause with `session.pause()`, resume with `session.start()` — there is no
+  `play()` or `resume()` alias, and no pause scene.
+- Derive pause UI from `useGameSessionStatus(session)`. Reject any second
+  `isPaused` React state that could drift from the session.
+- A pause overlay is React UI above the frozen frame: it issues commands,
+  captures its own touches, and never owns or disposes the session.
+- Input is cancelled at the pause boundary; after resume a fresh touch is
+  required. Never synthesize a begin to "restore" a held pointer.
+- App backgrounding pauses an app-bound game; foreground resumes only the
+  pause the lifecycle caused. Never resume a user pause on foreground.
+
 ## Diagnostics
 
 - Missing asset: `ASSET_RESOLVE_FAILED` / `ASSET_DECODE_FAILED` with the
