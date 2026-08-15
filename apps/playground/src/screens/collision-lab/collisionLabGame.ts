@@ -109,6 +109,10 @@ export interface CollisionLabSnapshot {
   readonly animation: LabAnimationId;
   readonly staticHit: CollisionHit2D | undefined;
   readonly sweptHit: { readonly time: number } | undefined;
+  /** Contact-interval fact (T11-TF2): the first hit's time latched when
+   *  contact begins, retained while contact stays active, cleared on
+   *  separation or teleport. */
+  readonly sweepContactEntryTime: number | undefined;
   readonly candidates: readonly string[];
   readonly sprite: { readonly x: number; readonly y: number };
   /** Projected debug primitives for the sprite colliders (FF1: projected
@@ -131,6 +135,8 @@ interface LabSceneState {
   projectileX: number;
   previousProjectileX: number;
   projectileWrapped: boolean;
+  sweptHitTime: number | undefined;
+  sweepContactEntryTime: number | undefined;
 }
 
 const labScene = defineScene({
@@ -145,6 +151,8 @@ const labScene = defineScene({
     projectileX: COLLISION_LAB_CONFIG.projectile.x,
     previousProjectileX: COLLISION_LAB_CONFIG.projectile.x,
     projectileWrapped: false,
+    sweptHitTime: undefined,
+    sweepContactEntryTime: undefined,
   }),
   update: ({ state, input }) => {
     const pair: LabPairId =
@@ -160,6 +168,27 @@ const labScene = defineScene({
     const span = COLLISION_LAB_CONFIG.logicalWidth + 40;
     const raw = COLLISION_LAB_CONFIG.projectile.vx * stepSeconds * nextTicks;
     const currentX = COLLISION_LAB_CONFIG.projectile.x + (raw % span);
+    const wrapped = state.projectileTicks > 0 && currentX < state.projectileX;
+    // The sweep runs in the headless update, from the previous fixed-step
+    // position (state.projectileX) with only the current step's
+    // displacement. The entry time is a contact-interval fact (T11-TF2):
+    // latched when contact begins, retained while it stays active, cleared
+    // on separation or teleport — so an unrelated HUD field change can
+    // never reset the displayed entry time.
+    const sweptHitTime =
+      swept && nextTicks > 0 && !wrapped
+        ? sweepCircleAabb2D({
+            circle: { x: state.projectileX, y: COLLISION_LAB_CONFIG.projectile.y, radius: COLLISION_LAB_CONFIG.projectile.radius },
+            displacement: { x: currentX - state.projectileX, y: 0 },
+            target: COLLISION_LAB_CONFIG.target,
+          })?.time
+        : undefined;
+    const sweepContactEntryTime =
+      sweptHitTime !== undefined
+        ? state.sweptHitTime === undefined
+          ? sweptHitTime
+          : state.sweepContactEntryTime
+        : undefined;
     return {
       pair: input.button('cycle-pair').pressed ? pair : state.pair,
       swept,
@@ -169,7 +198,9 @@ const labScene = defineScene({
       projectileTicks: nextTicks,
       projectileX: currentX,
       previousProjectileX: state.projectileTicks > 0 ? state.projectileX : COLLISION_LAB_CONFIG.projectile.x,
-      projectileWrapped: state.projectileTicks > 0 && currentX < state.projectileX,
+      projectileWrapped: wrapped,
+      sweptHitTime,
+      sweepContactEntryTime,
     };
   },
   snapshot: ({ state }): CollisionLabSnapshot => {
@@ -199,16 +230,8 @@ const labScene = defineScene({
       staticHit = undefined;
     }
 
-    // Swept projectile against the thin target, from the PREVIOUS
-    // fixed-step position with only the current step's displacement.
-    const sweptHit =
-      state.swept && state.projectileTicks > 0 && !wrapped
-        ? sweepCircleAabb2D({
-            circle: { x: projectilePrevX, y: projectile.y, radius: projectile.radius },
-            displacement: { x: projectileX - projectilePrevX, y: 0 },
-            target,
-          })
-        : undefined;
+    // The sweep already ran in the update (T11-TF2): the snapshot only
+    // publishes the facts.
 
     // Broad phase over the lab shapes.
     const index = buildSpatialHash2D({
@@ -239,7 +262,8 @@ const labScene = defineScene({
       debugVisible: state.debugVisible,
       animation: state.animation,
       staticHit,
-      sweptHit: sweptHit === undefined ? undefined : { time: sweptHit.time },
+      sweptHit: state.sweptHitTime === undefined ? undefined : { time: state.sweptHitTime },
+      sweepContactEntryTime: state.sweepContactEntryTime,
       candidates,
       sprite: { x: sprite.x, y: sprite.y },
       colliderDebug,

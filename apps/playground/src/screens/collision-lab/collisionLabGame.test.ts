@@ -140,6 +140,7 @@ describe('Collision Lab rules', () => {
 
     let crossed = false;
     let crossedTick = 0;
+    let separated = false;
     for (let index = 0; index < 130; index += 1) {
       tick(1);
       const current = snap();
@@ -155,13 +156,15 @@ describe('Collision Lab rules', () => {
         assert.ok(distance - projectile.radius <= 1e-6, 'the shapes touch at the lab hit time');
       }
       if (crossed && current.sweptHit === undefined) {
+        separated = true;
         break; // The hit must not persist after the projectile passes.
       }
-      if (crossed && crossedTick > 0 && index + 2 > crossedTick + 3) {
-        break;
-      }
     }
-    void crossed;
+    // The test is only meaningful if the crossing actually happened and the
+    // hit ended: fail loudly instead of passing on a silent no-op.
+    assert.ok(crossed, 'the projectile crosses the target');
+    assert.ok(crossedTick > 0, 'the crossing tick is recorded');
+    assert.ok(separated, 'the hit ends after the projectile passes');
   });
 
   it('freezes the contact-interval contract: none before, contiguous, none after (T11-SF2)', () => {
@@ -212,29 +215,37 @@ describe('Collision Lab rules', () => {
     // The modulo wrap happens when travelled >= 360: tick 135 at 160 u/s
     // and 1/60 s steps (160 * 135 / 60 = 360).
     let wrapFrame = -1;
-    let before: ReturnType<typeof snap> | undefined;
-    let after: ReturnType<typeof snap> | undefined;
+    let before: { frame: number; snap: ReturnType<typeof snap> } | undefined;
+    let after: { frame: number; snap: ReturnType<typeof snap> } | undefined;
+    let prev: { frame: number; snap: ReturnType<typeof snap> } | undefined;
     for (let index = 0; index < 150; index += 1) {
       tick(1);
       const current = snap();
+      const frame = index + 2;
       if (current.projectileTeleported && wrapFrame < 0) {
-        wrapFrame = index + 2;
+        wrapFrame = frame;
         assert.equal(current.sweptHit, undefined, 'no sweep query on the teleport frame');
+        // Capture the snapshot that was published on the IMMEDIATELY
+        // previous tick — not the last normal frame anywhere in the run.
+        before = prev;
+        assert.ok(
+          before !== undefined && before.frame === wrapFrame - 1,
+          'the before snapshot is the immediate predecessor',
+        );
       }
-      if (!current.projectileTeleported) {
-        before = current; // The last normal frame before the wrap.
+      if (wrapFrame > 0 && frame === wrapFrame + 1) {
+        after = { frame, snap: current };
       }
-      if (wrapFrame > 0 && index + 2 === wrapFrame + 1) {
-        after = current;
-      }
+      prev = { frame, snap: current };
     }
     assert.ok(wrapFrame > 0, 'the wrap frame occurs');
-    assert.ok(before !== undefined && !before.projectileTeleported, 'the step before wraps normally');
-    assert.ok(after !== undefined && !after.projectileTeleported, 'the step after wraps normally');
+    assert.ok(before !== undefined && !before.snap.projectileTeleported, 'the step before wraps normally');
+    assert.ok(after !== undefined && !after.snap.projectileTeleported, 'the step after wraps normally');
+    assert.ok(after.frame === wrapFrame + 1, 'the after snapshot is the immediate successor');
     // The ordinary steps publish a short forward segment: start differs from
     // the current position and both stay on the same side of the wrap.
-    assert.ok(before !== undefined && before.projectileStart.x < before.projectile.x, 'forward segment before');
-    assert.ok(after !== undefined && after.projectileStart.x < after.projectile.x, 'forward segment after');
+    assert.ok(before !== undefined && before.snap.projectileStart.x < before.snap.projectile.x, 'forward segment before');
+    assert.ok(after !== undefined && after.snap.projectileStart.x < after.snap.projectile.x, 'forward segment after');
   });
 
   it('keeps debug visibility presentation-only (T11-F9)', () => {

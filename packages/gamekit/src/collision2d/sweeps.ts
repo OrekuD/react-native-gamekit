@@ -4,8 +4,10 @@
  *
  * `time` is normalized to `[0, 1]` along the displacement. A starting
  * overlap returns `time: 0` with the static manifold normal; zero
- * displacement returns `undefined` (never NaN); ties resolve to the
- * earliest impact deterministically. Misses allocate nothing.
+ * displacement returns `undefined` (never NaN). At equal times the
+ * candidate evaluated FIRST wins — the X face before the Y face, faces
+ * before corners, corners in index order (T11-TF1). Misses allocate
+ * nothing.
  *
  * Circle-AABB sweeps raycast against the exact Minkowski geometry: the
  * target expanded by the radius with ROUNDED corners. Face candidates come
@@ -121,12 +123,14 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
   let bestPY = 0;
 
   // Face candidates: the four expanded faces, valid within the face extent.
-  // The accept logic is inlined as scalar updates (no local closure).
+  // The accept logic is inlined as scalar updates (no local closure). A
+  // candidate REPLACES only when strictly earlier; at equal times the
+  // candidate evaluated first retains the result (T11-TF1).
   if (dx !== 0) {
     const faceX = dx > 0 ? minX - radius : maxX + radius;
     const time = (faceX - x0) / dx;
     const yAt = y0 + dy * time;
-    if (yAt >= minY && yAt <= maxY && time >= 0 && time <= 1 && (!hasBest || bestTime >= time)) {
+    if (yAt >= minY && yAt <= maxY && time >= 0 && time <= 1 && (!hasBest || bestTime > time)) {
       // The contact point is the closest point on the ORIGINAL target to
       // the impact position (both coordinates clamped).
       hasBest = true;
@@ -141,7 +145,7 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
     const faceY = dy > 0 ? minY - radius : maxY + radius;
     const time = (faceY - y0) / dy;
     const xAt = x0 + dx * time;
-    if (xAt >= minX && xAt <= maxX && time >= 0 && time <= 1 && (!hasBest || bestTime >= time)) {
+    if (xAt >= minX && xAt <= maxX && time >= 0 && time <= 1 && (!hasBest || bestTime > time)) {
       hasBest = true;
       bestTime = time;
       bestNX = 0;

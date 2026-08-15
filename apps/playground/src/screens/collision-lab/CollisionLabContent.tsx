@@ -69,10 +69,11 @@ interface LabHudRecord {
   readonly debugVisible: boolean;
   readonly animation: CollisionLabSnapshot['animation'];
   readonly hit: { readonly depth: number; readonly nx: number; readonly ny: number; readonly px: number; readonly py: number } | undefined;
-  /** Sweep-hit state (present or absent) with the value captured at the
-   *  transition — the continuously changing time never republishes. */
+  /** Sweep-hit state (present or absent) with the CONTACT-INTERVAL entry
+   *  fact (T11-TF2) — latched headlessly, never recopied from a raw
+   *  `time: 0` when another HUD field changes. */
   readonly sweptActive: boolean;
-  readonly sweptHitTime: number | undefined;
+  readonly sweepContactEntryTime: number | undefined;
   readonly candidates: number;
 }
 
@@ -118,7 +119,7 @@ function recordOf(snap: CollisionLabSnapshot): LabHudRecord {
             py: snap.staticHit.point.y,
           },
     sweptActive: snap.sweptHit !== undefined,
-    sweptHitTime: snap.sweptHit?.time,
+    sweepContactEntryTime: snap.sweepContactEntryTime,
     candidates: snap.candidates.length,
   };
 }
@@ -176,7 +177,7 @@ export function LabHud({
           : `normal (${display.hit.nx.toFixed(2)}, ${display.hit.ny.toFixed(2)}) depth ${display.hit.depth.toFixed(2)} point (${display.hit.px.toFixed(1)}, ${display.hit.py.toFixed(1)})`}
       </Text>
       <Text style={styles.hudLine}>
-        sweep contact {display.sweptActive ? `yes (entry t=${display.sweptHitTime?.toFixed(3)})` : 'no'} · candidates {display.candidates}
+        sweep contact {display.sweptActive ? `yes (entry t=${display.sweepContactEntryTime?.toFixed(3)})` : 'no'} · candidates {display.candidates}
       </Text>
     </View>
   );

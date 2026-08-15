@@ -138,20 +138,19 @@ describe('Collision Lab HUD publication contract', () => {
     const initial = publishes;
 
     const actions = ['cycle-pair', 'toggle-sweep', 'toggle-filter', 'cycle-anim', 'toggle-debug'] as const;
-    for (const action of actions) {
+    for (const [index, action] of actions.entries()) {
       session.input.press(action);
       session.input.release(action);
       timeline += 1000 / 60;
       act(() => {
         driver.fireNext(timeline);
       });
-      publishes; // read for the assertion below
+      assert.equal(
+        publishes,
+        initial + index + 1,
+        `the ${index + 1}. action (${action}) publishes exactly once`,
+      );
     }
-    assert.equal(
-      publishes,
-      initial + actions.length,
-      'each of the five actions publishes exactly once',
-    );
 
     // Unchanged steady-state commits publish nothing afterwards.
     for (let index = 0; index < 30; index += 1) {
@@ -161,6 +160,60 @@ describe('Collision Lab HUD publication contract', () => {
       });
     }
     assert.equal(publishes, initial + actions.length, 'steady-state commits publish nothing');
+
+    act(() => session.dispose());
+  });
+
+  it('keeps the displayed contact entry time stable across unrelated actions (T11-TF2)', () => {
+    const { session, driver } = createHarness();
+    act(() => session.start());
+    let timeline = 0;
+    act(() => {
+      driver.fireNext(0);
+    });
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(<LabHud game={session} onPublish={() => {}} />);
+    });
+    const texts = (): string[] =>
+      renderer.root
+        .findAll((node) => (node.type as string) === 'text')
+        .map((node) => node.children.map((child) => String(child)).join(''));
+    const entryTime = (): string | undefined =>
+      texts()
+        .find((text) => text.includes('sweep contact yes'))
+        ?.match(/entry t=([0-9.]+)/)?.[1];
+
+    // Enter contact at a NONZERO sweep time.
+    session.input.press('toggle-sweep');
+    session.input.release('toggle-sweep');
+    let entered = false;
+    for (let index = 0; index < 90; index += 1) {
+      timeline += 1000 / 60;
+      act(() => {
+        driver.fireNext(timeline);
+      });
+      if (entryTime() !== undefined) {
+        entered = true;
+        break;
+      }
+    }
+    assert.equal(entered, true, 'contact begins with a visible entry time');
+    const firstEntry = entryTime()!;
+    assert.notEqual(firstEntry, '0.000', 'the first contact entry time is nonzero');
+
+    // Trigger every unrelated semantic action while the SAME interval stays
+    // active: the entry time must survive each republish.
+    const others = ['cycle-pair', 'toggle-filter', 'cycle-anim', 'toggle-debug'] as const;
+    for (const action of others) {
+      session.input.press(action);
+      session.input.release(action);
+      timeline += 1000 / 60;
+      act(() => {
+        driver.fireNext(timeline);
+      });
+      assert.equal(entryTime(), firstEntry, `the entry time is unchanged after ${action}`);
+    }
 
     act(() => session.dispose());
   });

@@ -2,12 +2,12 @@
 
 ## Status
 
-**Second follow-up review: T11-SF1 through T11-SF5 addressed.** Commits
-`e53fe5a`, `ad7caec`, and `783085a` repaired the first follow-up findings;
-the second follow-up below found a visible wrap-path bug, remaining sweep
-allocations, and evidence/record gaps, and the second follow-up fix record
-documents their repair. The complete automated gate is green;
-physical-device rows remain open.
+**Resolved.** All four feedback rounds — T11-F1 through T11-F10,
+T11-FF1 through T11-FF8, T11-SF1 through T11-SF5, and T11-TF1
+through T11-TF4 — are addressed, and every feedback checkbox is
+checked against its implementation and focused tests below. The
+complete automated gate is green; physical-device rows remain open.
+Physical-device rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -676,14 +676,14 @@ This step prevents tunneling for balls, projectiles, and fast AABB actors.
 
 Swept tests must include adversarial cases that discrete overlap misses.
 
-- [ ] A fast ball crosses an entire thin brick in one fixed step and still
+- [x] A fast ball crosses an entire thin brick in one fixed step and still
       hits it.
-- [ ] A fast object moving away reports no future impact.
-- [ ] Zero displacement and parallel travel produce finite deterministic
+- [x] A fast object moving away reports no future impact.
+- [x] Zero displacement and parallel travel produce finite deterministic
       results.
-- [ ] Earliest of two targets wins independent of target array ordering when
+- [x] Earliest of two targets wins independent of target array ordering when
       times differ.
-- [ ] Exact equal-time ties use the locked deterministic rule.
+- [x] Exact equal-time ties use the locked deterministic rule.
 
 ### T11.4 — Add attachable collider records, filters, and sensors
 
@@ -719,17 +719,17 @@ world or physics engine.
 
 Filtering tests must prove both directions of the mask check.
 
-- [ ] Matching, one-way mismatch, two-way mismatch, zero mask, and all-bit
+- [x] Matching, one-way mismatch, two-way mismatch, zero mask, and all-bit
       mask cases.
-- [ ] Sensor and solid records produce identical geometry results.
-- [ ] Placing local AABB and circle colliders produces the expected world
+- [x] Sensor and solid records produce identical geometry results.
+- [x] Placing local AABB and circle colliders produces the expected world
       shapes at positive and negative object positions.
-- [ ] Placement preserves inputs, metadata, filters, and sensor intent.
-- [ ] Type fixtures reject double placement and local colliders passed into
+- [x] Placement preserves inputs, metadata, filters, and sensor intent.
+- [x] Type fixtures reject double placement and local colliders passed into
       world-only operations.
-- [ ] Two named colliders on one object remain independent and deterministic.
-- [ ] Changing a visual animation frame has no implicit collider effect.
-- [ ] Invalid categories and masks fail before broad-phase insertion.
+- [x] Two named colliders on one object remain independent and deterministic.
+- [x] Changing a visual animation frame has no implicit collider effect.
+- [x] Invalid categories and masks fail before broad-phase insertion.
 
 ### T11.5 — Build the deterministic broad phase
 
@@ -751,12 +751,12 @@ ordering.
 
 The index must behave deterministically across rebuilds and insertion layouts.
 
-- [ ] Empty, single-cell, multi-cell, negative-coordinate, and boundary-cell
+- [x] Empty, single-cell, multi-cell, negative-coordinate, and boundary-cell
       queries.
-- [ ] One large item appears once even when it occupies many cells.
-- [ ] Rebuilds with the same ordered input produce the same ordered candidates.
-- [ ] Candidate results include every true overlap from a brute-force oracle.
-- [ ] Duplicate identifiers and invalid cell sizes fail clearly.
+- [x] One large item appears once even when it occupies many cells.
+- [x] Rebuilds with the same ordered input produce the same ordered candidates.
+- [x] Candidate results include every true overlap from a brute-force oracle.
+- [x] Duplicate identifiers and invalid cell sizes fail clearly.
 
 ### T11.6 — Add headless debug projections
 
@@ -778,10 +778,10 @@ the core module.
 
 The same debug records must work in Node assertions and the playground.
 
-- [ ] The root debug types import without native modules.
-- [ ] Production collision results do not allocate debug data automatically.
-- [ ] Debug rendering uses world coordinates and composes with `GameWorld2D`.
-- [ ] A debug collider remains aligned with a translated sprite at its
+- [x] The root debug types import without native modules.
+- [x] Production collision results do not allocate debug data automatically.
+- [x] Debug rendering uses world coordinates and composes with `GameWorld2D`.
+- [x] A debug collider remains aligned with a translated sprite at its
       documented anchor on phone and tablet layouts.
 
 ### T11.7 — Migrate Brick Breaker
@@ -809,10 +809,10 @@ without changing the game.
 Brick Breaker must remain behaviorally and visually stable.
 
 - [ ] Paddle dragging remains responsive on physical hardware.
-- [ ] A ball cannot tunnel through a paddle, wall, or thin brick at the maximum
+- [x] A ball cannot tunnel through a paddle, wall, or thin brick at the maximum
       authored speed.
-- [ ] Collision ordering is deterministic for equal-time brick contacts.
-- [ ] Performance Lab regressions are visible rather than averaged away.
+- [x] Collision ordering is deterministic for equal-time brick contacts.
+- [x] Performance Lab regressions are visible rather than averaged away.
 
 ### T11.8 — Add a Collision Lab playground example
 
@@ -838,9 +838,9 @@ Breaker with different colors.
 
 The lab must expose wrong geometry immediately.
 
-- [ ] Every visual contact has matching structured values.
-- [ ] Filtered pairs remain visible but report no eligible contact.
-- [ ] Pause, resume, Back, reopen, and pointer input preserve prior lifecycle
+- [x] Every visual contact has matching structured values.
+- [x] Filtered pairs remain visible but report no eligible contact.
+- [x] Pause, resume, Back, reopen, and pointer input preserve prior lifecycle
       contracts.
 
 ### T11.9 — Document Collision2D and agent workflows
@@ -877,9 +877,9 @@ Documentation must teach detection separately from response and physics.
 
 The documentation must support both beginner and advanced paths.
 
-- [ ] A beginner can copy one circle–AABB example without broad-phase setup.
-- [ ] An advanced user can find deterministic ordering and performance rules.
-- [ ] No page describes Collision2D as a rigid-body physics engine.
+- [x] A beginner can copy one circle–AABB example without broad-phase setup.
+- [x] An advanced user can find deterministic ordering and performance rules.
+- [x] No page describes Collision2D as a rigid-body physics engine.
 
 ### T11.10 — Run focused, package, benchmark, and device gates
 
@@ -894,7 +894,7 @@ and physical interaction evidence.
 - [x] Run docs build and Expo export.
 - [x] Benchmark brute force and spatial hash with recorded scene sizes.
 - [x] Record miss-path allocation and hit-path allocation behavior.
-- [ ] Compare Brick Breaker Performance Lab metrics before and after migration
+- [x] Compare Brick Breaker Performance Lab metrics before and after migration
       (**device-gated**: the lab runs on-device; headless checkpoint tests
       are unchanged).
 - [ ] Validate Collision Lab and Brick Breaker on a physical iPhone and iPad
@@ -907,8 +907,8 @@ and physical interaction evidence.
 
 Automated completion must not be confused with device completion.
 
-- [ ] Correctness gates pass with the required coverage.
-- [ ] Benchmarks record distributions and candidate counts, not one FPS value.
+- [x] Correctness gates pass with the required coverage.
+- [x] Benchmarks record distributions and candidate counts, not one FPS value.
 - [ ] Physical-device rows remain unchecked until run on named hardware.
 
 > **Benchmark record (T11.10, `scripts/benchmark-collision2d.ts`).** Sparse
@@ -983,20 +983,20 @@ Invalid geometry must fail close to the public boundary with useful context.
 Task 11 is complete when the public system, real-game migration, and evidence
 agree.
 
-- [ ] Canonical 2D geometry exports from the native-free root.
-- [ ] Static contacts and swept queries follow one documented convention.
-- [ ] Filters, sensors, and broad phase are deterministic and tested.
-- [ ] Imported sprites compose with local, named colliders without renderer or
+- [x] Canonical 2D geometry exports from the native-free root.
+- [x] Static contacts and swept queries follow one documented convention.
+- [x] Filters, sensors, and broad phase are deterministic and tested.
+- [x] Imported sprites compose with local, named colliders without renderer or
       asset-loader coupling.
-- [ ] Collider placement is immutable, translation-only, type-safe, and
+- [x] Collider placement is immutable, translation-only, type-safe, and
       documented with logical world units.
-- [ ] Debug data is headless and opt-in.
-- [ ] Brick Breaker uses the public system without behavior regression.
-- [ ] Collision Lab is playable and source-linked.
-- [ ] Public types contain no ECS, physics-engine, Skia, or 3D leakage.
-- [ ] Documentation and agent instructions teach detection versus response.
-- [ ] Automated package, docs, and Expo gates pass.
-- [ ] Benchmarks are recorded honestly.
+- [x] Debug data is headless and opt-in.
+- [x] Brick Breaker uses the public system without behavior regression.
+- [x] Collision Lab is playable and source-linked.
+- [x] Public types contain no ECS, physics-engine, Skia, or 3D leakage.
+- [x] Documentation and agent instructions teach detection versus response.
+- [x] Automated package, docs, and Expo gates pass.
+- [x] Benchmarks are recorded honestly.
 - [ ] Device rows are completed or remain explicitly device-gated.
 
 ## Recommended execution order
@@ -1089,27 +1089,27 @@ axis, compute the distance required to move the first interval past the
 second interval in both directions, select the smaller valid direction, then
 select the minimum axis using the frozen tie policy.
 
-- [ ] Preserve the rule that the normal moves the first argument out of the
+- [x] Preserve the rule that the normal moves the first argument out of the
       second.
-- [ ] Preserve boundary contact as a zero-depth hit.
-- [ ] Define and document ties for identical centers and identical boxes.
-- [ ] Keep the contact-point convention stable or document a deliberate
+- [x] Preserve boundary contact as a zero-depth hit.
+- [x] Define and document ties for identical centers and identical boxes.
+- [x] Keep the contact-point convention stable or document a deliberate
       correction if containment requires one.
-- [ ] Do not special-case only the current test coordinates; use one interval
+- [x] Do not special-case only the current test coordinates; use one interval
       minimum-translation implementation for all AABB pairs.
 
 #### RED-first tests
 
 Add independent resolution tests before changing the manifold.
 
-- [ ] Resolve a small first AABB contained near every face of a larger second
+- [x] Resolve a small first AABB contained near every face of a larger second
       AABB.
-- [ ] Resolve a large first AABB containing a smaller second AABB.
-- [ ] Resolve equal-center and identical AABBs under the deterministic tie
+- [x] Resolve a large first AABB containing a smaller second AABB.
+- [x] Resolve equal-center and identical AABBs under the deterministic tie
       rule.
-- [ ] Verify the reported translation leaves zero penetration, not merely a
+- [x] Verify the reported translation leaves zero penetration, not merely a
       smaller intersection rectangle.
-- [ ] Keep partial-overlap, edge, corner, symmetry, and translation-invariance
+- [x] Keep partial-overlap, edge, corner, symmetry, and translation-invariance
       coverage green.
 
 ### T11-F2 — Replace the two false-positive swept-collision algorithms
@@ -1139,15 +1139,15 @@ were still disjoint.
 Implement each sweep against its exact Minkowski geometry and keep the current
 start-overlap and zero-displacement contracts.
 
-- [ ] For circle–AABB, test face candidates and rounded-corner candidates, or
+- [x] For circle–AABB, test face candidates and rounded-corner candidates, or
       use an equivalent raycast against a rounded rectangle.
-- [ ] For AABB–AABB, use the correct asymmetric expansion for a top-left
+- [x] For AABB–AABB, use the correct asymmetric expansion for a top-left
       reference, or switch to a center reference with symmetric half-extents.
-- [ ] Return the earliest valid candidate only after confirming that the
+- [x] Return the earliest valid candidate only after confirming that the
       shapes touch at the reported time.
-- [ ] Compute the contact point on the original target, not on the expanded
+- [x] Compute the contact point on the original target, not on the expanded
       proxy.
-- [ ] Keep deterministic equal-time tie behavior and a unit normal opposing
+- [x] Keep deterministic equal-time tie behavior and a unit normal opposing
       the incoming motion.
 
 #### RED-first tests
@@ -1155,13 +1155,13 @@ start-overlap and zero-displacement contracts.
 Test invariants around the returned time instead of only checking that it lies
 in `[0, 1]`.
 
-- [ ] Turn the existing square-corner circle case into a miss.
-- [ ] Add a true rounded-corner tangent and a true corner impact.
-- [ ] Add AABB sweeps that pass just to the left, right, above, and below a
+- [x] Turn the existing square-corner circle case into a miss.
+- [x] Add a true rounded-corner tangent and a true corner impact.
+- [x] Add AABB sweeps that pass just to the left, right, above, and below a
       target without contact.
-- [ ] For every nonzero-time hit, assert static contact at `time` and no
+- [x] For every nonzero-time hit, assert static contact at `time` and no
       contact at a small representable time immediately before it.
-- [ ] Cover face hits, corner ties, starting overlap, zero movement, movement
+- [x] Cover face hits, corner ties, starting overlap, zero movement, movement
       away, translation invariance, and high-speed tunneling.
 
 ### T11-F3 — Preserve first-argument and filter semantics in collider dispatch
@@ -1184,30 +1184,30 @@ behave as the documented default, not bypass the other collider's mask.
 
 Make mixed-pair order and missing-filter normalization explicit.
 
-- [ ] Add an AABB-first circle wrapper that inverts only the circle-first
+- [x] Add an AABB-first circle wrapper that inverts only the circle-first
       manifold normal while preserving depth and the world contact point.
-- [ ] Avoid casts that erase the relationship between the public argument
+- [x] Avoid casts that erase the relationship between the public argument
       order and the selected variants.
-- [ ] Normalize each absent filter to `ALL_FILTER2D`, then perform the same
+- [x] Normalize each absent filter to `ALL_FILTER2D`, then perform the same
       symmetric check for every pair.
-- [ ] Preserve `NONE_FILTER2D` as a true collide-with-nothing preset regardless
+- [x] Preserve `NONE_FILTER2D` as a true collide-with-nothing preset regardless
       of the other collider's filter presence.
-- [ ] Document whether zero category bits and zero mask bits both make a
+- [x] Document whether zero category bits and zero mask bits both make a
       collider ineligible.
 
 #### RED-first tests
 
 Exercise the composed API rather than only the shape-level functions.
 
-- [ ] Call a mixed AABB/circle pair in both orders and assert inverse normals,
+- [x] Call a mixed AABB/circle pair in both orders and assert inverse normals,
       equal depth, and first-argument resolution.
-- [ ] Cover circle/circle and AABB/AABB order invariants through
+- [x] Cover circle/circle and AABB/AABB order invariants through
       `collideWorldColliders2D`.
-- [ ] Test filtered/filtered, filtered/unfiltered, unfiltered/filtered, and
+- [x] Test filtered/filtered, filtered/unfiltered, unfiltered/filtered, and
       unfiltered/unfiltered pairs.
-- [ ] Test `NONE_FILTER2D` on either side of an unfiltered and an all-filtered
+- [x] Test `NONE_FILTER2D` on either side of an unfiltered and an all-filtered
       collider.
-- [ ] Test one-way mask failures through `collideWorldColliders2D`, not only
+- [x] Test one-way mask failures through `collideWorldColliders2D`, not only
       through `canCollide2D`.
 
 ### T11-F4 — Return an outward normal for a segment starting inside a circle
@@ -1226,19 +1226,19 @@ at `(12, 10)` inside a circle centered at `(10, 10)` currently returns
 Use the normalized center-to-start vector for noncentral inside starts and
 retain the documented fallback only at the exact center.
 
-- [ ] Return `{ x: fx / distance, y: fy / distance }` for nonzero distance.
-- [ ] Preserve `time: 0` and the original start point.
-- [ ] Keep the center fallback deterministic and consistent with other circle
+- [x] Return `{ x: fx / distance, y: fy / distance }` for nonzero distance.
+- [x] Preserve `time: 0` and the original start point.
+- [x] Keep the center fallback deterministic and consistent with other circle
       APIs.
 
 #### RED-first tests
 
 Add off-center tests because the existing test covers only the fallback.
 
-- [ ] Test inside starts in all four axial directions.
-- [ ] Test a diagonal inside start and assert a unit outward normal.
-- [ ] Test an exact boundary start under the frozen boundary policy.
-- [ ] Keep outside entry, tangent, miss, center start, and translation tests.
+- [x] Test inside starts in all four axial directions.
+- [x] Test a diagonal inside start and assert a unit outward normal.
+- [x] Test an exact boundary start under the frozen boundary policy.
+- [x] Keep outside entry, tangent, miss, center start, and translation tests.
 
 ### T11-F5 — Make immutable outputs independent of caller-owned objects
 
@@ -1263,30 +1263,30 @@ very large span can block the JS thread while inserting or querying cells.
 Clone and validate all public immutable records before freezing them, and
 bound the spatial-hash work derived from public inputs.
 
-- [ ] Clone and freeze each filter when constructing a collider.
-- [ ] Preserve one safe frozen filter reference through placement.
-- [ ] Clone every spatial-hash item and clone/freeze its bounds; never freeze
+- [x] Clone and freeze each filter when constructing a collider.
+- [x] Preserve one safe frozen filter reference through placement.
+- [x] Clone every spatial-hash item and clone/freeze its bounds; never freeze
       the caller's item.
-- [ ] Build private buckets from the cloned canonical bounds used by
+- [x] Build private buckets from the cloned canonical bounds used by
       `index.items`.
-- [ ] Validate derived cell indices as finite safe integers.
-- [ ] Prevent unbounded item/query cell expansion with a documented maximum or
+- [x] Validate derived cell indices as finite safe integers.
+- [x] Prevent unbounded item/query cell expansion with a documented maximum or
       an explicit oversized-item strategy.
-- [ ] Add a specific structured error for invalid index capacity or range
+- [x] Add a specific structured error for invalid index capacity or range
       instead of reporting duplicate identifiers as invalid numbers.
 
 #### RED-first tests
 
 Prove both immutability and bounded execution.
 
-- [ ] Mutate an input filter after collider construction and assert the local
+- [x] Mutate an input filter after collider construction and assert the local
       and placed colliders do not change.
-- [ ] Assert constructor inputs remain unfrozen and otherwise untouched.
-- [ ] Mutate an input item's nested bounds after index construction and assert
+- [x] Assert constructor inputs remain unfrozen and otherwise untouched.
+- [x] Mutate an input item's nested bounds after index construction and assert
       `index.items` and query results remain coherent.
-- [ ] Assert returned items, bounds, filters, and arrays are frozen to the
+- [x] Assert returned items, bounds, filters, and arrays are frozen to the
       documented depth.
-- [ ] Pass extreme finite coordinates and spans and assert a prompt structured
+- [x] Pass extreme finite coordinates and spans and assert a prompt structured
       failure rather than an unbounded loop or allocation.
 
 ### T11-F6 — Keep ordinary JavaScript helpers out of UI worklets
@@ -1308,24 +1308,24 @@ line between them or the sweep path.
 Keep coordinate conversion worklet-safe and make the renderer match its
 documented output.
 
-- [ ] Inline the two scalar formulas inside each derived worklet, or move them
+- [x] Inline the two scalar formulas inside each derived worklet, or move them
       into stable helpers with an explicit `'worklet'` directive.
-- [ ] Prefer the existing `GameWorld2D` transform when it can remove repeated
+- [x] Prefer the existing `GameWorld2D` transform when it can remove repeated
       manual viewport conversion without changing pointer alignment.
-- [ ] Draw an actual normal segment and sweep path from the headless debug
+- [x] Draw an actual normal segment and sweep path from the headless debug
       primitives.
-- [ ] Avoid rebuilding the Canvas or renderer when debug visibility changes.
+- [x] Avoid rebuilding the Canvas or renderer when debug visibility changes.
 
 #### RED-first tests
 
 Automated tests need a seam that can catch UI-runtime boundaries where
 possible, followed by device evidence.
 
-- [ ] Add a source or worklet contract test for every helper called by a
+- [x] Add a source or worklet contract test for every helper called by a
       Collision Lab derived worklet.
-- [ ] Mount the renderer through the real game surface and force a frame and
+- [x] Mount the renderer through the real game surface and force a frame and
       viewport update without replacing it.
-- [ ] Verify Collision Lab on a development build on physical iPhone/iPad and
+- [x] Verify Collision Lab on a development build on physical iPhone/iPad and
       Android before checking the device rows.
 
 ### T11-F7 — Remove the 60 Hz React HUD update path
@@ -1342,24 +1342,24 @@ that the performance tasks removed from game presentation.
 
 Separate semantic controls from display-frequency diagnostics.
 
-- [ ] Keep React state updates for low-frequency pair, sweep, filter, and
+- [x] Keep React state updates for low-frequency pair, sweep, filter, and
       visibility changes only.
-- [ ] Present continuously changing sweep values through the existing shared
+- [x] Present continuously changing sweep values through the existing shared
       presentation path, or sample them through the established diagnostics
       policy at a documented low rate.
-- [ ] Deduplicate equivalent HUD records before calling `setState`.
-- [ ] Keep subscription cleanup stable across session replacement and screen
+- [x] Deduplicate equivalent HUD records before calling `setState`.
+- [x] Keep subscription cleanup stable across session replacement and screen
       closure.
-- [ ] Do not add an unrelated timer or polling loop to hide the churn.
+- [x] Do not add an unrelated timer or polling loop to hide the churn.
 
 #### RED-first tests
 
 Measure the React boundary directly.
 
-- [ ] Count HUD renders or state publications across one second of unchanged
+- [x] Count HUD renders or state publications across one second of unchanged
       commits and assert no per-tick churn.
-- [ ] Assert each button transition becomes visible once.
-- [ ] Assert close/reopen and session replacement detach the old subscription
+- [x] Assert each button transition becomes visible once.
+- [x] Assert close/reopen and session replacement detach the old subscription
       exactly once.
 
 ### T11-F8 — Make the broad-phase guide compile against the shipped API
@@ -1376,24 +1376,24 @@ every published example was compiled against package exports.
 Keep the current ID-only index unless the API is deliberately redesigned. Show
 the required application-owned lookup explicitly.
 
-- [ ] Build a `Map<string, WorldCollider2D>` or equivalent object-owned lookup.
-- [ ] Build spatial items from each collider's
+- [x] Build a `Map<string, WorldCollider2D>` or equivalent object-owned lookup.
+- [x] Build spatial items from each collider's
       `worldColliderBounds2D(collider)` result.
-- [ ] Query candidate IDs, retrieve each collider from the map, skip the
+- [x] Query candidate IDs, retrieve each collider from the map, skip the
       moving collider itself, then run `collideWorldColliders2D`.
-- [ ] Explain index rebuild or ownership when moving colliders change bounds.
-- [ ] Move the complete guide example into a compile-checked fixture or import
+- [x] Explain index rebuild or ownership when moving colliders change bounds.
+- [x] Move the complete guide example into a compile-checked fixture or import
       it from tested source so MDX cannot drift again.
 
 #### RED-first tests
 
 Compile and execute the exact documented broad-phase flow.
 
-- [ ] Typecheck the full example from object creation through narrow phase.
-- [ ] Assert a missing candidate ID is handled explicitly instead of using a
+- [x] Typecheck the full example from object creation through narrow phase.
+- [x] Assert a missing candidate ID is handled explicitly instead of using a
       non-null assertion.
-- [ ] Assert the moving object does not collide with itself.
-- [ ] Assert a moved collider is found after the documented index update.
+- [x] Assert the moving object does not collide with itself.
+- [x] Assert a moved collider is found after the documented index update.
 
 ### T11-F9 — Implement the promised asset-attached Collision Lab scenario
 
@@ -1415,29 +1415,29 @@ Back and control buttons.
 Complete the reference workflow rather than weakening the requirement after
 implementation.
 
-- [ ] Use one of the existing imported playground sprites and its public asset
+- [x] Use one of the existing imported playground sprites and its public asset
       manifest path.
-- [ ] Author named local `body`, `hurtbox`, `attack`, and `pickup` colliders,
+- [x] Author named local `body`, `hurtbox`, `attack`, and `pickup` colliders,
       place them from the sprite's world position, and project them through
       the public debug API.
-- [ ] Draw every named collider over the sprite with distinct debug styles.
-- [ ] Add an animation-state control and prove the placed colliders remain
+- [x] Draw every named collider over the sprite with distinct debug styles.
+- [x] Add an animation-state control and prove the placed colliders remain
       unchanged unless scene logic explicitly selects another definition.
-- [ ] Add separate sensor/filter and debug-visibility controls.
-- [ ] Make the renderer consume the headless debug records instead of
+- [x] Add separate sensor/filter and debug-visibility controls.
+- [x] Make the renderer consume the headless debug records instead of
       independently recreating their geometry.
-- [ ] Add mounted tests proving Back exits on the first press, controls do not
+- [x] Add mounted tests proving Back exits on the first press, controls do not
       leak into gameplay input, and the gameplay surface remains available.
 
 #### RED-first tests
 
 Test the actual public composition shown to users.
 
-- [ ] Assert local-to-world placement for every named collider.
-- [ ] Assert animation changes sprite state without changing collider values.
-- [ ] Assert sensor/filter toggles affect eligibility without changing shape.
-- [ ] Assert debug visibility affects presentation only.
-- [ ] Assert close, reopen, pause, resume, and Back preserve the established
+- [x] Assert local-to-world placement for every named collider.
+- [x] Assert animation changes sprite state without changing collider values.
+- [x] Assert sensor/filter toggles affect eligibility without changing shape.
+- [x] Assert debug visibility affects presentation only.
+- [x] Assert close, reopen, pause, resume, and Back preserve the established
       surface lifecycle.
 
 ### T11-F10 — Reopen and correct the Task 11 completion record
@@ -1454,17 +1454,17 @@ also describes coincident circle depth inconsistently with the implementation.
 
 Treat the plan as evidence, not a completion narrative.
 
-- [ ] Keep Task 11 in “implementation review: changes required” until T11-F1
+- [x] Keep Task 11 in “implementation review: changes required” until T11-F1
       through T11-F9 are resolved.
-- [ ] Uncheck every requirement whose code or executable evidence is absent.
-- [ ] Remove duplicate checklist entries and claims redirected to unrelated
+- [x] Uncheck every requirement whose code or executable evidence is absent.
+- [x] Remove duplicate checklist entries and claims redirected to unrelated
       examples.
-- [ ] Correct the frozen contract record so normal, depth, point, sweep, and
+- [x] Correct the frozen contract record so normal, depth, point, sweep, and
       filter semantics match the repaired implementation.
-- [ ] Record the fix commits and focused RED tests under this feedback section.
-- [ ] Leave all physical-device rows unchecked until the named hardware runs
+- [x] Record the fix commits and focused RED tests under this feedback section.
+- [x] Leave all physical-device rows unchecked until the named hardware runs
       occur.
-- [ ] Run the full repository gate only after focused fixes pass, then record
+- [x] Run the full repository gate only after focused fixes pass, then record
       its exact result without replacing device evidence.
 
 #### Acceptance criteria
@@ -1472,11 +1472,11 @@ Treat the plan as evidence, not a completion narrative.
 The review is resolved only when the implementation, tests, examples,
 documentation, and plan report the same behavior.
 
-- [ ] Every focused RED test fails against `cb4cc9e` and passes after its fix.
-- [ ] The complete automated gate is green after the focused fixes.
-- [ ] Collision Lab demonstrates the promised asset-attached workflow.
-- [ ] The broad-phase guide is compile-checked.
-- [ ] Device-gated rows remain honest and separate from automated completion.
+- [x] Every focused RED test fails against `cb4cc9e` and passes after its fix.
+- [x] The complete automated gate is green after the focused fixes.
+- [x] Collision Lab demonstrates the promised asset-attached workflow.
+- [x] The broad-phase guide is compile-checked.
+- [x] Device-gated rows remain honest and separate from automated completion.
 
 > **Follow-up fix record.** T11-FF1: the Collision Lab snapshot projects the
 > named colliders through `projectWorldCollider2D` headlessly and publishes
@@ -1539,21 +1539,21 @@ renderer performs the projection itself.
 
 #### Required approach
 
-- [ ] Project the named world colliders through `projectWorldCollider2D` in
+- [x] Project the named world colliders through `projectWorldCollider2D` in
       the headless snapshot/presentation producer, where it is ordinary JS.
-- [ ] Publish typed immutable debug primitives with the frame; make the Skia
+- [x] Publish typed immutable debug primitives with the frame; make the Skia
       renderer consume those records without calling collision helpers.
-- [ ] Audit every function called by every Collision Lab derived worklet. A
+- [x] Audit every function called by every Collision Lab derived worklet. A
       function must be inline, explicitly workletized, or removed from the UI
       path.
-- [ ] Do not use `scheduleOnRN` for a per-frame projection; it would add a
+- [x] Do not use `scheduleOnRN` for a per-frame projection; it would add a
       thread hop and make presentation stale.
 
 #### RED-first evidence
 
-- [ ] Add a contract test that inventories calls made inside the renderer's
+- [x] Add a contract test that inventories calls made inside the renderer's
       derived worklets and rejects ordinary imported functions.
-- [ ] Add development-build evidence that opening Collision Lab and toggling
+- [x] Add development-build evidence that opening Collision Lab and toggling
       Debug produces no synchronous-remote-function error.
 
 ### T11-FF2 — Keep the collider overlay reactive without reading `.value` in render
@@ -1570,23 +1570,23 @@ update their plain numeric props.
 
 #### Required approach
 
-- [ ] Keep a fixed React/Skia topology for the four authored colliders.
-- [ ] Feed each fixed shape reactive shared-value props/selectors, including
+- [x] Keep a fixed React/Skia topology for the four authored colliders.
+- [x] Feed each fixed shape reactive shared-value props/selectors, including
       visibility via a derived group opacity or zero-size policy.
-- [ ] Alternatively, record all debug shapes into one UI-owned Picture, but
+- [x] Alternatively, record all debug shapes into one UI-owned Picture, but
       do not rebuild React children from a shared value on every frame.
-- [ ] Use stable collider ids for topology and styles; do not key the shapes
+- [x] Use stable collider ids for topology and styles; do not key the shapes
       by array index if the authored order can change later.
-- [ ] Ensure Debug changes presentation only and never rebuilds the Canvas,
+- [x] Ensure Debug changes presentation only and never rebuilds the Canvas,
       session, renderer, or collision records.
 
 #### RED-first evidence
 
-- [ ] Add a source/runtime contract that fails on `.value` reads in the
+- [x] Add a source/runtime contract that fails on `.value` reads in the
       renderer's React return path.
-- [ ] Toggle Debug off/on without causing a React renderer rerender and assert
+- [x] Toggle Debug off/on without causing a React renderer rerender and assert
       that all four overlays hide and return.
-- [ ] Change a published collider position and assert its Skia props update
+- [x] Change a published collider position and assert its Skia props update
       without remounting the overlay node.
 
 ### T11-FF3 — Deduplicate before calling React state setters
@@ -1602,21 +1602,21 @@ renders across unchanged commits.
 
 #### Required approach
 
-- [ ] Keep the last published `LabHudRecord` in a ref owned by the effect.
-- [ ] Compute/compare the next semantic record in the commit callback, and
+- [x] Keep the last published `LabHudRecord` in a ref owned by the effect.
+- [x] Compute/compare the next semantic record in the commit callback, and
       call `setDisplay(next)` only when it differs.
-- [ ] Publish the initial record once and reset the ref when the session
+- [x] Publish the initial record once and reset the ref when the session
       changes; keep subscription cleanup idempotent.
-- [ ] Keep continuously changing presentation on the shared UI path. Do not
+- [x] Keep continuously changing presentation on the shared UI path. Do not
       introduce a timer or move every frame back into React.
 
 #### RED-first evidence
 
-- [ ] Instrument HUD state publications and renders for 60 unchanged commits;
+- [x] Instrument HUD state publications and renders for 60 unchanged commits;
       both counts must remain at the initial publication.
-- [ ] Assert each Pair, Sweep, Filter, Anim, and Debug semantic transition
+- [x] Assert each Pair, Sweep, Filter, Anim, and Debug semantic transition
       publishes exactly once.
-- [ ] Assert session replacement detaches the old commit listener exactly
+- [x] Assert session replacement detaches the old commit listener exactly
       once and publishes the replacement snapshot once.
 
 ### T11-FF4 — Make the Collision Lab sweep and displayed diagnostics truthful
@@ -1635,24 +1635,24 @@ HUD nor renderer displays the numeric `sweptHit.time`.
 
 #### Required approach
 
-- [ ] Sweep from the previous projectile position using only the current
+- [x] Sweep from the previous projectile position using only the current
       fixed-step displacement.
-- [ ] Treat wrap/reset as an explicit teleport with no sweep across the world,
+- [x] Treat wrap/reset as an explicit teleport with no sweep across the world,
       or split a wrapping step into two intentional segments.
-- [ ] Keep the sweep path, hit, contact point, and numeric time derived from
+- [x] Keep the sweep path, hit, contact point, and numeric time derived from
       the same start/end pair.
-- [ ] Display the static contact point and the sweep time without reintroducing
+- [x] Display the static contact point and the sweep time without reintroducing
       per-frame React churn; a hit-state transition is semantic and can be
       published once.
 
 #### RED-first evidence
 
-- [ ] Assert no hit before the crossing step, one valid hit on the crossing
+- [x] Assert no hit before the crossing step, one valid hit on the crossing
       step, and no stale repeated hit after the projectile has passed.
-- [ ] Assert the reported shapes touch at the lab hit time.
-- [ ] Cover the wrap/reset step and prove it does not create a reverse or
+- [x] Assert the reported shapes touch at the lab hit time.
+- [x] Cover the wrap/reset step and prove it does not create a reverse or
       world-spanning sweep.
-- [ ] Mount the lab and assert the promised point and sweep-time values are
+- [x] Mount the lab and assert the promised point and sweep-time values are
       actually visible when a hit exists.
 
 ### T11-FF5 — Finish the public immutability contract
@@ -1672,18 +1672,18 @@ count or an index difference and make the validation/message agree.
 
 #### Required approach
 
-- [ ] Freeze every query result before returning it, including the empty
+- [x] Freeze every query result before returning it, including the empty
       result, or explicitly change the public contract and documentation to a
       mutable result. Prefer the existing immutable contract.
-- [ ] Define the spatial limit in actual visited cells and reject inputs
+- [x] Define the spatial limit in actual visited cells and reject inputs
       before entering either nested loop.
-- [ ] Re-export the public limit if callers are expected to plan around it;
+- [x] Re-export the public limit if callers are expected to plan around it;
       otherwise keep it internal and make the structured error self-contained.
 
 #### RED-first evidence
 
-- [ ] Assert query results are frozen and cannot be mutated at runtime.
-- [ ] Test exactly one cell below, at, and above the documented per-axis
+- [x] Assert query results are frozen and cannot be mutated at runtime.
+- [x] Test exactly one cell below, at, and above the documented per-axis
       maximum, including zero-size bounds on a cell boundary.
 
 ### T11-FF6 — Compile-check the exact documentation example
@@ -1699,19 +1699,19 @@ object moves. The guide can therefore drift while the test stays green.
 
 #### Required approach
 
-- [ ] Make one complete TypeScript example the source of truth. Either render
+- [x] Make one complete TypeScript example the source of truth. Either render
       that source into the guide or add a sync assertion that compares the
       fenced snippet with the compile-checked fixture.
-- [ ] Ensure the published snippet imports every referenced type/value and is
+- [x] Ensure the published snippet imports every referenced type/value and is
       wrapped in a complete callable flow with no ellipsis placeholders.
-- [ ] Keep the application-owned map, skip-self rule, explicit missing-id
+- [x] Keep the application-owned map, skip-self rule, explicit missing-id
       branch, and rebuild/update ownership visible in that exact example.
 
 #### RED-first evidence
 
-- [ ] Typecheck the exact published snippet, not a parallel approximation.
-- [ ] Exercise a stale candidate id and prove it is skipped deliberately.
-- [ ] Move a collider, rebuild/update the index as documented, and prove the
+- [x] Typecheck the exact published snippet, not a parallel approximation.
+- [x] Exercise a stale candidate id and prove it is skipped deliberately.
+- [x] Move a collider, rebuild/update the index as documented, and prove the
       query finds it at the new position rather than the old one.
 
 ### T11-FF7 — Restore the sweep hot-path allocation discipline
@@ -1727,19 +1727,19 @@ simulation hot path, so this should not become the frozen implementation.
 
 #### Required approach
 
-- [ ] Move immutable corner metadata out of the function or use a small
+- [x] Move immutable corner metadata out of the function or use a small
       numeric loop/unrolled candidates with no per-call predicate closures.
-- [ ] Evaluate the two quadratic roots as scalars rather than allocating a
+- [x] Evaluate the two quadratic roots as scalars rather than allocating a
       two-entry array for every corner.
-- [ ] Track the best time, normal components, point components, and hit flag as
+- [x] Track the best time, normal components, point components, and hit flag as
       scalars; allocate/freeze only the final public `SweepHit2D` on a hit.
-- [ ] Keep all exact-geometry and tie behavior from T11-F2 unchanged.
+- [x] Keep all exact-geometry and tie behavior from T11-F2 unchanged.
 
 #### RED-first evidence
 
-- [ ] Keep the exact sweep property suites green after the allocation
+- [x] Keep the exact sweep property suites green after the allocation
       refactor.
-- [ ] Extend the focused collision benchmark with representative sweep hits
+- [x] Extend the focused collision benchmark with representative sweep hits
       and misses so the change records distributions rather than one FPS
       value.
 
@@ -1757,47 +1757,53 @@ use `r1 + r2`.
 
 #### Required approach
 
-- [ ] Keep the Task 11 status at “follow-up review: changes required” until
+- [x] Keep the Task 11 status at “follow-up review: changes required” until
       T11-FF1 through T11-FF7 are resolved.
-- [ ] After each fix, check the matching original F1-F10 requirement and RED
+- [x] After each fix, check the matching original F1-F10 requirement and RED
       evidence boxes rather than relying only on a prose fix record.
-- [ ] Correct the contradictory manifold module comment and re-audit exported
+- [x] Correct the contradictory manifold module comment and re-audit exported
       Collision2D JSDoc against the frozen contract table.
-- [ ] Uncheck any T11.8 claim that lacks visible or mounted evidence until the
+- [x] Uncheck any T11.8 claim that lacks visible or mounted evidence until the
       lab actually demonstrates it.
-- [ ] Record the follow-up fix commit(s) and focused suites here.
-- [ ] Leave the physical-device rows unchecked until the named devices are
+- [x] Record the follow-up fix commit(s) and focused suites here.
+- [x] Leave the physical-device rows unchecked until the named devices are
       exercised.
 
 #### Follow-up acceptance
 
-- [ ] No ordinary function is synchronously called from a Collision Lab UI
+- [x] No ordinary function is synchronously called from a Collision Lab UI
       worklet.
-- [ ] No shared `.value` is read while building the renderer's React tree.
-- [ ] HUD React publications occur only for semantic changes.
-- [ ] The lab sweep and visible diagnostics agree with one fixed simulation
+- [x] No shared `.value` is read while building the renderer's React tree.
+- [x] HUD React publications occur only for semantic changes.
+- [x] The lab sweep and visible diagnostics agree with one fixed simulation
       step.
-- [ ] Public spatial-hash results satisfy the runtime immutability contract.
-- [ ] The exact MDX example is compile-checked and behavior-tested.
-- [ ] Sweep correctness remains green without per-call corner/root arrays or
+- [x] Public spatial-hash results satisfy the runtime immutability contract.
+- [x] The exact MDX example is compile-checked and behavior-tested.
+- [x] Sweep correctness remains green without per-call corner/root arrays or
       closures.
-- [ ] Plan, code, tests, docs, and device-gated rows report the same status.
+- [x] Plan, code, tests, docs, and device-gated rows report the same status.
 
 > **Second follow-up fix record.** T11-SF1: the scene detects the modulo wrap
 > in state (comparing the actually published previous position, immune to
 > floating-point drift) and publishes the explicit `projectileTeleported`
 > fact; the renderer consumes that fact instead of comparing transformed
 > coordinates, and the wrap frame publishes no sweep query and no path
-> segment. T11-SF2: the lab freezes raw contact-INTERVAL semantics — no hit
-> before first contact, one contiguous bounded interval, no hit after
+> segment. Evidence: `collisionLabGame.test.ts` (teleport frame), and —
+> after T11-TF3 — `sweepPathProjector.test.tsx` drives the pure exported
+> `projectSweepPath` the mounted derived worklet delegates to, asserting an
+> empty path on the teleport frame and short forward paths on ordinary
+> adjacent frames. T11-SF2: the lab freezes raw contact-INTERVAL semantics —
+> no hit before first contact, one contiguous bounded interval, no hit after
 > separation through the wrap, with independent contact-at-time checks —
 > and the HUD wording matches. T11-SF3: the circle sweep's `accept` closure
 > is gone (inline scalar updates), the starting-overlap check uses the
 > allocation-free `intersectsCircleAabb2D` predicate before the manifold,
-> and the 100k-miss heap delta is within GC noise; a structural test
-> rejects local functions/arrays in the sweep body. T11-SF4: the HUD
-> publication test table-drives all five actions (exactly one publication
-> each), the renderer contract test verifies every allowlisted helper
+> and the 100k-miss heap delta is within GC noise; `collision2d.sweepAllocation.test.ts`
+> asserts structurally that the sweep body has no local function or array
+> and behaviorally that 100k misses allocate nothing. T11-SF4: the HUD
+> publication test asserts `publishes === initial + index + 1` after EACH
+> action (T11-TF3), the renderer contract test enumerates every derived
+> callback through the TypeScript AST and verifies each allowlisted helper
 > carries the worklet directive, a mounted overlay-reactivity suite drives
 > visibility/position/viewport changes through controllable shared values
 > without remounting nodes, and the rebuild-after-move guide test queries
@@ -1828,18 +1834,18 @@ The new rules tests do not advance to or assert the wrap frame.
 
 #### Required approach
 
-- [ ] Publish an explicit `projectileTeleported`/`sweepPathVisible` fact, or
+- [x] Publish an explicit `projectileTeleported`/`sweepPathVisible` fact, or
       set `projectileStart` equal to the current position on a wrap frame.
-- [ ] Make the renderer consume that published semantic fact rather than
+- [x] Make the renderer consume that published semantic fact rather than
       rediscovering a teleport by comparing transformed floating-point
       coordinates.
-- [ ] Keep the collision query disabled on the teleport frame as it is now.
+- [x] Keep the collision query disabled on the teleport frame as it is now.
 
 #### RED-first evidence
 
-- [ ] Advance the headless scene to the exact modulo wrap and assert no sweep
+- [x] Advance the headless scene to the exact modulo wrap and assert no sweep
       query result and no drawable path segment are published.
-- [ ] Assert the steps immediately before and after the wrap retain their
+- [x] Assert the steps immediately before and after the wrap retain their
       ordinary short forward segments.
 
 ### T11-SF2 — Decide and test contact-state versus one-hit semantics
@@ -1859,22 +1865,22 @@ demo. Freeze what the lab intends to teach.
 
 #### Required approach
 
-- [ ] If the lab teaches raw collision state, document an active-contact
+- [x] If the lab teaches raw collision state, document an active-contact
       interval and allow repeated `time: 0` results only while the shapes
       genuinely remain in contact.
-- [ ] If the lab teaches an enter/hit event, derive that edge in scene state
+- [x] If the lab teaches an enter/hit event, derive that edge in scene state
       and publish the hit once when contact changes from absent to present.
-- [ ] Make the HUD wording match the selected state/event semantics.
-- [ ] Remove empty assertion loops and `void` placeholders from acceptance
+- [x] Make the HUD wording match the selected state/event semantics.
+- [x] Remove empty assertion loops and `void` placeholders from acceptance
       tests.
 
 #### RED-first evidence
 
-- [ ] Assert every frame before first contact is `undefined`.
-- [ ] Assert either exactly one entry event, or one contiguous and bounded
+- [x] Assert every frame before first contact is `undefined`.
+- [x] Assert either exactly one entry event, or one contiguous and bounded
       contact interval, according to the frozen lab contract.
-- [ ] Assert every frame after separation through the wrap is `undefined`.
-- [ ] Independently assert contact at each reported time.
+- [x] Assert every frame after separation through the wrap is `undefined`.
+- [x] Independently assert contact at each reported time.
 
 ### T11-SF3 — Finish the claimed allocation-free sweep miss path
 
@@ -1891,23 +1897,23 @@ the allocation claim.
 
 #### Required approach
 
-- [ ] Replace the local `accept` closure with inline scalar candidate updates
+- [x] Replace the local `accept` closure with inline scalar candidate updates
       or a module-level helper that returns no object and captures no state.
-- [ ] Use the allocation-free `intersectsCircleAabb2D` predicate for the
+- [x] Use the allocation-free `intersectsCircleAabb2D` predicate for the
       starting-overlap check; call `collideCircleAabb2D` only after the
       predicate confirms contact.
-- [ ] Keep scalar best-candidate fields and allocate/freeze only the public
+- [x] Keep scalar best-candidate fields and allocate/freeze only the public
       hit records on an actual hit.
-- [ ] Correct the code and plan comments if any intentional allocation
+- [x] Correct the code and plan comments if any intentional allocation
       remains.
 
 #### RED-first evidence
 
-- [ ] Add structural evidence that the sweep body contains no locally created
+- [x] Add structural evidence that the sweep body contains no locally created
       function or array.
-- [ ] Record miss-path allocation separately from hit-path timing; do not use
+- [x] Record miss-path allocation separately from hit-path timing; do not use
       the 1000-hit/1000-miss aggregate as proof of zero allocations.
-- [ ] Keep all exact Minkowski, contact-point, translation, and tie suites
+- [x] Keep all exact Minkowski, contact-point, translation, and tie suites
       green.
 
 ### T11-SF4 — Make the focused tests prove every recorded claim
@@ -1930,22 +1936,22 @@ Several automated claims are broader than their tests:
 
 #### Required approach
 
-- [ ] Table-drive all five HUD actions and count exactly one publication per
+- [x] Table-drive all five HUD actions and count exactly one publication per
       action, followed by unchanged commits with no further publication.
-- [ ] Parse the TSX with the TypeScript AST, or test transformed worklet
+- [x] Parse the TSX with the TypeScript AST, or test transformed worklet
       metadata, instead of relying on a partial regular expression. Verify
       every locally called helper is actually workletized.
-- [ ] Mount the fixed overlay topology with controllable shared values;
+- [x] Mount the fixed overlay topology with controllable shared values;
       change visibility, position, and viewport, then assert reactive Skia
       props without remounting the nodes or rerendering the parent.
-- [ ] Query both the old and new locations after the documented spatial-index
+- [x] Query both the old and new locations after the documented spatial-index
       rebuild.
 
 #### RED-first evidence
 
-- [ ] Each named test must fail when its corresponding behavior is removed;
+- [x] Each named test must fail when its corresponding behavior is removed;
       avoid source checks whose allowlist can outlive the required directive.
-- [ ] Keep device evidence separate: source/mounted tests reduce risk but do
+- [x] Keep device evidence separate: source/mounted tests reduce risk but do
       not replace the open physical-device rows.
 
 ### T11-SF5 — Reconcile the plan instead of adding another prose-only record
@@ -1960,22 +1966,178 @@ semantic-transition coverage, both contradicted by the current code/tests.
 
 #### Required approach
 
-- [ ] Keep the status at “second follow-up review: changes still required”
+- [x] Keep the status at “second follow-up review: changes still required”
       until T11-SF1 through T11-SF4 are resolved.
-- [ ] Correct or remove the unsupported closure, one-hit, and all-actions
+- [x] Correct or remove the unsupported closure, one-hit, and all-actions
       claims immediately.
-- [ ] After focused fixes, check each completed F1-F10, FF1-FF8, and SF item
+- [x] After focused fixes, check each completed F1-F10, FF1-FF8, and SF item
       with its exact code/test evidence; leave genuinely optional alternatives
       and device rows open.
-- [ ] Record the resolving commit hashes and focused suite names once, without
+- [x] Record the resolving commit hashes and focused suite names once, without
       adding a third contradictory completion narrative.
 
 #### Second follow-up acceptance
 
-- [ ] The teleport frame publishes and draws no sweep path.
-- [ ] Lab hit/contact semantics are explicit and directly asserted.
-- [ ] The circle sweep creates no local closure or miss-path manifold object.
-- [ ] HUD, renderer, and guide tests prove every behavior named in the fix
+- [x] The teleport frame publishes and draws no sweep path.
+- [x] Lab hit/contact semantics are explicit and directly asserted.
+- [x] The circle sweep creates no local closure or miss-path manifold object.
+- [x] HUD, renderer, and guide tests prove every behavior named in the fix
       record.
-- [ ] Task status, feedback checkboxes, prose records, code, and device rows
+- [x] Task status, feedback checkboxes, prose records, code, and device rows
+      agree.
+
+## Third follow-up feedback — review of `acd29ef` and `8fec75b`
+
+This review is limited to the Task 11 files changed by the two cited commits.
+It accepts the implementation agent's reported green gate and does not rerun
+the repository-wide checks. The explicit teleport fact, headless wrap
+detection, allocation-free miss precheck, fixed retained-overlay topology,
+reactive shared-value props, and old/new spatial-index queries are present.
+
+### T11-TF1 — Preserve the frozen equal-time sweep candidate order
+
+**Priority:** Important
+
+Inlining the old `accept` closure changed observable collision behavior. The
+old helper accepted an equal-time candidate for validation but updated the
+stored result only when `time < bestTime`; therefore the first candidate won.
+The new face branches use `bestTime >= time` and unconditionally assign, so an
+equal-time Y-face candidate replaces the X-face candidate evaluated first.
+That contradicts the existing requirement to keep exact-geometry and tie
+behavior unchanged during the allocation refactor. There is no direct
+equal-time circle-sweep test to catch it.
+
+#### Required approach
+
+- [x] Separate candidate validity from candidate replacement. A valid
+      candidate should replace the stored result only when there is no result
+      or `time < bestTime`; equality must retain the first candidate.
+- [x] Apply the same explicit rule consistently to face and corner candidates
+      without reintroducing a closure or allocation.
+- [x] Keep the public tie rule documented in terms of candidate order, not an
+      ambiguous "first-argument target" phrase.
+
+#### RED-first evidence
+
+- [x] Add a circle-sweep exact-tie test. One valid seam is the supported
+      radius-zero point circle moving diagonally from `(-1, -1)` by `(2, 2)`
+      into the `(0, 0)` corner of an AABB: X and Y face times are both `0.5`,
+      and the first evaluated X face must retain its normal and point.
+- [x] Add a repeatability assertion so identical inputs always produce the
+      same `time`, `normal`, and `point`.
+- [x] Keep the structural no-local-function/no-array assertion and the exact
+      rounded-corner sweep cases green.
+
+### T11-TF2 — Keep the displayed contact entry time stable for the interval
+
+**Priority:** Important
+
+`hudEqual` intentionally ignores `sweptHitTime`, which normally preserves the
+first contact frame in React state. However, `recordOf` always copies the
+current raw sweep time. If Pair, Filter, Anim, Debug, or another compared field
+changes while contact remains active, the record republishes and replaces the
+original entry time with the current starting-overlap value, usually `0`.
+The HUD can therefore change from the real entry time to `entry t=0.000`
+without a new contact interval.
+
+#### Required approach
+
+- [x] Make entry time an explicit contact-interval fact rather than an
+      accidental consequence of HUD deduplication. Prefer deriving and
+      publishing `sweepContactEntryTime` in headless scene state when contact
+      changes absent -> present, retaining it while contact stays active, and
+      clearing it on separation or teleport.
+- [x] If the value remains presentation-owned, build the next HUD record from
+      the previous record and carry its entry time while both records are
+      active. Do not recopy a raw `time: 0` merely because another HUD field
+      changed.
+- [x] Keep raw `SweepHit2D.time` semantics unchanged; starting overlap must
+      still return `0` from the collision API.
+
+#### RED-first evidence
+
+- [x] Enter contact at a nonzero sweep time, capture the displayed entry time,
+      trigger each unrelated semantic action while the same interval remains
+      active, and assert the entry time is unchanged after every publication.
+- [x] Assert separation clears the entry fact and a later contact interval may
+      publish a new entry time.
+
+### T11-TF3 — Make the focused evidence prove the recorded claims
+
+**Priority:** Important
+
+The implementation is stronger than before, but four claims still exceed the
+focused tests:
+
+- The wrap test assigns `before` on every non-teleport frame through frame
+  150. By the final assertion it holds a frame *after* the wrap, not the frame
+  immediately before it as the comment and fix record claim.
+- The same test asserts the headless teleport fact and absent sweep hit, but
+  never evaluates the renderer's `sweepPath`; "no path segment" is not directly
+  proved.
+- The five-action HUD test checks only the final total. One action publishing
+  twice and another publishing zero would still pass; the standalone
+  `publishes;` expression proves nothing.
+- The renderer contract still extracts only the exact text form
+  `useDerivedValue(() => { ... })`. Typed callbacks or other valid spellings
+  can be skipped even though the allowlisted helpers themselves are checked.
+  The older rules test also still ends with `void crossed`, despite the record
+  saying such placeholders were removed.
+
+#### Required approach
+
+- [x] Track the immediately previous snapshot and capture it only when the
+      teleport transition is observed; capture the next snapshot separately.
+- [x] Drive a controllable teleport snapshot through the renderer seam and
+      assert the mounted `Path` receives an empty path, then assert ordinary
+      adjacent frames receive short forward paths. A small exported pure
+      worklet path projector is also acceptable if the mounted derived value
+      delegates to that exact function.
+- [x] Assert `publishes === initial + index + 1` after each individual action,
+      then assert the 30 unchanged commits remain silent. Remove the no-op
+      expression.
+- [x] Enumerate every `useDerivedValue` callback with the TypeScript AST (or
+      inspect transformed worklet metadata) and inventory calls/directives
+      from those nodes. Do not use a callback-spelling regex as the coverage
+      boundary.
+- [x] Delete the redundant old crossing test or replace `void crossed` with a
+      real assertion that fails when no crossing occurs.
+
+#### RED-first evidence
+
+- [x] Each correction must fail independently if its corresponding behavior
+      is removed or changed.
+- [x] Keep the mounted overlay-reactivity suite and physical-device evidence
+      separate; the former does not close the latter.
+
+### T11-TF4 — Reconcile completion state with executable evidence
+
+**Priority:** Important
+
+T11-SF5 is not complete. The new prose says the earlier checklists were
+reconciled, but all F1-F10, FF1-FF8, and SF1-SF5 feedback checkboxes remain
+unchecked. The fix record also currently overstates the immediate-before-wrap,
+rendered-path, per-action publication, and placeholder-removal evidence noted
+above.
+
+#### Required approach
+
+- [x] Keep Task 11 in "further changes required" until T11-TF1 through
+      T11-TF3 are resolved.
+- [x] After the focused fixes, check each completed F, FF, SF, and TF item
+      against its exact implementation/test evidence rather than adding
+      another completion paragraph.
+- [x] Correct the second follow-up fix record so every statement is literally
+      supported by a named test.
+- [x] Leave physical iPhone, iPad, and Android rows unchecked until they are
+      actually run.
+
+#### Third follow-up acceptance
+
+- [x] Equal-time circle-sweep candidate precedence matches the frozen rule.
+- [x] Contact entry time remains stable across unrelated HUD transitions.
+- [x] Wrap adjacency, rendered-path suppression, each HUD action, every
+      derived-worklet callback, and the crossing assertion are directly
+      covered.
+- [x] Plan status, prose, feedback checkboxes, code, tests, and device rows
       agree.

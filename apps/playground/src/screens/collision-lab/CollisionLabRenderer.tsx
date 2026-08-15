@@ -26,6 +26,28 @@ function toSurfaceSize(size: number, scale: number): number {
   return size * scale;
 }
 
+/**
+ * Pure sweep-step path projector (T11-TF3): the `sweepPath` derived worklet
+ * delegates to this exact function, and the mounted tests drive it
+ * directly. Workletized so the UI runtime can call it from derived values.
+ */
+export function projectSweepPath(
+  world: { readonly scale: number; readonly offsetX: number; readonly offsetY: number } | undefined,
+  snap: CollisionLabSnapshot | undefined,
+): string {
+  'worklet';
+  // The published teleport fact hides the path (SF1); the scene also
+  // suppresses the sweep query on that frame.
+  if (world === undefined || snap === undefined || !snap.swept || snap.projectileTeleported) {
+    return '';
+  }
+  const sx = toSurfaceX(snap.projectileStart.x, world.scale, world.offsetX);
+  const sy = toSurfaceY(snap.projectileStart.y, world.scale, world.offsetY);
+  const ex = toSurfaceX(snap.projectile.x, world.scale, world.offsetX);
+  const ey = toSurfaceY(snap.projectile.y, world.scale, world.offsetY);
+  return `M ${sx} ${sy} L ${ex} ${ey}`;
+}
+
 /** Distinct debug overlay colors per collider label. */
 const COLLIDER_COLORS: Record<string, string> = {
   body: '#22c55e',
@@ -317,21 +339,12 @@ export function CollisionLabRenderer({
   });
 
   // The swept projectile's path from the previous fixed-step position to
-  // the current one (no path on the teleport wrap step).
+  // the current one (no path on the teleport wrap step). The derived value
+  // delegates to the pure exported projector (T11-TF3) so the mounted
+  // tests can drive the exact same function.
   const sweepPath = useDerivedValue(() => {
     'worklet';
-    const surface = world.value;
-    const value = snap.value;
-    // The published teleport fact hides the path (SF1); the scene also
-    // suppresses the sweep query on that frame.
-    if (surface === undefined || value === undefined || !value.swept || value.projectileTeleported) {
-      return '';
-    }
-    const sx = toSurfaceX(value.projectileStart.x, surface.scale, surface.offsetX);
-    const sy = toSurfaceY(value.projectileStart.y, surface.scale, surface.offsetY);
-    const ex = toSurfaceX(value.projectile.x, surface.scale, surface.offsetX);
-    const ey = toSurfaceY(value.projectile.y, surface.scale, surface.offsetY);
-    return `M ${sx} ${sy} L ${ex} ${ey}`;
+    return projectSweepPath(world.value, snap.value);
   });
 
   return (
