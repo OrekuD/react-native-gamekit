@@ -22,6 +22,9 @@ type CollisionLabSnapshot = {
   readonly sweptHit: { readonly time: number } | undefined;
   readonly candidates: readonly string[];
   readonly colliderDebug: ReadonlyArray<{ readonly kind: string; readonly label?: string; readonly id?: string }>;
+  readonly projectile: { readonly x: number; readonly y: number; readonly radius: number };
+  readonly projectileStart: { readonly x: number; readonly y: number };
+  readonly target: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
 };
 
 const STEP_MS = 1000 / 60;
