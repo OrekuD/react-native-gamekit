@@ -59,7 +59,8 @@ export type {
   SceneDefinitionMarker,
   SceneMap,
 } from './definition/types';
-export type { Point2D } from './geometry/types';
+export * from './geometry';
+export * from './collision2d';
 export { defineScene } from './scene/defineScene';
 export type {
   SceneDefinition,
