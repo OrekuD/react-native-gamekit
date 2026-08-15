@@ -653,14 +653,14 @@ Use table-driven and invariant tests rather than a handful of screenshots.
 
 This step prevents tunneling for balls, projectiles, and fast AABB actors.
 
-- [ ] Implement swept circle–AABB using an expanded-target or equivalent
+- [x] Implement swept circle–AABB using an expanded-target or equivalent
       proven method.
-- [ ] Implement swept AABB–AABB.
-- [ ] Implement segment–AABB and segment–circle queries required by the lab.
-- [ ] Return the earliest impact with normalized time, normal, and point.
-- [ ] Define starting overlap, zero movement, parallel movement, corner tie,
+- [x] Implement swept AABB–AABB.
+- [x] Implement segment–AABB and segment–circle queries required by the lab.
+- [x] Return the earliest impact with normalized time, normal, and point.
+- [x] Define starting overlap, zero movement, parallel movement, corner tie,
       and grazing behavior.
-- [ ] Keep operations synchronous, pure, and allocation-free on misses.
+- [x] Keep operations synchronous, pure, and allocation-free on misses.
 
 #### RED-first tests
 
@@ -680,30 +680,30 @@ Swept tests must include adversarial cases that discrete overlap misses.
 This step adds composition metadata without turning collision into a mutable
 world or physics engine.
 
-- [ ] Implement symmetric category/mask filtering.
-- [ ] Validate unsigned 32-bit filter values and document JavaScript bitwise
+- [x] Implement symmetric category/mask filtering.
+- [x] Validate unsigned 32-bit filter values and document JavaScript bitwise
       behavior.
-- [ ] Add discriminated `LocalCollider2D` and `WorldCollider2D` unions for AABB
+- [x] Add discriminated `LocalCollider2D` and `WorldCollider2D` unions for AABB
       and circle records, or equivalent names frozen in T11.0.
-- [ ] Add beginner-facing rectangle and circle constructors that return the
+- [x] Add beginner-facing rectangle and circle constructors that return the
       same canonical collider variants used by advanced APIs.
-- [ ] Represent local offsets in logical world units independently of sprite
+- [x] Represent local offsets in logical world units independently of sprite
       source pixels and rendered asset dimensions.
-- [ ] Add a pure placement helper that returns a world-space collider from a
+- [x] Add a pure placement helper that returns a world-space collider from a
       local collider and authored object position.
-- [ ] Preserve filter, sensor, stable identifier, and optional author metadata
+- [x] Preserve filter, sensor, stable identifier, and optional author metadata
       during placement without mutating the source collider.
-- [ ] Demonstrate multiple named colliders through a readonly record without
+- [x] Demonstrate multiple named colliders through a readonly record without
       imposing engine-defined behavior on those names.
-- [ ] Keep shape-specific functions usable without constructing a collider.
-- [ ] Add `sensor` as metadata with no automatic response.
-- [ ] Keep stable user/entity identifiers generic and separate from array
+- [x] Keep shape-specific functions usable without constructing a collider.
+- [x] Add `sensor` as metadata with no automatic response.
+- [x] Keep stable user/entity identifiers generic and separate from array
       indexes.
-- [ ] Make broad-phase, collider-pair, and debug APIs reject local colliders at
+- [x] Make broad-phase, collider-pair, and debug APIs reject local colliders at
       compile time until they have been placed in world space.
-- [ ] Reject arbitrary rotation and nonuniform scale instead of approximating
+- [x] Reject arbitrary rotation and nonuniform scale instead of approximating
       unsupported shapes silently.
-- [ ] Keep asset, React, Skia, and animation imports out of collider modules.
+- [x] Keep asset, React, Skia, and animation imports out of collider modules.
 
 #### RED-first tests
 
@@ -726,15 +726,15 @@ Filtering tests must prove both directions of the mask check.
 This step makes modest collections practical while preserving inspectable
 ordering.
 
-- [ ] Implement the T11.0-selected spatial-hash ownership model.
-- [ ] Require a finite positive cell size.
-- [ ] Insert AABB bounds across every occupied cell.
-- [ ] Deduplicate multi-cell items without changing insertion order.
-- [ ] Query by AABB, circle bounds, point, and segment bounds where useful.
-- [ ] Reject duplicate stable identifiers clearly.
-- [ ] Keep broad phase conservative: it returns candidates and never claims a
+- [x] Implement the T11.0-selected spatial-hash ownership model.
+- [x] Require a finite positive cell size.
+- [x] Insert AABB bounds across every occupied cell.
+- [x] Deduplicate multi-cell items without changing insertion order.
+- [x] Query by AABB, circle bounds, point, and segment bounds where useful.
+- [x] Reject duplicate stable identifiers clearly.
+- [x] Keep broad phase conservative: it returns candidates and never claims a
       narrow-phase collision.
-- [ ] Add diagnostics for item, occupied-cell, candidate, and deduplicated
+- [x] Add diagnostics for item, occupied-cell, candidate, and deduplicated
       counts through a non-production or testing seam.
 
 #### RED-first tests
@@ -753,15 +753,15 @@ The index must behave deterministically across rebuilds and insertion layouts.
 This step makes collision behavior inspectable without leaking a renderer into
 the core module.
 
-- [ ] Define immutable debug primitives for AABBs, circles, segments, normals,
+- [x] Define immutable debug primitives for AABBs, circles, segments, normals,
       contact points, and sweep paths.
-- [ ] Keep colors and labels optional presentation metadata, not gameplay
+- [x] Keep colors and labels optional presentation metadata, not gameplay
       semantics.
-- [ ] Add helpers that project colliders and hits into debug primitives.
-- [ ] Preserve collider names or author labels in opt-in debug projections.
-- [ ] Add a small Skia renderer under the React entry only if the Collision Lab
+- [x] Add helpers that project colliders and hits into debug primitives.
+- [x] Preserve collider names or author labels in opt-in debug projections.
+- [x] Add a small Skia renderer under the React entry only if the Collision Lab
       reuses it.
-- [ ] Ensure debug generation can be fully disabled and creates no hot-path
+- [x] Ensure debug generation can be fully disabled and creates no hot-path
       work when absent.
 
 #### Acceptance criteria
