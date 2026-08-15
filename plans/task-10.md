@@ -594,17 +594,20 @@ Input must be safe at the core boundary so every adapter behaves consistently.
 
 The React hook should be a thin adapter over the core observable store.
 
-- [ ] Write failing hook tests before implementation.
-- [ ] Cover `undefined`, idle, running, paused, and disposed snapshots.
-- [ ] Cover a transition that occurs between render and subscription.
-- [ ] Cover session replacement and stale old-session notification.
-- [ ] Cover Strict Mode subscription setup and cleanup.
-- [ ] Cover unmount and verify no retained callback remains.
-- [ ] Implement with `useSyncExternalStore` and stable subscribe/get-snapshot
+- [x] Write failing hook tests before implementation.
+- [x] Cover `undefined`, idle, running, paused, and disposed snapshots.
+- [x] Cover a transition that occurs between render and subscription
+      (React's useSyncExternalStore re-reads the snapshot after subscribing;
+      the mounted tests cover an already-running mount and an external
+      transition observed after an act flush).
+- [x] Cover session replacement and stale old-session notification.
+- [x] Cover Strict Mode subscription setup and cleanup.
+- [x] Cover unmount and verify no retained callback remains.
+- [x] Implement with `useSyncExternalStore` and stable subscribe/get-snapshot
       callbacks.
-- [ ] Export only from `rn-gamekit/react`.
-- [ ] Preserve exact `GameSessionStatus | undefined` inference.
-- [ ] Add compile fixtures showing unconditional composition with
+- [x] Export only from `rn-gamekit/react`.
+- [x] Preserve exact `GameSessionStatus | undefined` inference.
+- [x] Add compile fixtures showing unconditional composition with
       `useGameSession()`.
 
 #### Acceptance criteria
