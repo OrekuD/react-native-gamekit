@@ -19,7 +19,7 @@ import {
 } from 'rn-gamekit';
 
 interface BroadPhaseExampleResult {
-  readonly hits: ReadonlyArray<{ readonly otherId: string; readonly hit: CollisionHit2D }>;
+  readonly hits: readonly { readonly otherId: string; readonly hit: CollisionHit2D }[];
 }
 
 /** The documented application-owned lookup: id -> placed world collider. */
@@ -39,7 +39,7 @@ export function broadPhaseExample(): BroadPhaseExampleResult {
 
   // Per tick, for each moving object:
   const moving = colliders.get('player');
-  const collected: Array<{ otherId: string; hit: CollisionHit2D }> = [];
+  const collected: { otherId: string; hit: CollisionHit2D }[] = [];
   if (moving === undefined) {
     return { hits: collected };
   }

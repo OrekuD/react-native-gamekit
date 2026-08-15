@@ -165,7 +165,7 @@ describe('Collision Lab rules', () => {
     session.input.press('toggle-sweep');
     session.input.release('toggle-sweep');
     tick(1);
-    const hits: Array<{ tick: number; time: number }> = [];
+    const hits: { tick: number; time: number }[] = [];
     for (let index = 0; index < 140; index += 1) {
       tick(1);
       const current = snap();

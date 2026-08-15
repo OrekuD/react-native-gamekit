@@ -2,12 +2,12 @@
 
 ## Status
 
-**Follow-up implementation review: changes still required.** Commit `8e9c302`
-repairs the core manifold, sweep-correctness, pair-order, filter, segment, and
-caller-input ownership failures. The follow-up review below found remaining
-UI-runtime, reactivity, React-publication, reference-example, immutability,
-hot-path, and completion-record gaps. The reported complete automated gate is
-green; physical-device rows remain open.
+**Follow-up review: T11-FF1 through T11-FF8 addressed.** Commit `8e9c302`
+repaired the first review's core findings; the follow-up review below found
+remaining UI-runtime, reactivity, React-publication, reference-example,
+immutability, hot-path, and completion-record gaps, and the follow-up fix
+record at the end of the feedback section documents their repair. The
+complete automated gate is green; physical-device rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -1477,6 +1477,27 @@ documentation, and plan report the same behavior.
 - [ ] Collision Lab demonstrates the promised asset-attached workflow.
 - [ ] The broad-phase guide is compile-checked.
 - [ ] Device-gated rows remain honest and separate from automated completion.
+
+> **Follow-up fix record.** T11-FF1: the Collision Lab snapshot projects the
+> named colliders through `projectWorldCollider2D` headlessly and publishes
+> typed debug primitives; the renderer calls only workletized helpers,
+> enforced by a source contract test. T11-FF2: the overlay is a fixed
+> four-node topology keyed by stable labels with per-field reactive shared
+> values and a zero-size visibility policy; a source test rejects `.value`
+> reads in the React return path. T11-FF3: the HUD dedupes BEFORE `setState`
+> via a last-published ref; mounted tests prove 60 unchanged commits publish
+> nothing and each semantic transition publishes once, with replacement
+> detaching the old listener. T11-FF4: the lab sweeps from the previous
+> fixed-step position with the current step's displacement and treats the
+> modulo wrap as a teleport; the contact point and sweep time are visible as
+> a semantic hit-state transition. T11-FF5: query results are frozen at
+> runtime and the per-axis maximum is enforced as occupied cells. T11-FF6:
+> the MDX broad-phase block is byte-equal to the compile-checked fixture
+> (sync test) with stale-id and rebuild-after-move behavior tests. T11-FF7:
+> the sweep uses module metadata, scalar roots, and scalar best-tracking
+> (no per-call arrays or closures); the benchmark records 1000-hit/1000-miss
+> sweeps at ~1.3 microseconds per call. T11-FF8: this record, the manifold
+> JSDoc corrected, and the status reconciled.
 
 ## Follow-up feedback — review of `8e9c302` and `100053b`
 

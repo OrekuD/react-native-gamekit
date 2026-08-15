@@ -137,7 +137,10 @@ export function LabHud({
   const [display, setDisplay] = useState<LabHudRecord | undefined>(undefined);
   const lastPublishedRef = useRef<LabHudRecord | undefined>(undefined);
   const onPublishRef = useRef(onPublish);
-  onPublishRef.current = onPublish;
+  // Ref writes belong in effects, never during render (hooks rule).
+  useEffect(() => {
+    onPublishRef.current = onPublish;
+  });
   useEffect(() => {
     lastPublishedRef.current = undefined;
     const update = (frame: unknown): void => {
