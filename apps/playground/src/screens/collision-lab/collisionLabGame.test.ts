@@ -21,6 +21,7 @@ type CollisionLabSnapshot = {
   readonly debugVisible: boolean;
   readonly staticHit: { readonly normal: { x: number; y: number }; readonly depth: number } | undefined;
   readonly sweptHit: { readonly time: number } | undefined;
+  readonly sweepContactEntryTime: number | undefined;
   readonly candidates: readonly string[];
   readonly colliderDebug: ReadonlyArray<{ readonly kind: string; readonly label?: string; readonly id?: string }>;
   readonly projectile: { readonly x: number; readonly y: number; readonly radius: number };
@@ -246,6 +247,77 @@ describe('Collision Lab rules', () => {
     // the current position and both stay on the same side of the wrap.
     assert.ok(before !== undefined && before.snap.projectileStart.x < before.snap.projectile.x, 'forward segment before');
     assert.ok(after !== undefined && after.snap.projectileStart.x < after.snap.projectile.x, 'forward segment after');
+  });
+
+  it('clears the contact entry fact on separation and teleport, then re-enters (T11-VF1)', () => {
+    const { session, tick, snap } = harness();
+    session.input.press('toggle-sweep');
+    session.input.release('toggle-sweep');
+    tick(1);
+
+    let currentEntry: number | undefined;
+    let inInterval = false;
+    let separationFrame = -1;
+    let teleportFrame = -1;
+    let secondEntryFrame = -1;
+    for (let index = 0; index < 260; index += 1) {
+      tick(1);
+      const frame = index + 2;
+      const current = snap();
+      if (current.projectileTeleported) {
+        teleportFrame = frame;
+      }
+      if (current.sweptHit !== undefined) {
+        if (!inInterval) {
+          // A new contact interval begins: the entry fact equals the raw
+          // time at the interval start and is nonzero.
+          assert.equal(
+            current.sweepContactEntryTime,
+            current.sweptHit.time,
+            `the entry fact equals the raw time at interval start (frame ${frame})`,
+          );
+          assert.ok(
+            current.sweepContactEntryTime !== undefined && current.sweepContactEntryTime > 0,
+            `the entry time is nonzero (frame ${frame})`,
+          );
+          if (currentEntry !== undefined) {
+            // The second interval must be preceded by a real separation.
+            assert.ok(separationFrame > 0 && separationFrame < frame, 'a separation precedes the next interval');
+            secondEntryFrame = frame;
+          }
+          currentEntry = current.sweepContactEntryTime;
+          inInterval = true;
+        } else {
+          assert.equal(
+            current.sweepContactEntryTime,
+            currentEntry,
+            `the entry stays latched through the interval (frame ${frame})`,
+          );
+          assert.equal(current.sweptHit.time, 0, 'raw starting-overlap time stays 0 (unchanged semantics)');
+        }
+      } else if (inInterval) {
+        inInterval = false;
+        if (separationFrame < 0) {
+          separationFrame = frame; // The FIRST separation only.
+        }
+        assert.equal(current.sweepContactEntryTime, undefined, 'separation clears the entry fact');
+      } else if (separationFrame > 0 && currentEntry !== undefined) {
+        // Between the intervals (including the teleport frame): nothing may
+        // republish a stale entry.
+        assert.equal(
+          current.sweepContactEntryTime,
+          undefined,
+          `no stale entry between intervals (frame ${frame})`,
+        );
+      }
+    }
+    assert.ok(currentEntry !== undefined, 'the first interval begins');
+    assert.ok(separationFrame > 0, 'the first interval ends');
+    assert.ok(teleportFrame > 0 && teleportFrame > separationFrame, 'the teleport follows the separation');
+    assert.ok(
+      secondEntryFrame > 0 && secondEntryFrame > teleportFrame,
+      'a second interval begins after the wrap with a fresh entry',
+    );
   });
 
   it('keeps debug visibility presentation-only (T11-F9)', () => {

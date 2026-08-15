@@ -2,12 +2,12 @@
 
 ## Status
 
-**Resolved.** All four feedback rounds — T11-F1 through T11-F10,
-T11-FF1 through T11-FF8, T11-SF1 through T11-SF5, and T11-TF1
-through T11-TF4 — are addressed, and every feedback checkbox is
-checked against its implementation and focused tests below. The
-complete automated gate is green; physical-device rows remain open.
-Physical-device rows remain open.
+**Resolved.** All four feedback rounds and the final verification
+findings (T11-F1 through T11-F10, T11-FF1 through T11-FF8,
+T11-SF1 through T11-SF5, T11-TF1 through T11-TF4, T11-VF1 and
+T11-VF2) are addressed, and every feedback checkbox is checked
+against its implementation and focused tests below. The complete
+automated gate is green; physical-device rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -2141,3 +2141,100 @@ above.
       covered.
 - [x] Plan status, prose, feedback checkboxes, code, tests, and device rows
       agree.
+
+## Final verification feedback — review of `b8a3d62`
+
+This verification is limited to the Task 11 files changed in `b8a3d62`. It
+does not rerun the reported repository-wide gate. The core fixes are present:
+equal-time candidates retain the first result, the lab owns a stable contact
+entry fact, the renderer delegates to the tested path projector, the wrap
+neighbors are captured correctly, and every HUD action is asserted
+individually.
+
+### T11-VF1 — Test contact exit and the next contact interval
+
+**Priority:** Important
+
+The T11-TF2 evidence box says separation clears the entry fact and a later
+contact may publish a new entry time, but the only new HUD test stops while the
+first interval is still active. No focused test reads
+`sweepContactEntryTime` after separation, on teleport, or on the next entry.
+The implementation appears to clear it correctly, but the checked lifecycle
+claim is not executable evidence and could regress without failing the suite.
+
+#### Required approach
+
+- [x] Extend the headless Collision Lab rules test rather than relying only on
+      rendered HUD text. Enable sweeping, capture the first nonzero entry
+      time, and prove it remains latched throughout that interval.
+- [x] Advance past separation and assert both `sweptHit` and
+      `sweepContactEntryTime` are `undefined`.
+- [x] Advance through the modulo teleport and assert the entry fact stays
+      cleared on the teleport frame.
+- [x] Continue to the next target crossing and assert a new entry fact is
+      created from that interval rather than reusing stale state.
+
+#### RED-first evidence
+
+- [x] The test must fail if the separation/teleport branch retains the prior
+      entry value.
+- [x] The test must fail if the next interval reuses the previous entry fact.
+- [x] Leave raw starting-overlap `SweepHit2D.time === 0` behavior unchanged.
+
+### T11-VF2 — Inventory every AST call-expression shape
+
+**Priority:** Important
+
+`derivedCallbackBodies` now finds the renderer's arrow callbacks through the
+TypeScript AST, which resolves the callback-spelling gap. However,
+`calledNames` records a call only when `node.expression` is an `Identifier`.
+It silently skips `namespace.helper()`, `object.method()`, and element-access
+calls such as `helpers[name]()`. An ordinary imported namespace helper could
+therefore be introduced into a UI worklet while the test claiming to reject
+every ordinary call remains green.
+
+#### Required approach
+
+- [x] Inspect every `CallExpression`, not only identifier callees.
+- [x] Continue allowlisting known workletized identifier helpers.
+- [x] For `PropertyAccessExpression`, allow only explicitly safe built-ins
+      such as approved `Math` methods; reject arbitrary object/namespace
+      method calls unless their UI-runtime safety is deliberately modeled.
+- [x] Reject or explicitly classify `ElementAccessExpression` callees rather
+      than silently ignoring them.
+- [x] Verify each derived callback is itself workletized while traversing the
+      AST, so the contract covers both the callback and its callees.
+
+#### RED-first evidence
+
+- [x] Unit-test the analyzer with source fixtures containing a safe local
+      worklet helper, an unsafe identifier helper, an unsafe
+      `ImportedNamespace.helper()` call, and an unsafe `helpers[name]()` call.
+- [x] Each unsafe fixture must fail independently; the existing renderer must
+      remain accepted.
+
+> **Final verification fix record.** T11-VF1: the headless rules suite now
+> walks the full lifecycle — first nonzero entry (`sweepContactEntryTime`
+> equals the raw sweep time on the entry frame), latch throughout the
+> interval, separation clears both `sweptHit` and the entry fact, the
+> teleport frame keeps the fact cleared, and a second interval after the
+> wrap publishes a fresh entry. The between-interval band asserts the fact
+> stays `undefined`, so a retained or reused entry fails the suite (the
+> retention regression was simulated and failed 10/11 before restoring).
+> T11-VF2: `analyzeDerivedCallbacks` classifies every CallExpression shape
+> through the TypeScript AST — allowlisted identifiers, `Math` property
+> accesses only, and rejection of namespace, object-method, and
+> element-access callees — and verifies each derived callback carries the
+> worklet directive. Fixture tests pin each unsafe shape independently
+> (identifier, namespace, method, element access, missing directive) while
+> the real renderer stays accepted. Suites: `collisionLabGame.test.ts`
+> (T11-VF1), `rendererContract.test.ts` (T11-VF2).
+>
+
+### Final verification record
+
+- [x] Resolve T11-VF1 and T11-VF2 with their focused RED suites.
+- [x] Check the corresponding evidence only after those suites exist.
+- [x] Restore Task 11 to `Resolved` and record the resolving commit once.
+- [x] Leave the five physical-device rows open until run on the named
+      hardware.
