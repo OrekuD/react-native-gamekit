@@ -57,14 +57,14 @@ function run(items: readonly Item[], cellSize: number): {
   const candidates: number[] = [];
   const bruteCandidates: number[] = [];
 
-  let bruteStart = performance.now();
+  const bruteStart = performance.now();
   for (let q = 0; q < queries; q += 1) {
     const query = { x: (q * 7) % 320, y: (q * 11) % 480, width: 24, height: 24 };
     bruteCandidates.push(bruteForce(items, query).length);
   }
   const bruteMs = performance.now() - bruteStart;
 
-  let hashStart = performance.now();
+  const hashStart = performance.now();
   for (let q = 0; q < queries; q += 1) {
     const query = { x: (q * 7) % 320, y: (q * 11) % 480, width: 24, height: 24 };
     candidates.push(querySpatialHash2D(index, query).length);
