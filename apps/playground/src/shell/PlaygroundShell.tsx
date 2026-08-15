@@ -16,11 +16,14 @@ import type {
 import { useGameAssets } from 'rn-gamekit/react';
 
 import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreakerGame';
+import { createGameSession } from 'rn-gamekit';
+import { paddleGame } from '../docs-examples/paddle-tutorial/game';
+import { PaddleRenderer } from '../docs-examples/paddle-tutorial/Renderer';
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
 import { createLabSession } from '../screens/lab/labSession';
 import { createSpriteFieldSession, spriteFieldAssets } from '../screens/sprite-field/spriteFieldGame';
 import { createIdleSession } from './idleSession';
-import type { PlaygroundGameId } from '../catalog/games';
+import { isPlaygroundGameId, type PlaygroundGameId } from '../catalog/games';
 import { usePlaygroundStore } from '../state/playgroundStore';
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps';
 import {
@@ -36,6 +39,7 @@ import {
 } from './surfaceSlot';
 import HomeScreen from '../screens/home/HomeScreen';
 import BrickBreakerContent from '../screens/brick-breaker/BrickBreakerContent';
+import PaddleContent from '../screens/paddle/PaddleContent';
 import BootstrapContent from '../screens/bootstrap/BootstrapContent';
 import LabContent from '../screens/lab/LabContent';
 import SpriteFieldContent from '../screens/sprite-field/SpriteFieldContent';
@@ -310,7 +314,11 @@ function GameSurface({
             // object stringification.
             key={slot.generation}
             game={bound.pointerGame as GameSession<SceneDefinitionMarkerMap, Record<string, PointerInputAction>>}
-            action="primary"
+            action={
+              slot.gameId !== null && isPlaygroundGameId(slot.gameId)
+                ? (GAME_CONTENTS[slot.gameId]?.pointerAction ?? 'primary')
+                : 'primary'
+            }
             instrumentation={slot.run?.pointer}
           />
         ) : null}
@@ -355,6 +363,13 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     createSession: () => createSpriteFieldSession() as unknown as GameSession,
     pointer: true,
     assetBacked: true,
+  },
+  'paddle': {
+    renderer: PaddleRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: PaddleContent,
+    createSession: () => createGameSession(paddleGame) as unknown as GameSession,
+    pointer: true,
+    pointerAction: 'steer',
   },
 };
 

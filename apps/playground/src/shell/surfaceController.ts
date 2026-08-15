@@ -34,6 +34,11 @@ export interface SurfaceGameEntry {
   readonly createSession: () => GameSession;
   /** Whether the pointer surface is enabled for this game's session. */
   readonly pointer: boolean;
+  /**
+   * The declared pointer action the shell's GamePointerInput binds.
+   * Defaults to `primary` (the reference-game convention).
+   */
+  readonly pointerAction?: string;
   /** Asset-backed games publish a loading slot and wait for asset-ready. */
   readonly assetBacked?: boolean;
 }

@@ -231,6 +231,7 @@ export function createGameSessionWithDriver<
       if (releaseStatusListeners) {
         releaseStatusListeners = false;
         statusListeners.clear();
+        diagnostics?.onStatusListenerCount?.(statusListeners.size);
       }
     }
     if (firstError !== undefined) {
@@ -648,12 +649,31 @@ export function createGameSessionWithDriver<
     },
     pause() {
       assertLive();
-      pauseInternal();
+      let listenerError: unknown;
+      try {
+        pauseInternal();
+      } catch (error) {
+        listenerError = error;
+      }
+      // The command must complete: a pending external transition is resolved
+      // at the pause boundary even when a status listener threw, so a later
+      // start() can never commit a stale transition on an unexpected frame.
       if (pendingTransition !== undefined) {
         const pending = pendingTransition;
         pendingTransition = undefined;
-        commitTransition(pending, activeScene.state, undefined);
-        commitOrPause();
+        try {
+          commitTransition(pending, activeScene.state, undefined);
+          commitOrPause();
+        } catch (error) {
+          if (listenerError === undefined) {
+            listenerError = error;
+          } else if (listenerError instanceof Error) {
+            (listenerError as Error & { cause?: unknown }).cause ??= error;
+          }
+        }
+      }
+      if (listenerError !== undefined) {
+        throw listenerError;
       }
     },
     setScene(name: keyof TScenes) {
@@ -704,13 +724,35 @@ export function createGameSessionWithDriver<
       accumulatorMs = 0;
       pendingTransition = undefined;
       inputBuffer.reset();
-      // `disposed` is delivered exactly once, including when dispose runs
-      // from inside a status listener; the listener set is released only
-      // after every queued transition has been delivered.
-      setStatus('disposed');
+      // Terminal cleanup is unconditional: `disposed` is delivered to the
+      // full listener snapshot (including the re-entrant queued pass), then
+      // every listener and the scene are released exactly once even when a
+      // status listener throws. The release flag is set BEFORE the
+      // notification so notifyStatus's finally performs the clear; for the
+      // re-entrant path the clear happens after the queued pass drains.
       releaseStatusListeners = true;
-      listeners.clear();
-      activeScene.definition.dispose?.(activeScene.state);
+      let listenerError: unknown;
+      try {
+        setStatus('disposed');
+      } catch (error) {
+        listenerError = error;
+      }
+      let sceneError: unknown;
+      try {
+        listeners.clear();
+        activeScene.definition.dispose?.(activeScene.state);
+      } catch (error) {
+        sceneError = error;
+      }
+      if (listenerError !== undefined) {
+        if (sceneError !== undefined && listenerError instanceof Error) {
+          (listenerError as Error & { cause?: unknown }).cause ??= sceneError;
+        }
+        throw listenerError;
+      }
+      if (sceneError !== undefined) {
+        throw sceneError;
+      }
     },
     getRenderFrame() {
       const alpha = commitFrame.hardCut
@@ -735,6 +777,7 @@ export function createGameSessionWithDriver<
     addStatusListener(listener) {
       assertLive();
       statusListeners.add(listener);
+      diagnostics?.onStatusListenerCount?.(statusListeners.size);
       let removed = false;
       return Object.freeze({
         remove() {
@@ -743,6 +786,7 @@ export function createGameSessionWithDriver<
           }
           removed = true;
           statusListeners.delete(listener);
+          diagnostics?.onStatusListenerCount?.(statusListeners.size);
         },
       });
     },

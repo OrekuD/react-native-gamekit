@@ -1,6 +1,9 @@
-import { useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { GameSession, GameSessionStatus } from '../core/session/types';
 import type { InputMap, SceneMap } from '../definition/types';
+
+/** Stable no-op cleanup for the absent/disposed session branch. */
+const unsubscribeNothing = (): void => {};
 
 /**
  * Observe a session's lifecycle status from React.
@@ -25,22 +28,26 @@ export function useGameSessionStatus<
   TScenes extends SceneMap,
   TInput extends InputMap,
 >(session: GameSession<TScenes, TInput> | undefined): GameSessionStatus | undefined {
-  // The subscribe/get-snapshot closures capture the session of the render
-  // that created them; React re-subscribes whenever the subscribe identity
-  // changes, so a session prop change detaches the old session first.
-  return useSyncExternalStore(
-    (onStoreChange) => {
+  // The callbacks are memoized on the session identity only, so unrelated
+  // parent renders never tear down and recreate the subscription; a session
+  // prop change produces new identities and React detaches the old session
+  // before attaching the replacement.
+  const subscribe = useCallback(
+    (onStoreChange: () => void) => {
       // Never subscribe to a disposed session: its terminal notification is
       // already delivered, and addStatusListener follows the disposed-error
       // policy for new subscribers.
       if (session === undefined || session.status === 'disposed') {
-        return () => {};
+        return unsubscribeNothing;
       }
       const subscription = session.addStatusListener(onStoreChange);
       return () => {
         subscription.remove();
       };
     },
-    () => session?.status,
+    [session],
   );
+  const getSnapshot = useCallback(() => session?.status, [session]);
+
+  return useSyncExternalStore(subscribe, getSnapshot);
 }

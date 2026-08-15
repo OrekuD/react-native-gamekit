@@ -11,10 +11,12 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 // scheduled from outside act() to flush deterministically.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+import { useState } from 'react';
 import { defineGame, defineScene, type GameSession, type GameSessionStatus } from '../src/index';
 import { createGameSessionWithDriver } from '../src/core/session/createGameSession';
 import { useGameSessionStatus } from '../src/react/useGameSessionStatus';
 import { ManualFrameDriver } from './helpers/ManualFrameDriver';
+import { statusCountDiagnostics } from './helpers/statusCountDiagnostics';
 
 const game = defineGame({
   viewport: { logicalSize: { width: 320, height: 180 }, mode: 'fit' },
@@ -32,9 +34,16 @@ const game = defineGame({
 
 type Session = GameSession<typeof game['scenes'], typeof game['input']>;
 
-function createSession(): Session {
-  return createGameSessionWithDriver(game, { frameDriver: new ManualFrameDriver() });
+function createSession(
+  diagnostics?: ReturnType<typeof statusCountDiagnostics>['diagnostics'],
+): Session {
+  return createGameSessionWithDriver(game, {
+    frameDriver: new ManualFrameDriver(),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+  });
 }
+
+
 
 interface ProbeProps {
   readonly session: Session | undefined;
@@ -45,6 +54,23 @@ function Probe({ session, onStatus }: ProbeProps): null {
   const status = useGameSessionStatus(session);
   onStatus(status);
   return null;
+}
+
+function TogglingParent({
+  session,
+  onStatus,
+}: {
+  readonly session: Session;
+  readonly onStatus: (status: GameSessionStatus | undefined) => void;
+}) {
+  const [tick, setTick] = useState(0);
+  void tick;
+  return (
+    <>
+      <Probe session={session} onStatus={onStatus} />
+      <button onClick={() => setTick((n) => n + 1)}>toggle</button>
+    </>
+  );
 }
 
 describe('useGameSessionStatus', () => {
@@ -159,6 +185,72 @@ describe('useGameSessionStatus', () => {
 
     // idle -> running -> paused: exactly three new statuses, no noise.
     assert.deepEqual(statuses.slice(renders), ['running', 'paused']);
+    act(() => session.dispose());
+  });
+
+  it('does not churn the subscription on unrelated re-renders', () => {
+    const { diagnostics, counts } = statusCountDiagnostics();
+    const session = createSession(diagnostics);
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<TogglingParent session={session} onStatus={() => {}} />);
+    });
+    assert.deepEqual([...counts], [1], 'one subscription after mount');
+
+    // Unrelated parent re-renders with the SAME session must not detach and
+    // recreate the subscription.
+    for (let index = 0; index < 3; index += 1) {
+      act(() => {
+        renderer.update(<TogglingParent session={session} onStatus={() => {}} />);
+      });
+    }
+    assert.deepEqual([...counts], [1], 'no unsubscribe/resubscribe churn');
+
+    act(() => session.dispose());
+  });
+
+  it('detaches the old session exactly once and attaches the replacement once', () => {
+    const { diagnostics, counts } = statusCountDiagnostics();
+    const first = createSession(diagnostics);
+    const second = createSession(diagnostics);
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<TogglingParent session={first} onStatus={() => {}} />);
+    });
+    assert.deepEqual([...counts], [1]);
+
+    act(() => {
+      renderer.update(<TogglingParent session={second} onStatus={() => {}} />);
+    });
+    assert.deepEqual([...counts], [1, 0, 1], 'exactly one old detach and one new attach');
+
+    act(() => first.dispose());
+    act(() => second.dispose());
+  });
+
+  it('adds only the Strict Mode rehearsal churn, never per-render churn', () => {
+    const { diagnostics, counts } = statusCountDiagnostics();
+    const session = createSession(diagnostics);
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(
+        <StrictMode>
+          <TogglingParent session={session} onStatus={() => {}} />
+        </StrictMode>,
+      );
+    });
+    // Mount rehearsal: subscribe -> cleanup -> subscribe.
+    assert.deepEqual([...counts], [1, 0, 1]);
+
+    act(() => {
+      renderer.update(
+        <StrictMode>
+          <TogglingParent session={session} onStatus={() => {}} />
+        </StrictMode>,
+      );
+    });
+    assert.deepEqual([...counts], [1, 0, 1], 'ordinary re-renders add no churn');
+
     act(() => session.dispose());
   });
 

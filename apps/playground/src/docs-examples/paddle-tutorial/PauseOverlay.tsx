@@ -15,10 +15,13 @@ export function PauseOverlay({
   status,
   onPause,
   onResume,
+  topInset = 0,
 }: {
   readonly status: GameSessionStatus;
   readonly onPause: () => void;
   readonly onResume: () => void;
+  /** Safe-area top inset: the pause button sits below it. */
+  readonly topInset?: number;
 }) {
   return (
     <>
@@ -27,7 +30,7 @@ export function PauseOverlay({
           accessibilityLabel="Pause the game"
           accessibilityRole="button"
           onPress={onPause}
-          style={styles.pauseButton}
+          style={[styles.pauseButton, { top: topInset + 12 }]}
           hitSlop={12}
         >
           <Text style={styles.pauseLabel}>Pause</Text>
@@ -56,10 +59,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     borderRadius: 999,
     paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingVertical: 14,
     position: 'absolute',
     right: 16,
-    top: 16,
   },
   pauseLabel: {
     color: '#e2e8f0',
@@ -86,7 +88,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#0ea5e9',
     borderRadius: 999,
     paddingHorizontal: 36,
-    paddingVertical: 14,
+    paddingVertical: 16,
   },
   resumeLabel: {
     color: '#082f49',

@@ -32,4 +32,6 @@ export interface SessionDiagnostics {
   onCommitNotification(): void;
   /** Listener count at publish time. */
   onListenerCount(count: number): void;
+  /** Status-listener count after registration or removal (T10 control plane). */
+  onStatusListenerCount?(count: number): void;
 }

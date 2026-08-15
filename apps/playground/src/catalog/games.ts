@@ -32,6 +32,12 @@ export const PLAYGROUND_GAMES = [
     label: 'Run',
   },
   {
+    id: 'paddle',
+    title: 'Paddle',
+    description: 'The getting-started tutorial game: steer with your finger, keep the ball alive, pause anytime.',
+    label: 'Play',
+  },
+  {
     id: 'sprite-field',
     title: 'Sprite Field',
     description: 'A retained animated character over an Atlas batch field.',

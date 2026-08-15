@@ -2,7 +2,9 @@
 
 ## Status
 
-**Not started.** This task turns the existing imperative session pause support
+**Implementation review (T10-F1 through T10-F5 addressed).** Core,
+React, and example fixes landed; automated gates green. Physical-device rows
+remain open. This task turns the existing imperative session pause support
 into a complete engine lifecycle contract. It adds observable status, a React
 status hook, authoritative `GameView` synchronization, paused-input policy,
 and a reference pause overlay without confusing session lifecycle with a
@@ -678,12 +680,12 @@ Documentation must teach lifecycle ownership and the simple API without
 suggesting that pause is a special scene.
 
 - [x] Add a `Pause and resume` guide in the appropriate Fumadocs section.
-- [x] Add `useGameSessionStatus()` to the React hooks reference (deferred
-      with the React section; fully documented on the guide, tutorial, and
-      README).
-- [x] Document `status`, `start()`, `pause()`, and `addStatusListener()` in the
-      session API reference (deferred with the API section; covered by the
-      guide and the hook/type JSDoc).
+- [ ] Add `useGameSessionStatus()` to the React hooks reference (deferred
+      with the React section in `doc-structure.md`; the hook is documented on
+      the guide, the tutorial, and the README instead).
+- [ ] Document `status`, `start()`, `pause()`, and `addStatusListener()` in the
+      session API reference (deferred with the API section in
+      `doc-structure.md`; covered by the guide and the hook/type JSDoc).
 - [x] Update `Create your first game` to use Task 9's ownership hook and the
       status hook where pause UI is introduced.
 - [x] Explain session lifecycle versus game flow versus app lifecycle.
@@ -840,19 +842,19 @@ interfaces to make the API appear more complete.
 
 Task 10 is complete when all of the following are true.
 
-- [ ] Session status is observable through a documented core subscription.
-- [ ] `useGameSessionStatus()` is published from `rn-gamekit/react`.
-- [ ] Manual pause and resume update simulation and `GameView` presentation.
-- [ ] Paused wall time never becomes simulation catch-up time.
-- [ ] Gameplay input is cancelled and rejected while paused.
-- [ ] App foregrounding cannot override a user pause.
-- [ ] One reference game demonstrates an accessible pause overlay.
-- [ ] Task 9 ownership boundaries remain intact.
-- [ ] Core, hook, integration, compile, build, and documentation gates pass.
-- [ ] The package tarball contains correct types and exports.
-- [ ] Physical-device checks are either completed or honestly left unchecked.
-- [ ] Documentation clearly separates lifecycle, game flow, and app state.
-- [ ] Future engine systems have a stable lifecycle seam without speculative
+- [x] Session status is observable through a documented core subscription.
+- [x] `useGameSessionStatus()` is published from `rn-gamekit/react`.
+- [x] Manual pause and resume update simulation and `GameView` presentation.
+- [x] Paused wall time never becomes simulation catch-up time.
+- [x] Gameplay input is cancelled and rejected while paused.
+- [x] App foregrounding cannot override a user pause.
+- [x] One reference game demonstrates an accessible pause overlay.
+- [x] Task 9 ownership boundaries remain intact.
+- [x] Core, hook, integration, compile, build, and documentation gates pass.
+- [x] The package tarball contains correct types and exports.
+- [ ] Physical-device checks (iPhone/iPad/Android pause, background, screen lock, 25-cycle soak) are either completed or honestly left unchecked.
+- [x] Documentation clearly separates lifecycle, game flow, and app state.
+- [x] Future engine systems have a stable lifecycle seam without speculative
       public APIs.
 
 ## Recommended execution order
@@ -874,3 +876,204 @@ React and examples depend on them:
 
 Do not begin with the overlay. It would otherwise need temporary local React
 state and could accidentally establish a second lifecycle source of truth.
+
+---
+
+## Feedback — Task 10 implementation review
+
+This review is limited to the Task 10 commit range
+`2d56e5a..1969272`: the core status publisher, pause scheduling/input paths,
+React status hook, `GameView`/application lifecycle binding, pause example,
+and related documentation. Address the following findings before treating the
+automated portion of Task 10 as complete.
+
+### T10-F1 — Make terminal disposal exception-safe and actually release listeners
+
+**Priority:** High
+
+`createGameSession.ts` currently calls `setStatus('disposed')` before setting
+`releaseStatusListeners = true`. In the normal, non-re-entrant disposal path,
+`notifyStatus()` has already completed its `finally` block by the time the flag
+is set, so the status-listener set is never cleared. A disposed session that is
+still referenced therefore retains every remaining listener and its captured
+React/native resources.
+
+There is a more serious failure on the same path. If any status listener throws
+during the `disposed` notification, `setStatus()` rethrows before
+`listeners.clear()` and the active scene's `dispose()` callback run. The session
+is already marked `disposed`, so a later `dispose()` is an idempotent no-op and
+can never finish that skipped cleanup. This violates the exactly-once ownership
+contract and can leak scene/native resources permanently.
+
+#### Required approach
+
+- [ ] Enter terminal cleanup before delivering the final notification, while
+      still allowing the complete `disposed` listener snapshot to run.
+- [ ] Clear status listeners in an unconditional `finally` path after the
+      final queued notification pass. Do not rely on a flag set after
+      notification returns.
+- [ ] Clear commit listeners and invoke the active scene's disposal exactly
+      once even when a status listener throws.
+- [ ] Collect notification and scene-disposal failures while completing all
+      cleanup, then surface them with a documented deterministic precedence or
+      an `AggregateError`; neither error should silently erase the other.
+- [ ] Preserve re-entrant disposal from inside another status listener: emit
+      `disposed` once, drain its queued pass, release listeners, and dispose
+      the scene once.
+- [ ] Keep repeated external `dispose()` calls as terminal no-ops after the
+      first complete attempt.
+
+#### RED-first tests
+
+- [ ] Register a throwing `disposed` listener and a later listener; assert the
+      whole listener snapshot runs, the scene disposer runs once, the commit
+      listener set is released, and the command surfaces the listener error.
+- [ ] Make both a status listener and the scene disposer throw; assert all
+      cleanup still completes and both failures remain observable under the
+      selected error policy.
+- [ ] Cover ordinary disposal, re-entrant disposal, and repeated disposal with
+      the same exactly-once assertions.
+- [ ] Add a deterministic listener-release seam or diagnostic assertion; the
+      existing test only proves that new subscription is rejected after
+      disposal and cannot detect retained old listeners.
+
+### T10-F2 — Finish `pause()` side effects before surfacing listener failures
+
+**Priority:** High
+
+The public `pause()` calls `pauseInternal()` before flushing a pending external
+scene transition. `pauseInternal()` now delivers the `paused` status, and a
+throwing listener escapes immediately. The remaining `pause()` body is then
+skipped, leaving the pending transition stored inside an already paused
+session. A later `start()` can commit that stale transition on an unexpected
+frame instead of the transition being resolved at the pause boundary as the
+existing lifecycle contract requires.
+
+The status-listener API explicitly promises that listener failures are
+surfaced only after lifecycle side effects are complete. That promise must
+apply to the entire command, not only frame cancellation and input reset.
+
+#### Required approach
+
+- [ ] Separate transition application from notification-error surfacing so
+      `pause()` can capture the first listener failure, finish its pending
+      transition/commit work, and then throw.
+- [ ] Define deterministic precedence when both the status listener and the
+      pending transition or commit fail. Preserve all actionable failures
+      rather than accidentally masking one.
+- [ ] Apply the same command-transaction audit to `start()`, error-path pause,
+      and `dispose()` so no notification throw can skip mandatory work after
+      `setStatus()`.
+- [ ] Keep the new status authoritative during completion and do not emit a
+      second status event merely to finish the command.
+
+#### RED-first tests
+
+- [ ] While running, request an external scene transition, register a listener
+      that throws on `paused`, and call `pause()`. Assert the transition is
+      committed at the pause boundary before the listener error is returned.
+- [ ] Resume after that failure and assert no stale pending transition is
+      committed by the next frame.
+- [ ] Cover a transition failure plus a listener failure and assert the final
+      status, scene, scheduler, input state, and error policy are coherent.
+
+### T10-F3 — Stabilize the external-store subscription callbacks
+
+**Priority:** Important
+
+`useGameSessionStatus()` passes new inline `subscribe` and `getSnapshot`
+functions to `useSyncExternalStore()` on every render. React therefore tears
+down and recreates the session subscription after unrelated parent renders,
+even when the session identity has not changed. This contradicts T10.5's
+checked requirement for stable callbacks and adds avoidable lifecycle churn to
+an API intended to be the low-frequency control plane.
+
+Snapshot re-reading prevents most missed-state failures, so this is not a
+frame-loop correctness bug, but it creates unnecessary listener activity and
+makes leak/race behavior harder to reason about under Strict Mode.
+
+#### Required approach
+
+- [ ] Memoize `subscribe` with `useCallback` using only `session` as its
+      semantic dependency.
+- [ ] Memoize `getSnapshot` with the same session dependency.
+- [ ] Use stable module-level no-op subscription cleanup for the absent or
+      disposed session branch.
+- [ ] Preserve the current `GameSessionStatus | undefined` return contract and
+      disposed-session behavior.
+
+#### RED-first tests
+
+- [ ] Instrument `addStatusListener()` and subscription removal counts, force
+      unrelated parent rerenders with the same session, and assert no
+      unsubscribe/resubscribe churn.
+- [ ] Replace the session and assert exactly one old detach and one new attach.
+- [ ] Repeat under Strict Mode and verify the only additional setup/cleanup is
+      React's documented rehearsal, not every ordinary render.
+
+### T10-F4 — Make the reference pause example runnable and the guide copyable
+
+**Priority:** Important
+
+The new `PaddleScreen` and `PauseOverlay` are not referenced by the playground
+catalog, shell, tests, or another executable entry point. They currently prove
+only that isolated source files typecheck. The T10.7 checkbox for component
+behavior was marked complete using headless seam tests that never mount the
+actual overlay, so pause/resume touch capture, stacking, safe-area placement,
+back behavior, and accessibility are still unverified.
+
+The guide snippet is also not copyable as written: it uses `Pressable`, `Text`,
+and `View` without importing them and references an undefined `overlay` style.
+This allows the documentation and the actual `PauseOverlay` implementation to
+drift immediately.
+
+#### Required approach
+
+- [ ] Either register the paddle tutorial as a real playground entry or mount
+      it through an existing executable example route. Do not call an
+      unreachable source file a validated reference game.
+- [ ] Add a focused mounted component test for the actual `PauseOverlay` and
+      `PaddleScreen` composition: one press pauses, the full overlay blocks
+      gameplay touches, one press resumes, and closing/unmounting retains Task
+      9 ownership semantics.
+- [ ] Place the pause control inside a safe-area-aware screen/control region
+      and preserve at least a 44-by-44-point effective hit target.
+- [ ] Make the guide consume or faithfully reproduce the tested component.
+      Include every React Native import and either define the referenced styles
+      or link to a complete source file.
+- [ ] Keep gameplay input and pause controls as clear sibling interaction
+      regions so native hit testing does not depend on accidental child order.
+
+#### Acceptance checks
+
+- [ ] The example is reachable from a normal app launch without editing source
+      code.
+- [ ] The rendered pause and resume controls work on the first press.
+- [ ] Touching or dragging the covered game surface while paused cannot enqueue
+      gameplay input.
+- [ ] The documentation snippet can be pasted into the tutorial project
+      without missing identifiers.
+
+### T10-F5 — Correct the completion record after the fixes
+
+**Priority:** Important
+
+The plan header still says **Not started**, most acceptance criteria and the
+entire definition-of-done list remain unchecked, while implementation steps
+are checked and the handoff reports the task as implemented. Two T10.8 items
+are also marked complete while their own notes say the dedicated React hook
+and session API references were deferred. A deferred deliverable is not a
+completed deliverable.
+
+#### Required changes
+
+- [ ] Keep Task 10 open while T10-F1 through T10-F4 remain unresolved.
+- [ ] Change the top-level status to an honest implementation-review state.
+- [ ] Uncheck the deferred hook/session reference items or implement the pages
+      before checking them.
+- [ ] Check acceptance criteria only when the named behavior has direct
+      evidence; do not use the aggregate test count as a substitute.
+- [ ] Leave physical iPhone, iPad, Android, screen-lock, and device soak rows
+      unchecked until run on the named hardware.
+- [ ] After focused fixes pass, update the definition-of-done list and record
+      the fix commit identifiers without overwriting the device-gated remainder.
