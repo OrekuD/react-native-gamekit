@@ -1,0 +1,112 @@
+---
+title: Detect collisions without a physics engine
+description: Static contacts, sweeps for fast objects, filters, and a broad phase — detection only, response is yours.
+---
+
+You don't need a physics engine to make a Pong, Breakout, or a simple platformer. Collision2D gives you detection; you keep the response. This guide walks the pattern Brick Breaker uses: build the shapes, query them every tick, and decide what a hit means in your scene update.
+
+## The one-function pattern
+
+For a handful of shapes, one call per pair is enough:
+
+```ts
+import { collideCircleAabb2D } from 'rn-gamekit';
+
+// In your scene update, after moving the ball:
+const hit = collideCircleAabb2D(ball, brick);
+
+if (hit !== undefined) {
+  // Reflect on the penetration axis; remove the brick; add score.
+  if (Math.abs(hit.normal.x) > 0.5) {
+    ball.vx = -ball.vx;
+  } else {
+    ball.vy = -ball.vy;
+  }
+}
+```
+
+The normal tells you which way to push the ball out of the brick, and `Math.abs(normal.x) > 0.5` tells you the axis. The reflection rule, the removal, and the score are yours.
+
+## Fast objects need sweeps
+
+If an object can cross a thin wall in one tick, discrete overlap checks tunnel. Query the movement instead:
+
+```ts
+import { sweepCircleAabb2D } from 'rn-gamekit';
+
+const hit = sweepCircleAabb2D({
+  circle: ball,
+  displacement: { x: velocity.x * deltaSeconds, y: velocity.y * deltaSeconds },
+  target: wall,
+});
+
+if (hit !== undefined) {
+  const impactX = ball.x + velocity.x * deltaSeconds * hit.time;
+  const impactY = ball.y + velocity.y * deltaSeconds * hit.time;
+  // Place the ball at the impact, then apply your response.
+}
+```
+
+`time` is the fraction of the displacement at the first impact. A starting overlap returns `time: 0`, so a sweep never misses an already-touching pair.
+
+## Authoring colliders on objects
+
+Keep collision data with the object, not the renderer:
+
+```ts
+import { circleCollider2D, placeCollider2D, rectangleCollider2D } from 'rn-gamekit';
+
+const player = {
+  position: { x: 120, y: 80 },
+  colliders: {
+    body: rectangleCollider2D({ offset: { x: -10, y: -18 }, width: 20, height: 36 }),
+    hurtbox: circleCollider2D({ offset: { x: 0, y: -8 }, radius: 12, sensor: true }),
+  },
+} as const;
+
+const body = placeCollider2D(player.colliders.body, player.position);
+const hurtbox = placeCollider2D(player.colliders.hurtbox, player.position);
+```
+
+Offsets are in the same logical world units as the sprite anchor. `body` and `hurtbox` are ordinary names — no engine behavior attaches to them. A `sensor` reports geometry identically; whether it damages the player is your scene's decision.
+
+## Many objects: broad phase first
+
+Past a few dozen shapes, check candidates before narrow-phase manifolds:
+
+```ts
+import { buildSpatialHash2D, querySpatialHash2D, collideWorldColliders2D } from 'rn-gamekit';
+
+const index = buildSpatialHash2D({ items, cellSize: 32 });
+
+// Per tick, for each moving object:
+const candidates = querySpatialHash2D(index, myBounds);
+for (const id of candidates) {
+  const hit = collideWorldColliders2D(myCollider, index.items.find((i) => i.id === id)!.collider);
+  if (hit !== undefined) {
+    // Respond.
+  }
+}
+```
+
+The index returns deterministic candidate ids in insertion order; it is conservative, so candidates still need the narrow phase.
+
+## Filters keep systems apart
+
+Give players, enemies, and terrain their own category bits, and let masks decide who touches whom:
+
+```ts
+const PLAYER = { categoryBits: 0b1, maskBits: 0b110 };
+const ENEMY = { categoryBits: 0b10, maskBits: 0b1 };
+const TERRAIN = { categoryBits: 0b100, maskBits: 0b111 };
+```
+
+`collideWorldColliders2D` checks filters for you. Filtered-out pairs stay visible but report nothing — useful for a player that can pass through a door until it opens.
+
+## What not to do
+
+- Don't mutate the scene inside collision code — collect results, then update state.
+- Don't store collision state in the renderer, and don't derive colliders from sprite pixels. Author them in world units.
+- Don't expect physics: there are no impulses, forces, or joints. For arcade games you rarely need them — and when you do, a real physics engine is the next step, not an extended Collision2D.
+
+The full API, shapes, and conventions live on the [Collision2D](../concepts/collision2d) page; the [Collision Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/collision-lab) shows every result live.

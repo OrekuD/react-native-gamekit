@@ -19,6 +19,7 @@
     "concepts/sprite-animation",
     "concepts/sprites",
     "concepts/assets",
+    "concepts/collision2d",
     "---Performance---",
     "concepts/performance-model",
     "concepts/renderer-guide",
@@ -27,6 +28,7 @@
     "---Reference---",
     "---Guides---",
     "guides/pause-and-resume",
+    "guides/detect-collisions",
     "reference/brick-breaker",
     "reference/results",
     "reference/asset-errors"

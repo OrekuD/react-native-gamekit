@@ -1,0 +1,108 @@
+---
+title: Collision2D
+description: "Deterministic headless collision detection: shapes, contacts, sweeps, filters, and a broad phase."
+---
+
+Collision2D is the headless collision system: pure geometry functions that report contacts between shapes, sweeps for fast objects, filtering, and a deterministic broad phase. It detects; your game decides what a hit means. No physics solver, no callbacks during iteration, no scene mutation — the same code runs in a session, a Node test, and a build tool.
+
+## Shapes
+
+Five immutable plain-data values, all in logical world units:
+
+```ts
+import { type Aabb2D, type Circle2D, type Segment2D, type Vector2D } from 'rn-gamekit';
+
+const brick: Aabb2D = { x: 144, y: 72, width: 32, height: 12 };
+const ball: Circle2D = { x: 152, y: 80, radius: 6 };
+const aim: Segment2D = { start: { x: 0, y: 80 }, end: { x: 320, y: 80 } };
+const delta: Vector2D = { x: 90, y: 70 };
+```
+
+`Aabb2D.x/y` are the top-left corner (Gamekit's positive-down coordinates). Width, height, and radius must be finite and nonnegative; malformed values throw a `GeometryError` with a stable code (`GEOMETRY_INVALID_SIZE`, `GEOMETRY_INVALID_NUMBER`, ...) and the offending field.
+
+## Static contact
+
+One function per shape pair, with a consistent result:
+
+```ts
+import { collideCircleAabb2D } from 'rn-gamekit';
+
+const hit = collideCircleAabb2D(ball, brick);
+
+if (hit !== undefined) {
+  // normal moves the FIRST argument out of the SECOND.
+  const resolved = {
+    ...ball,
+    x: ball.x + hit.normal.x * hit.depth,
+    y: ball.y + hit.normal.y * hit.depth,
+  };
+}
+```
+
+`undefined` means no contact. A `CollisionHit2D` carries `normal` (unit, pointing to push the first shape out of the second), `depth` (nonnegative penetration), and a stable contact `point`. Boundary contact counts as a hit and may return zero depth. Applying `normal * depth` resolves ordinary overlaps within floating-point tolerance. Predicates (`intersectsAabbAabb2D`, `pointInCircle2D`, ...) answer yes/no without the manifold.
+
+## Swept contact
+
+For fast objects, query the movement before it happens:
+
+```ts
+import { sweepCircleAabb2D } from 'rn-gamekit';
+
+const hit = sweepCircleAabb2D({
+  circle: ball,
+  displacement: { x: velocity.x * deltaSeconds, y: velocity.y * deltaSeconds },
+  target: brick,
+});
+
+if (hit !== undefined) {
+  const impactX = ball.x + velocity.x * deltaSeconds * hit.time;
+  const impactY = ball.y + velocity.y * deltaSeconds * hit.time;
+}
+```
+
+`time` is normalized to `[0, 1]` along the displacement; a starting overlap returns `time: 0` with the static manifold normal; zero displacement never produces NaN. Segment queries (`intersectSegmentAabb2D`, `intersectSegmentCircle2D`) power line-of-sight and targeting.
+
+## Colliders, filters, and sensors
+
+A collider is local data attached to an authored object; placement is the only local-to-world step:
+
+```ts
+import { circleCollider2D, placeCollider2D, rectangleCollider2D } from 'rn-gamekit';
+
+const player = {
+  position: { x: 120, y: 80 },
+  colliders: {
+    body: rectangleCollider2D({ offset: { x: -10, y: -18 }, width: 20, height: 36 }),
+    hurtbox: circleCollider2D({ offset: { x: 0, y: -8 }, radius: 12, sensor: true }),
+  },
+} as const;
+
+const body = placeCollider2D(player.colliders.body, player.position);
+```
+
+`LocalCollider2D` and `WorldCollider2D` are distinct discriminated types: world-only operations reject local colliders at compile time, so double translation is impossible. Colliders are translation-only — no rotation or nonuniform scale — and the `sensor` flag is metadata that never changes geometry results. Filters use symmetric unsigned-32-bit category/mask sets:
+
+```ts
+import { canCollide2D } from 'rn-gamekit';
+
+canCollide2D({ categoryBits: 0b1, maskBits: 0b10 }, { categoryBits: 0b10, maskBits: 0b1 }); // true
+```
+
+`collideWorldColliders2D` applies the filters and dispatches on the shape pair in one call.
+
+## Broad phase
+
+For many objects, index once and query candidates:
+
+```ts
+import { buildSpatialHash2D, querySpatialHash2D } from 'rn-gamekit';
+
+const index = buildSpatialHash2D({ items, cellSize: 32 });
+const candidates = querySpatialHash2D(index, bounds);
+```
+
+The spatial hash returns candidate ids in insertion order, deduplicated across cells, and is deliberately conservative: candidates still need the narrow phase. The Collision Lab in the playground shows the whole pipeline with live values.
+
+## The boundary
+
+Collision2D never moves objects, reverses velocity, removes entities, or changes scenes. Brick Breaker keeps its reflection and scoring rules; the system only reports geometry. The [Brick Breaker walkthrough](../reference/brick-breaker) and the [Collision Lab source](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/collision-lab) show the pattern in a real game.

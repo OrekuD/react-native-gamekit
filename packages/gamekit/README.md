@@ -135,7 +135,8 @@ and `useGameSessionStatus(session)` drives pause UI without a second state
 source.
 
 `rn-gamekit` contains the headless definition, session, viewport,
-asset-manifest, and animation APIs. `rn-gamekit/react` contains the
+asset-manifest, animation, and Collision2D (shapes, contacts, sweeps,
+filters, broad phase) APIs. `rn-gamekit/react` contains the
 Skia renderer, native pointer adapter, asset loader, sprites, and sprite
 batching. `rn-gamekit/testing` contains deterministic frame drivers
 for Node tests.

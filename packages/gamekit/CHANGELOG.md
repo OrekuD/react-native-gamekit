@@ -17,6 +17,11 @@ All notable changes to React Native GameKit will be documented in this file.
 - `GameView` presentation follows core status; app backgrounding pauses and
   foregrounding resumes only the lifecycle-owned pause, and an external
   start while inactive is returned to paused.
+- Collision2D: canonical 2D geometry (`Aabb2D`, `Circle2D`, `Segment2D`,
+  `Vector2D`), static predicates and contact manifolds, swept circle-AABB and
+  AABB-AABB queries, segment crossings, symmetric category/mask filtering,
+  local/world collider records with typed placement, a deterministic spatial
+  hash broad phase, and headless debug projections.
 
 ## 0.1.0 - 2026-08-12
 

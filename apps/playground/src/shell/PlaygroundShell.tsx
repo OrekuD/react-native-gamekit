@@ -19,6 +19,8 @@ import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreaker
 import { createGameSession } from 'rn-gamekit';
 import { paddleGame } from '../docs-examples/paddle-tutorial/game';
 import { PaddleRenderer } from '../docs-examples/paddle-tutorial/Renderer';
+import { collisionLabDefinition } from '../screens/collision-lab/collisionLabGame';
+import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRenderer';
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
 import { createLabSession } from '../screens/lab/labSession';
 import { createSpriteFieldSession, spriteFieldAssets } from '../screens/sprite-field/spriteFieldGame';
@@ -40,6 +42,7 @@ import {
 import HomeScreen from '../screens/home/HomeScreen';
 import BrickBreakerContent from '../screens/brick-breaker/BrickBreakerContent';
 import PaddleContent from '../screens/paddle/PaddleContent';
+import CollisionLabContent from '../screens/collision-lab/CollisionLabContent';
 import BootstrapContent from '../screens/bootstrap/BootstrapContent';
 import LabContent from '../screens/lab/LabContent';
 import SpriteFieldContent from '../screens/sprite-field/SpriteFieldContent';
@@ -370,6 +373,12 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     createSession: () => createGameSession(paddleGame) as unknown as GameSession,
     pointer: true,
     pointerAction: 'steer',
+  },
+  'collision-lab': {
+    renderer: CollisionLabRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: CollisionLabContent,
+    createSession: () => createGameSession(collisionLabDefinition) as unknown as GameSession,
+    pointer: true,
   },
 };
 

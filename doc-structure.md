@@ -47,7 +47,8 @@ Docs
 │   ├── Sprites                         📦 sprites.mdx + sprite-batching.mdx
 │   ├── Animation                       📦 sprite-animation.mdx
 │   ├── Input                           📦 pointer-input.mdx + input-guide.mdx
-│   └── Assets                          📦 assets.mdx
+│   ├── Assets                          📦 assets.mdx
+│   └── Collision                        ✅ (Collision2D)
 │
 ├── React                               ← the differentiator; explicit boundary
 │   ├── How Gamekit uses React          🆕  (does the loop re-render React? no)
@@ -58,7 +59,7 @@ Docs
 │
 ├── Guides                              ← problems, not APIs
 │   ├── Move a paddle with touch        🆕
-│   ├── Detect collisions (no physics)  🆕
+│   ├── Detect collisions (no physics)  ✅
 │   ├── Animate a sprite                🆕
 │   ├── Pause a game                    ✅
 │   ├── Transition between scenes       🆕

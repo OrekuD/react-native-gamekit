@@ -268,7 +268,7 @@ describe('PaddleContent composition while paused', () => {
         Array.isArray(node.props.style),
     );
     assert.equal(overlays.length, 1, 'exactly the paused overlay blocks');
-    const overlayStyle = (overlays[0]!.props.style as Array<Record<string, unknown>>)[1] as {
+    const overlayStyle = (overlays[0]!.props.style as Record<string, unknown>[])[1] as {
       top?: number;
     };
     // 47 (insets.top) + 44 (header padding) + 36 (back button height).

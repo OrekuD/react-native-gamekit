@@ -32,6 +32,12 @@ export const PLAYGROUND_GAMES = [
     label: 'Run',
   },
   {
+    id: 'collision-lab',
+    title: 'Collision Lab',
+    description: 'Inspect static and swept contacts, filters, and broad-phase candidates.',
+    label: 'Run',
+  },
+  {
     id: 'paddle',
     title: 'Paddle',
     description: 'The getting-started tutorial game: steer with your finger, keep the ball alive, pause anytime.',

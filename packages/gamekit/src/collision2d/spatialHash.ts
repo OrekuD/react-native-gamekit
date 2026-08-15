@@ -1,11 +1,12 @@
 /**
  * Deterministic spatial hash broad phase (T11.5).
  *
- * `buildSpatialHash2D` validates and freezes a plain immutable index;
- * `querySpatialHash2D` returns candidate ids whose bounds share a cell
- * with the query bounds, deduplicated and in original insertion order. The
- * broad phase is conservative: it returns candidates, never a narrow-phase
- * collision claim.
+ * `buildSpatialHash2D` validates and freezes a plain immutable index value;
+ * the per-cell buckets live in an internal WeakMap so callers can never
+ * mutate or depend on them. `querySpatialHash2D` visits only the query's
+ * cells and returns candidate ids deduplicated and in original insertion
+ * order. The broad phase is conservative: it returns candidates, never a
+ * narrow-phase collision claim.
  */
 import type { Aabb2D } from '../geometry/types';
 import {
@@ -37,6 +38,12 @@ export interface BuildSpatialHash2DOptions {
   readonly cellSize: number;
 }
 
+/** Opaque per-index internal buckets and order, never exposed publicly. */
+const internalState = new WeakMap<
+  SpatialHashIndex2D,
+  { readonly cells: ReadonlyMap<string, readonly string[]>; readonly order: ReadonlyMap<string, number> }
+>();
+
 /** Build a spatial-hash index over the given items. */
 export function buildSpatialHash2D(options: BuildSpatialHash2DOptions): SpatialHashIndex2D {
   const { items, cellSize } = options;
@@ -48,6 +55,9 @@ export function buildSpatialHash2D(options: BuildSpatialHash2DOptions): SpatialH
     );
   }
   const seen = new Set<string>();
+  const cells = new Map<string, string[]>();
+  const order = new Map<string, number>();
+  const frozenItems: SpatialHashItem2D[] = [];
   for (const item of items) {
     if (seen.has(item.id)) {
       throw new GeometryError(
@@ -58,39 +68,78 @@ export function buildSpatialHash2D(options: BuildSpatialHash2DOptions): SpatialH
     }
     seen.add(item.id);
     assertValidAabb2D(item.bounds, `items.${item.id}.bounds`);
+    const frozen = Object.freeze(item);
+    frozenItems.push(frozen);
+    order.set(item.id, frozenItems.length - 1);
+    for (const cell of cellsOf(item.bounds, cellSize)) {
+      const key = cellKey(cell.x, cell.y);
+      const bucket = cells.get(key);
+      if (bucket === undefined) {
+        cells.set(key, [item.id]);
+      } else {
+        bucket.push(item.id);
+      }
+    }
   }
-  return Object.freeze({
+  const index = Object.freeze({
     cellSize,
-    items: Object.freeze(items.map((item) => Object.freeze(item))),
+    items: Object.freeze(frozenItems),
   });
+  internalState.set(index, {
+    cells: new Map([...cells.entries()].map(([key, ids]) => [key, Object.freeze(ids)])),
+    order: new Map(order),
+  });
+  return index;
 }
 
 /** Query candidates whose bounds share a cell with the query bounds. */
 export function querySpatialHash2D(index: SpatialHashIndex2D, bounds: Aabb2D): readonly string[] {
   assertValidAabb2D(bounds, 'bounds');
-  const result: string[] = [];
-  for (const item of index.items) {
-    if (sharesCell(item.bounds, bounds, index.cellSize)) {
-      result.push(item.id);
+  const state = internalState.get(index);
+  if (state === undefined) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      'index',
+      'expected an index built by buildSpatialHash2D',
+    );
+  }
+  const seen = new Set<string>();
+  const collected: string[] = [];
+  for (const cell of cellsOf(bounds, index.cellSize)) {
+    const bucket = state.cells.get(cellKey(cell.x, cell.y));
+    if (bucket === undefined) {
+      continue;
+    }
+    for (const id of bucket) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        collected.push(id);
+      }
     }
   }
-  return result;
+  // Preserve original insertion order regardless of bucket order.
+  collected.sort((a, b) => state.order.get(a)! - state.order.get(b)!);
+  return collected;
 }
 
-/** True when the two AABBs occupy at least one common cell. */
-function sharesCell(first: Aabb2D, second: Aabb2D, cellSize: number): boolean {
-  const firstMinX = Math.floor(first.x / cellSize);
-  const firstMaxX = Math.floor((first.x + first.width) / cellSize);
-  const firstMinY = Math.floor(first.y / cellSize);
-  const firstMaxY = Math.floor((first.y + first.height) / cellSize);
-  const secondMinX = Math.floor(second.x / cellSize);
-  const secondMaxX = Math.floor((second.x + second.width) / cellSize);
-  const secondMinY = Math.floor(second.y / cellSize);
-  const secondMaxY = Math.floor((second.y + second.height) / cellSize);
-  return (
-    firstMinX <= secondMaxX &&
-    firstMaxX >= secondMinX &&
-    firstMinY <= secondMaxY &&
-    firstMaxY >= secondMinY
-  );
+interface Cell {
+  readonly x: number;
+  readonly y: number;
+}
+
+/** Every cell an AABB occupies, in deterministic order. */
+function* cellsOf(bounds: Aabb2D, cellSize: number): Generator<Cell> {
+  const minX = Math.floor(bounds.x / cellSize);
+  const maxX = Math.floor((bounds.x + bounds.width) / cellSize);
+  const minY = Math.floor(bounds.y / cellSize);
+  const maxY = Math.floor((bounds.y + bounds.height) / cellSize);
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      yield { x, y };
+    }
+  }
+}
+
+function cellKey(x: number, y: number): string {
+  return `${x},${y}`;
 }

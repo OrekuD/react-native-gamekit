@@ -168,6 +168,22 @@ try {
 - App backgrounding pauses an app-bound game; foreground resumes only the
   pause the lifecycle caused. Never resume a user pause on foreground.
 
+## Collision (Task 11 — agents adding collision)
+
+- Use the public Collision2D API for detection; keep response authored in
+  the scene update. Never write private overlap math.
+- Static pairs: `collideCircleAabb2D` / `collideAabbAabb2D` /
+  `collideCircleCircle2D`. Fast objects: `sweepCircleAabb2D` /
+  `sweepAabbAabb2D` before movement.
+- Colliders are authored on objects as local records and placed with
+  `placeCollider2D`; never pass local colliders to world-only operations.
+  Colliders are translation-only; a rotated sprite keeps an axis-aligned
+  gameplay collider.
+- Use category/mask filters for system separation and `sensor: true` for
+  detection-only intent. Collision never mutates scene state.
+- Many objects: build a spatial hash once, query per moving object, and
+  keep the narrow phase on the candidates.
+
 ## Diagnostics
 
 - Missing asset: `ASSET_RESOLVE_FAILED` / `ASSET_DECODE_FAILED` with the
