@@ -48,7 +48,7 @@ describe('circle sweep miss-path allocation (T11-SF3)', () => {
   it('keeps the miss path within GC noise across 100k calls', () => {
     // The circle at x=60 never reaches the target's right edge (36 + 4),
     // so every call is a true miss.
-    const miss = (index: number): undefined =>
+    const miss = (index: number) =>
       sweepCircleAabb2D({
         circle: { x: 60, y: 40 + (index % 4), radius: 4 },
         displacement: { x: 0, y: 40 },

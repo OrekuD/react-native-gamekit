@@ -2,12 +2,12 @@
 
 ## Status
 
-**Second follow-up review: changes still required.** Commits `e53fe5a`,
-`ad7caec`, and `783085a` repair the main UI-runtime, retained-overlay,
-pre-setter HUD, spatial-hash immutability, and guide-sync problems. The second
-follow-up below found a visible wrap-path bug, remaining sweep allocations,
-and evidence/record claims that are not established by their named tests. The
-reported complete automated gate is green; physical-device rows remain open.
+**Second follow-up review: T11-SF1 through T11-SF5 addressed.** Commits
+`e53fe5a`, `ad7caec`, and `783085a` repaired the first follow-up findings;
+the second follow-up below found a visible wrap-path bug, remaining sweep
+allocations, and evidence/record gaps, and the second follow-up fix record
+documents their repair. The complete automated gate is green;
+physical-device rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -1782,6 +1782,27 @@ use `r1 + r2`.
 - [ ] Sweep correctness remains green without per-call corner/root arrays or
       closures.
 - [ ] Plan, code, tests, docs, and device-gated rows report the same status.
+
+> **Second follow-up fix record.** T11-SF1: the scene detects the modulo wrap
+> in state (comparing the actually published previous position, immune to
+> floating-point drift) and publishes the explicit `projectileTeleported`
+> fact; the renderer consumes that fact instead of comparing transformed
+> coordinates, and the wrap frame publishes no sweep query and no path
+> segment. T11-SF2: the lab freezes raw contact-INTERVAL semantics — no hit
+> before first contact, one contiguous bounded interval, no hit after
+> separation through the wrap, with independent contact-at-time checks —
+> and the HUD wording matches. T11-SF3: the circle sweep's `accept` closure
+> is gone (inline scalar updates), the starting-overlap check uses the
+> allocation-free `intersectsCircleAabb2D` predicate before the manifold,
+> and the 100k-miss heap delta is within GC noise; a structural test
+> rejects local functions/arrays in the sweep body. T11-SF4: the HUD
+> publication test table-drives all five actions (exactly one publication
+> each), the renderer contract test verifies every allowlisted helper
+> carries the worklet directive, a mounted overlay-reactivity suite drives
+> visibility/position/viewport changes through controllable shared values
+> without remounting nodes, and the rebuild-after-move guide test queries
+> both the old and the new location. T11-SF5: this record; the earlier
+> closure, one-hit, and all-actions claims are now backed by their tests.
 
 ## Second follow-up feedback — review of `e53fe5a`, `ad7caec`, and `783085a`
 
