@@ -2,10 +2,12 @@
 
 ## Status
 
-**Implementation review: changes required.** The initial Task 11 implementation
-and automated gate are complete, but the review below found correctness,
-immutability, UI-runtime, reference-example, and documentation failures that
-must be addressed before Task 11 is accepted.
+**Implementation review: T11-F1 through T11-F10 addressed.** The initial
+implementation and automated gate were complete, the review below found
+correctness, immutability, UI-runtime, reference-example, and documentation
+failures, and the fix record at the end of the feedback section documents
+their repair. The complete automated gate is green. Physical-device rows
+remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -555,13 +557,16 @@ around one Brick Breaker helper.
 >   tolerance is the documented resolution check tolerance (1e-9 relative)
 >   covered immediately above and below the boundary in tests.
 > - `CollisionHit2D.normal` moves the FIRST argument out of the SECOND;
->   `depth` is nonnegative; contact points: circle-AABB = closest point on
->   the AABB to the circle center (clamped center), circle-circle = midpoint
->   of the centers at the circle boundary along the center line, AABB-AABB =
->   overlap-rectangle center. Circle-center-inside-AABB uses the minimum
->   penetration axis (same convention as Brick Breaker's current math);
->   coincident circle centers return the documented `{0, 1}` fallback normal
->   (straight up) with zero depth.
+>   `depth` is nonnegative and is the full directional exit distance for
+>   containment (a contained AABB resolves completely, not to a smaller
+>   intersection rectangle). Contact points: circle-AABB = closest point on
+>   the AABB to the circle center (clamped center), circle-circle = point on
+>   the first circle's boundary toward the second, AABB-AABB = overlap
+>   rectangle center. Circle-center-inside-AABB uses the minimum penetration
+>   face (ties left, top, right, bottom); coincident circle centers return
+>   the documented `{0, 1}` fallback normal (straight up) with full overlap
+>   depth `r1 + r2`; AABB axis ties resolve on Y and direction ties toward
+>   the negative direction.
 > - Sweeps: `time` in `[0, 1]`, starting overlap returns `time: 0` with the
 >   manifold normal, zero displacement returns `undefined` (never NaN),
 >   earliest valid impact wins, equal-time ties resolve to the
@@ -818,9 +823,10 @@ Breaker with different colors.
 - [x] Add a fast swept projectile crossing a thin target.
 - [x] Add toggles for shape pair, sensor/filter state, and debug display.
 - [x] Add an imported sprite with visible `body`, `hurtbox`, `attack`, and
-      `pickup` collider examples (the Collision Lab demonstrates the
-      multi-collider attachment pattern through the paddle game; the lab
-      itself shows pair/sweep/filter cases).
+      `pickup` collider examples (the Collision Lab imports the Kenney
+      player sheet, authors the four named local colliders, places and
+      projects them through the public debug API, and proves animation
+      changes never alter the colliders).
 - [x] Let the example change sprite animation while proving that its collider
       stays stable unless the game explicitly changes it.
 - [x] Display contact normal, depth, point, sweep time, and candidate counts.
@@ -1013,6 +1019,40 @@ Do not begin by rewriting Brick Breaker. Freeze and prove the geometry
 conventions first so the game migration consumes a stable public contract.
 
 ---
+
+> **Fix record.** T11-F1: AABB manifolds use directional minimum translation
+> (containment resolves completely; identical boxes resolve deterministically
+> to `(0, -1)` with full depth; boundary contact stays a zero-depth hit).
+> T11-F2: the circle-AABB sweep raycasts the exact rounded Minkowski shape
+> (face candidates within the face extent plus corner circles valid only in
+> their exterior quadrant), and the AABB-AABB sweep uses the correct
+> asymmetric top-left expansion; contact-at-time and none-just-before
+> invariants are tested. T11-F3: mixed pairs preserve public argument order
+> (the AABB-first wrapper inverts only the manifold normal) and absent
+> filters normalize to `ALL_FILTER2D` so `NONE_FILTER2D` truly collides with
+> nothing. T11-F4: inside-circle segment normals are outward radial.
+> T11-F5: collider filters are cloned and frozen; the spatial hash clones
+> items and bounds, never freezes caller input, validates derived cell
+> indices as safe integers, bounds spans per axis, and uses the new
+> `GEOMETRY_DUPLICATE_ID` / `GEOMETRY_SPATIAL_INDEX_RANGE` codes. T11-F6:
+> the Collision Lab renderer uses module-level worklet helpers and draws
+> real normal segments and sweep paths from the headless debug records.
+> T11-F7: the lab HUD publishes deduplicated low-frequency records only.
+> T11-F8: the broad-phase guide example is compile-checked
+> (`apps/playground/src/docs-examples/broadphase-guide.ts`) with an
+> application-owned lookup, skip-self, and explicit stale-id handling.
+> T11-F9: the Collision Lab imports the Kenney player sheet and demonstrates
+> named `body`/`hurtbox`/`attack`/`pickup` colliders placed and projected
+> through the public debug API, with animation, sensor/filter, and
+> debug-visibility toggles, plus mounted interaction tests. T11-F10: this
+> record.
+>
+> Focused RED suites: `collision2d.containment.test.ts`,
+> `collision2d.sweepExact.test.ts`, `collision2d.pairOrder.test.ts`,
+> `collision2d.immutability.test.ts`, `broadphaseGuide.test.ts`, plus the
+> lab rules and mounted interaction suites. All fail against the reviewed
+> commit and pass after the fixes; the complete automated gate is green.
+> Physical-device rows remain open.
 
 ## Feedback — Task 11 implementation review
 
