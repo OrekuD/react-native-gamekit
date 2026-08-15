@@ -879,6 +879,15 @@ state and could accidentally establish a second lifecycle source of truth.
 
 ---
 
+> **Fix record (48f5cd1).** T10-F1 (exception-safe disposal + listener release),
+> T10-F2 (pause command transaction), T10-F3 (stable hook callbacks with a
+> diagnostics counting seam), T10-F4 (paddle tutorial registered as a
+> playable catalog game; mounted PauseOverlay tests with a react-native
+> module mock; guide snippet made complete and copyable), and T10-F5
+> (honest plan record). New RED tests: `statusDisposal.test.ts` (5) and
+> churn/replacement/Strict Mode hook tests (3). All automated gates green.
+> Device rows remain open.
+
 ## Feedback — Task 10 implementation review
 
 This review is limited to the Task 10 commit range
