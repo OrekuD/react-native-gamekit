@@ -379,6 +379,7 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     content: CollisionLabContent,
     createSession: () => createGameSession(collisionLabDefinition) as unknown as GameSession,
     pointer: true,
+    assetBacked: true,
   },
 };
 

@@ -132,10 +132,12 @@ export function intersectSegmentCircle2D(
   if (pointInCircle2D(segment.start, circle)) {
     const distanceSquared = fx * fx + fy * fy;
     const distance = Math.sqrt(distanceSquared);
+    // Outward radial: the normalized center-to-start vector. The (0, 1)
+    // fallback applies only at the exact center.
     const normal: Vector2D =
       distance === 0
         ? Object.freeze({ x: 0, y: 1 })
-        : Object.freeze({ x: -fx / distance, y: -fy / distance });
+        : Object.freeze({ x: fx / distance, y: fy / distance });
     return Object.freeze({
       time: 0,
       normal,

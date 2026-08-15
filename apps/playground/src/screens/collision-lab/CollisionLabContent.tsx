@@ -7,8 +7,12 @@ import type { CollisionLabSnapshot } from './collisionLabGame';
 
 /**
  * Collision Lab content: the header, the control row OUTSIDE the gameplay
- * hit surface, and the value HUD. Buttons drive the session's declared
- * button actions; the scene computes every displayed value.
+ * hit surface, and the value HUD.
+ *
+ * The HUD (T11-F7) only publishes LOW-FREQUENCY semantic records: pair,
+ * toggles, the static contact scalars, and the candidate count. The
+ * continuously changing sweep time is presented by the renderer's sweep
+ * path instead of React state.
  */
 export default function CollisionLabContent({ game, onExit }: PlaygroundGameContentProps) {
   const session = game as GameSession;
@@ -28,40 +32,29 @@ export default function CollisionLabContent({ game, onExit }: PlaygroundGameCont
         </Pressable>
       </View>
 
-      <View pointerEvents="box-none" style={[styles.controls, { bottom: insets.bottom + 96 }]}>
-        <Pressable
-          accessibilityLabel="Cycle the shape pair"
-          accessibilityRole="button"
-          onPress={() => {
-            session.input.press('cycle-pair');
-            session.input.release('cycle-pair');
-          }}
-          style={styles.button}
-        >
-          <Text style={styles.buttonLabel}>Pair</Text>
-        </Pressable>
-        <Pressable
-          accessibilityLabel="Toggle the swept projectile"
-          accessibilityRole="button"
-          onPress={() => {
-            session.input.press('toggle-sweep');
-            session.input.release('toggle-sweep');
-          }}
-          style={styles.button}
-        >
-          <Text style={styles.buttonLabel}>Sweep</Text>
-        </Pressable>
-        <Pressable
-          accessibilityLabel="Toggle collision filtering"
-          accessibilityRole="button"
-          onPress={() => {
-            session.input.press('toggle-filter');
-            session.input.release('toggle-filter');
-          }}
-          style={styles.button}
-        >
-          <Text style={styles.buttonLabel}>Filter</Text>
-        </Pressable>
+      <View pointerEvents="box-none" style={[styles.controls, { bottom: insets.bottom + 108 }]}>
+        {(
+          [
+            ['cycle-pair', 'Pair'],
+            ['toggle-sweep', 'Sweep'],
+            ['toggle-filter', 'Filter'],
+            ['cycle-anim', 'Anim'],
+            ['toggle-debug', 'Debug'],
+          ] as const
+        ).map(([action, label]) => (
+          <Pressable
+            key={action}
+            accessibilityLabel={`${label} toggle`}
+            accessibilityRole="button"
+            onPress={() => {
+              session.input.press(action);
+              session.input.release(action);
+            }}
+            style={styles.button}
+          >
+            <Text style={styles.buttonLabel}>{label}</Text>
+          </Pressable>
+        ))}
       </View>
 
       <LabHud game={session} />
@@ -69,13 +62,71 @@ export default function CollisionLabContent({ game, onExit }: PlaygroundGameCont
   );
 }
 
+interface LabHudRecord {
+  readonly pair: CollisionLabSnapshot['pair'];
+  readonly swept: boolean;
+  readonly filterEnabled: boolean;
+  readonly debugVisible: boolean;
+  readonly animation: CollisionLabSnapshot['animation'];
+  readonly hit: { readonly depth: number; readonly nx: number; readonly ny: number; readonly px: number; readonly py: number } | undefined;
+  readonly candidates: number;
+}
+
+function hudEqual(first: LabHudRecord, second: LabHudRecord): boolean {
+  if (
+    first.pair !== second.pair ||
+    first.swept !== second.swept ||
+    first.filterEnabled !== second.filterEnabled ||
+    first.debugVisible !== second.debugVisible ||
+    first.animation !== second.animation ||
+    first.candidates !== second.candidates
+  ) {
+    return false;
+  }
+  if (first.hit === undefined || second.hit === undefined) {
+    return first.hit === second.hit;
+  }
+  return (
+    first.hit.depth === second.hit.depth &&
+    first.hit.nx === second.hit.nx &&
+    first.hit.ny === second.hit.ny &&
+    first.hit.px === second.hit.px &&
+    first.hit.py === second.hit.py
+  );
+}
+
+function recordOf(snap: CollisionLabSnapshot): LabHudRecord {
+  return {
+    pair: snap.pair,
+    swept: snap.swept,
+    filterEnabled: snap.filterEnabled,
+    debugVisible: snap.debugVisible,
+    animation: snap.animation,
+    hit:
+      snap.staticHit === undefined
+        ? undefined
+        : {
+            depth: snap.staticHit.depth,
+            nx: snap.staticHit.normal.x,
+            ny: snap.staticHit.normal.y,
+            px: snap.staticHit.point.x,
+            py: snap.staticHit.point.y,
+          },
+    candidates: snap.candidates.length,
+  };
+}
+
 function LabHud({ game }: { readonly game: GameSession }) {
-  // Low-frequency HUD: subscribe to commits (60 Hz) instead of rendering
-  // every frame; unchanged snapshots keep the previous state object.
-  const [current, setCurrent] = useState<CollisionLabSnapshot | undefined>(undefined);
+  // Deduplicated low-frequency HUD: setState only when the semantic record
+  // changes, never per simulation tick.
+  const [display, setDisplay] = useState<LabHudRecord | undefined>(undefined);
   useEffect(() => {
     const update = (frame: unknown): void => {
-      setCurrent((frame as { current: CollisionLabSnapshot }).current);
+      const snap = (frame as { current: CollisionLabSnapshot }).current;
+      setDisplay((previous) => {
+        const next = recordOf(snap);
+        return previous !== undefined && hudEqual(previous, next) ? previous : next;
+      });
     };
     update(game.getRenderFrame());
     const subscription = game.addCommitListener(update);
@@ -83,21 +134,22 @@ function LabHud({ game }: { readonly game: GameSession }) {
       subscription.remove();
     };
   }, [game]);
-  if (current === undefined) {
+
+  if (display === undefined) {
     return null;
   }
-  const hit = current.staticHit;
   return (
     <View pointerEvents="none" style={styles.hud}>
       <Text style={styles.hudLine}>
-        pair {current.pair} · sweep {current.swept ? 'on' : 'off'} · filter {current.filterEnabled ? 'on' : 'off'}
+        pair {display.pair} · sweep {display.swept ? 'on' : 'off'} · filter {display.filterEnabled ? 'on' : 'off'} · anim {display.animation} · debug {display.debugVisible ? 'on' : 'off'}
       </Text>
       <Text style={styles.hudLine}>
-        contact {hit === undefined ? 'none' : `normal (${hit.normal.x.toFixed(2)}, ${hit.normal.y.toFixed(2)}) depth ${hit.depth.toFixed(2)}`}
+        contact{' '}
+        {display.hit === undefined
+          ? 'none'
+          : `normal (${display.hit.nx.toFixed(2)}, ${display.hit.ny.toFixed(2)}) depth ${display.hit.depth.toFixed(2)}`}
       </Text>
-      <Text style={styles.hudLine}>
-        sweep time {current.sweptHit === undefined ? '-' : current.sweptHit.time.toFixed(3)} · candidates {current.candidates.length}
-      </Text>
+      <Text style={styles.hudLine}>candidates {display.candidates}</Text>
     </View>
   );
 }
@@ -127,21 +179,23 @@ const styles = StyleSheet.create({
   controls: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
+    flexWrap: 'wrap',
+    gap: 10,
     justifyContent: 'center',
     left: 0,
+    paddingHorizontal: 16,
     position: 'absolute',
     right: 0,
   },
   button: {
     backgroundColor: 'rgba(15, 23, 42, 0.85)',
     borderRadius: 999,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   buttonLabel: {
     color: '#e2e8f0',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '700',
   },
   hud: {

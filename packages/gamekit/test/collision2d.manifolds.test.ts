@@ -80,11 +80,10 @@ describe('AABB-AABB manifolds', () => {
   it('reports separation, containment, and boundary contacts', () => {
     const inner = collideAabbAabb2D({ x: 2, y: 2, width: 2, height: 2 }, { x: 0, y: 0, width: 10, height: 10 });
     assert.ok(inner !== undefined);
-    // Nearest faces: top and left are both 2 away; equal-axis overlaps pick
-    // the Y axis (locked tie rule), and the first center is above the
-    // second, so it exits upward.
+    // Full directional exits: up and left both need 4 units; equal axes pick
+    // the Y axis (locked tie rule) and the negative direction wins.
     assert.deepEqual(inner.normal, { x: 0, y: -1 }, 'contained box exits upward');
-    close(inner.depth, 2);
+    close(inner.depth, 4);
 
     const edge = collideAabbAabb2D({ x: 0, y: 0, width: 10, height: 10 }, { x: 10, y: 0, width: 10, height: 10 });
     assert.ok(edge !== undefined);

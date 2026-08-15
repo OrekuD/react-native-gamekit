@@ -38,6 +38,9 @@ export interface BuildSpatialHash2DOptions {
   readonly cellSize: number;
 }
 
+/** Maximum cells an item or query may span per axis (bounded execution). */
+export const MAX_SPATIAL_HASH_SPAN_CELLS = 1024;
+
 /** Opaque per-index internal buckets and order, never exposed publicly. */
 const internalState = new WeakMap<
   SpatialHashIndex2D,
@@ -61,17 +64,23 @@ export function buildSpatialHash2D(options: BuildSpatialHash2DOptions): SpatialH
   for (const item of items) {
     if (seen.has(item.id)) {
       throw new GeometryError(
-        'GEOMETRY_INVALID_NUMBER',
+        'GEOMETRY_DUPLICATE_ID',
         'items.id',
         `expected unique item ids, got duplicate "${item.id}"`,
       );
     }
     seen.add(item.id);
     assertValidAabb2D(item.bounds, `items.${item.id}.bounds`);
-    const frozen = Object.freeze(item);
-    frozenItems.push(frozen);
+    // Clone the caller's item and its bounds: the index must never freeze
+    // or retain caller-owned objects, and the private buckets must agree
+    // with the public `items` view.
+    const cloned: SpatialHashItem2D = Object.freeze({
+      id: item.id,
+      bounds: Object.freeze({ ...item.bounds }),
+    });
+    frozenItems.push(cloned);
     order.set(item.id, frozenItems.length - 1);
-    for (const cell of cellsOf(item.bounds, cellSize)) {
+    for (const cell of cellsOf(cloned.bounds, cellSize)) {
       const key = cellKey(cell.x, cell.y);
       const bucket = cells.get(key);
       if (bucket === undefined) {
@@ -129,14 +138,40 @@ interface Cell {
 
 /** Every cell an AABB occupies, in deterministic order. */
 function* cellsOf(bounds: Aabb2D, cellSize: number): Generator<Cell> {
-  const minX = Math.floor(bounds.x / cellSize);
-  const maxX = Math.floor((bounds.x + bounds.width) / cellSize);
-  const minY = Math.floor(bounds.y / cellSize);
-  const maxY = Math.floor((bounds.y + bounds.height) / cellSize);
+  const minX = cellIndex(bounds.x, cellSize);
+  const maxX = cellIndex(bounds.x + bounds.width, cellSize);
+  const minY = cellIndex(bounds.y, cellSize);
+  const maxY = cellIndex(bounds.y + bounds.height, cellSize);
+  assertSpan(maxX - minX, 'x');
+  assertSpan(maxY - minY, 'y');
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       yield { x, y };
     }
+  }
+}
+
+/** Validate a derived cell index as a finite safe integer. */
+function cellIndex(coord: number, cellSize: number): number {
+  const index = Math.floor(coord / cellSize);
+  if (!Number.isSafeInteger(index)) {
+    throw new GeometryError(
+      'GEOMETRY_SPATIAL_INDEX_RANGE',
+      'bounds',
+      `coordinate ${coord} produces an unsafe cell index`,
+    );
+  }
+  return index;
+}
+
+/** Reject spans that would block the JS thread (bounded execution). */
+function assertSpan(span: number, axis: 'x' | 'y'): void {
+  if (span > MAX_SPATIAL_HASH_SPAN_CELLS) {
+    throw new GeometryError(
+      'GEOMETRY_SPATIAL_INDEX_RANGE',
+      `bounds.${axis}`,
+      `bounds span ${span} cells, exceeding the maximum of ${MAX_SPATIAL_HASH_SPAN_CELLS}`,
+    );
   }
 }
 

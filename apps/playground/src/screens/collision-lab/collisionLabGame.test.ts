@@ -4,9 +4,25 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+// The game manifest references static module handles via require(...),
+// which Metro resolves at bundle time; the headless tests seed a stub.
+(globalThis as { require?: (id: string) => number }).require = () => 42;
+
 import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
 import { canCollide2D, collideCircleAabb2D } from 'rn-gamekit';
-import { COLLISION_LAB_CONFIG, collisionLabDefinition, type CollisionLabSnapshot } from './collisionLabGame.ts';
+
+const { COLLISION_LAB_CONFIG, collisionLabDefinition } = await import('./collisionLabGame.ts');
+type CollisionLabSnapshot = {
+  readonly pair: 'circleAabb' | 'aabbAabb' | 'circleCircle';
+  readonly swept: boolean;
+  readonly filterEnabled: boolean;
+  readonly animation: 'idle' | 'run';
+  readonly debugVisible: boolean;
+  readonly staticHit: { readonly normal: { x: number; y: number }; readonly depth: number } | undefined;
+  readonly sweptHit: { readonly time: number } | undefined;
+  readonly candidates: readonly string[];
+  readonly colliders: ReadonlyArray<{ readonly space: string; readonly id?: string }>;
+};
 
 const STEP_MS = 1000 / 60;
 
@@ -89,5 +105,38 @@ describe('Collision Lab rules', () => {
     const { snap } = harness();
     const candidates = snap().candidates;
     assert.deepEqual(candidates, ['ball', 'box'], 'the ball and the box share the region');
+  });
+
+  it('changes the animation without changing any collider value (T11-F9)', () => {
+    const { session, tick, snap } = harness();
+    const before = snap();
+    assert.equal(before.animation, 'idle');
+    const collidersBefore = before.colliders.map((collider) => JSON.stringify(collider));
+
+    session.input.press('cycle-anim');
+    session.input.release('cycle-anim');
+    tick(1);
+    const after = snap();
+    assert.equal(after.animation, 'run', 'the animation state changed');
+    const collidersAfter = after.colliders.map((collider) => JSON.stringify(collider));
+    assert.deepEqual(collidersAfter, collidersBefore, 'placed colliders are identical');
+    // All four named colliders are present and placed in world space.
+    assert.deepEqual(
+      after.colliders.map((collider) => collider.id),
+      ['body', 'hurtbox', 'attack', 'pickup'],
+    );
+    assert.ok(after.colliders.every((collider) => collider.space === 'world'));
+  });
+
+  it('keeps debug visibility presentation-only (T11-F9)', () => {
+    const { session, tick, snap } = harness();
+    assert.equal(snap().debugVisible, true);
+    session.input.press('toggle-debug');
+    session.input.release('toggle-debug');
+    tick(1);
+    const hidden = snap();
+    assert.equal(hidden.debugVisible, false, 'the debug flag toggles');
+    assert.equal(hidden.colliders.length, 4, 'the colliders are still computed for gameplay');
+    assert.equal(hidden.staticHit !== undefined, true, 'contacts are unaffected by debug visibility');
   });
 });

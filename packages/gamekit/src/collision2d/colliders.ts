@@ -19,7 +19,7 @@ import {
   assertUnsigned32Bits,
 } from '../geometry/validation';
 import type { CollisionFilter2D } from './filters';
-import { canCollide2D } from './filters';
+import { ALL_FILTER2D, canCollide2D } from './filters';
 import {
   collideAabbAabb2D,
   collideCircleAabb2D,
@@ -115,6 +115,12 @@ export interface CircleCollider2DOptions {
   readonly id?: string;
 }
 
+/** Clone and freeze a caller-provided filter so later mutation cannot
+ *  change already-created colliders or their placements. */
+function freezeFilter(filter: CollisionFilter2D): CollisionFilter2D {
+  return Object.freeze({ categoryBits: filter.categoryBits, maskBits: filter.maskBits });
+}
+
 function validateMetadata(metadata: ColliderMetadata2D): void {
   if (metadata.filter !== undefined) {
     assertUnsigned32Bits(metadata.filter.categoryBits, 'filter.categoryBits');
@@ -130,7 +136,7 @@ export function rectangleCollider2D(options: RectangleCollider2DOptions): LocalA
     offset: Object.freeze({ x: options.offset.x, y: options.offset.y }),
     width: options.width,
     height: options.height,
-    ...(options.filter === undefined ? {} : { filter: options.filter }),
+    ...(options.filter === undefined ? {} : { filter: freezeFilter(options.filter) }),
     ...(options.sensor === undefined ? {} : { sensor: options.sensor }),
     ...(options.id === undefined ? {} : { id: options.id }),
   };
@@ -154,7 +160,7 @@ export function circleCollider2D(options: CircleCollider2DOptions): LocalCircleC
     shape: 'circle',
     offset: Object.freeze({ x: options.offset.x, y: options.offset.y }),
     radius: options.radius,
-    ...(options.filter === undefined ? {} : { filter: options.filter }),
+    ...(options.filter === undefined ? {} : { filter: freezeFilter(options.filter) }),
     ...(options.sensor === undefined ? {} : { sensor: options.sensor }),
     ...(options.id === undefined ? {} : { id: options.id }),
   };
@@ -233,19 +239,20 @@ export function worldColliderCircle2D(world: WorldCollider2D): Circle2D | undefi
 /**
  * Narrow-phase contact between two placed world colliders.
  *
- * Applies the colliders' filters symmetrically (an absent filter is
- * eligible with everything), then dispatches on the shape pair. Returns
- * the same manifold conventions as the shape-level functions.
+ * Filters are normalized first: an absent filter behaves exactly as
+ * `ALL_FILTER2D`, so `NONE_FILTER2D` on either side truly collides with
+ * nothing. The dispatch preserves the public argument order: the returned
+ * normal always moves the FIRST argument out of the SECOND, including for
+ * mixed AABB/circle pairs (the AABB-first wrapper inverts only the
+ * circle-first manifold normal, keeping depth and the world contact point).
  */
 export function collideWorldColliders2D(
   first: WorldCollider2D,
   second: WorldCollider2D,
 ): CollisionHit2D | undefined {
-  if (
-    first.filter !== undefined &&
-    second.filter !== undefined &&
-    !canCollide2D(first.filter, second.filter)
-  ) {
+  const firstFilter = first.filter ?? ALL_FILTER2D;
+  const secondFilter = second.filter ?? ALL_FILTER2D;
+  if (!canCollide2D(firstFilter, secondFilter)) {
     return undefined;
   }
   if (first.shape === 'aabb' && second.shape === 'aabb') {
@@ -260,16 +267,26 @@ export function collideWorldColliders2D(
       { x: second.x, y: second.y, radius: second.radius },
     );
   }
-  const circle =
-    first.shape === 'circle'
-      ? (first as WorldCircleCollider2D)
-      : (second as WorldCircleCollider2D);
-  const aabb =
-    first.shape === 'aabb'
-      ? (first as WorldAabbCollider2D)
-      : (second as WorldAabbCollider2D);
-  return collideCircleAabb2D(
-    { x: circle.x, y: circle.y, radius: circle.radius },
-    { x: aabb.x, y: aabb.y, width: aabb.width, height: aabb.height },
+  if (first.shape === 'circle' && second.shape === 'aabb') {
+    return collideCircleAabb2D(
+      { x: first.x, y: first.y, radius: first.radius },
+      { x: second.x, y: second.y, width: second.width, height: second.height },
+    );
+  }
+  // AABB first, circle second: invert the circle-first manifold normal so
+  // the normal still moves the FIRST argument (the AABB) out of the second.
+  const aabbFirst = first as WorldAabbCollider2D;
+  const circleSecond = second as WorldCircleCollider2D;
+  const circleFirst = collideCircleAabb2D(
+    { x: circleSecond.x, y: circleSecond.y, radius: circleSecond.radius },
+    { x: aabbFirst.x, y: aabbFirst.y, width: aabbFirst.width, height: aabbFirst.height },
   );
+  if (circleFirst === undefined) {
+    return undefined;
+  }
+  return Object.freeze({
+    normal: Object.freeze({ x: 0 - circleFirst.normal.x, y: 0 - circleFirst.normal.y }),
+    depth: circleFirst.depth,
+    point: circleFirst.point,
+  });
 }

@@ -48,35 +48,34 @@ export function collideAabbAabb2D(first: Aabb2D, second: Aabb2D): CollisionHit2D
   const secondMaxX = second.x + second.width;
   const secondMaxY = second.y + second.height;
 
-  const overlapX = Math.min(firstMaxX, secondMaxX) - Math.max(first.x, second.x);
-  const overlapY = Math.min(firstMaxY, secondMaxY) - Math.max(first.y, second.y);
-  if (overlapX < 0 || overlapY < 0) {
+  if (firstMaxX < second.x || first.x > secondMaxX || firstMaxY < second.y || first.y > secondMaxY) {
     return undefined;
   }
 
-  const firstCenterX = first.x + first.width / 2;
-  const firstCenterY = first.y + first.height / 2;
-  const secondCenterX = second.x + second.width / 2;
-  const secondCenterY = second.y + second.height / 2;
+  // Directional minimum translation (T11-F1): for each axis, the distance
+  // that fully separates the intervals in each direction. This resolves
+  // containment completely, not merely to a smaller intersection rectangle.
+  const exitLeft = firstMaxX - second.x;
+  const exitRight = secondMaxX - first.x;
+  const exitUp = firstMaxY - second.y;
+  const exitDown = secondMaxY - first.y;
+  const depthX = Math.min(exitLeft, exitRight);
+  const depthY = Math.min(exitUp, exitDown);
 
   let normal: Vector2D;
   let depth: number;
-  if (overlapX === 0 && overlapY === 0) {
+  if (depthX === 0 && depthY === 0) {
     // Exact corner touch: locked deterministic tie rule.
     normal = Object.freeze({ x: 0, y: 1 });
     depth = 0;
-  } else if (overlapX < overlapY) {
-    normal = Object.freeze({
-      x: firstCenterX < secondCenterX ? -1 : 1,
-      y: 0,
-    });
-    depth = overlapX;
+  } else if (depthX < depthY) {
+    normal = Object.freeze({ x: exitLeft <= exitRight ? -1 : 1, y: 0 });
+    depth = depthX;
   } else {
-    normal = Object.freeze({
-      x: 0,
-      y: firstCenterY < secondCenterY ? -1 : 1,
-    });
-    depth = overlapY;
+    // Equal axes resolve on Y (locked tie rule); equal directions on the
+    // chosen axis resolve toward the negative direction.
+    normal = Object.freeze({ x: 0, y: exitUp <= exitDown ? -1 : 1 });
+    depth = depthY;
   }
 
   return Object.freeze({

@@ -13,7 +13,9 @@ export type GeometryErrorCode =
   | 'GEOMETRY_INVALID_NUMBER'
   | 'GEOMETRY_INVALID_SIZE'
   | 'GEOMETRY_INVALID_BITS'
-  | 'GEOMETRY_INVALID_SEGMENT';
+  | 'GEOMETRY_INVALID_SEGMENT'
+  | 'GEOMETRY_DUPLICATE_ID'
+  | 'GEOMETRY_SPATIAL_INDEX_RANGE';
 
 /** A structured geometry or collision input failure. */
 export class GeometryError extends Error {

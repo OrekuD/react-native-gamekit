@@ -2,10 +2,15 @@
 
 ## Status
 
-**Not started.** This task adds the first public gameplay system beyond the
-runtime foundations: a headless, deterministic Collision2D module for common
-arcade games. It establishes canonical 2D geometry, overlap and contact
-queries, swept collision, filtering, broad-phase indexing, debug projections,
+**Implementation review: changes required.** The initial Task 11 implementation
+and automated gate are complete, but the review below found correctness,
+immutability, UI-runtime, reference-example, and documentation failures that
+must be addressed before Task 11 is accepted.
+
+This task adds the first public gameplay system beyond the runtime foundations:
+a headless, deterministic Collision2D module for common arcade games. It
+establishes canonical 2D geometry, overlap and contact queries, swept
+collision, filtering, broad-phase indexing, debug projections,
 asset-independent collider attachment, and a real migration of Brick Breaker.
 
 Task 11 must remain independent of React, React Native, Skia, Reanimated,
@@ -1006,3 +1011,429 @@ Implement in dependency order so integration cannot redefine core semantics.
 
 Do not begin by rewriting Brick Breaker. Freeze and prove the geometry
 conventions first so the game migration consumes a stable public contract.
+
+---
+
+## Feedback — Task 11 implementation review
+
+This review covers the Task 11 implementation through `cb4cc9e`: geometry,
+manifolds, sweeps, segments, collider records, filters, the spatial hash,
+debug projections, Brick Breaker migration, Collision Lab, tests, and related
+documentation. The review did not rerun the full repository gate. It used code
+inspection and narrow headless probes that directly exercise the cases below.
+
+Address every high-priority finding before using Collision2D as a foundation
+for Task 12 or publishing a follow-up package release.
+
+### T11-F1 — Resolve contained AABBs with the actual exit distance
+
+**Priority:** High
+
+`collideAabbAabb2D` uses the length of the intersection rectangle as its
+penetration depth. That works for ordinary partial overlaps, but it does not
+work when one AABB is fully contained by the other. For an inner box
+`{ x: 2, y: 2, width: 2, height: 2 }` inside a `10 x 10` outer box, the API
+returns `{ normal: { x: 0, y: -1 }, depth: 2 }`. Applying the documented
+`normal * depth` moves the inner box to `y: 0`, where it still penetrates the
+outer box by two units.
+
+The existing containment test asserts the incorrect depth but never applies
+the resolution property to that case. Its test-side penetration helper also
+uses intersection length, so it cannot act as an independent containment
+oracle.
+
+#### Required approach
+
+Replace intersection-length depth with directional exit distances. For each
+axis, compute the distance required to move the first interval past the
+second interval in both directions, select the smaller valid direction, then
+select the minimum axis using the frozen tie policy.
+
+- [ ] Preserve the rule that the normal moves the first argument out of the
+      second.
+- [ ] Preserve boundary contact as a zero-depth hit.
+- [ ] Define and document ties for identical centers and identical boxes.
+- [ ] Keep the contact-point convention stable or document a deliberate
+      correction if containment requires one.
+- [ ] Do not special-case only the current test coordinates; use one interval
+      minimum-translation implementation for all AABB pairs.
+
+#### RED-first tests
+
+Add independent resolution tests before changing the manifold.
+
+- [ ] Resolve a small first AABB contained near every face of a larger second
+      AABB.
+- [ ] Resolve a large first AABB containing a smaller second AABB.
+- [ ] Resolve equal-center and identical AABBs under the deterministic tie
+      rule.
+- [ ] Verify the reported translation leaves zero penetration, not merely a
+      smaller intersection rectangle.
+- [ ] Keep partial-overlap, edge, corner, symmetry, and translation-invariance
+      coverage green.
+
+### T11-F2 — Replace the two false-positive swept-collision algorithms
+
+**Priority:** High
+
+Both swept implementations can report an impact at a time when the shapes do
+not touch.
+
+`sweepCircleAabb2D` expands the target into a larger AABB and raycasts the
+circle center against it. The true Minkowski shape has rounded corners, not
+square corners. The existing test at center `(40, 14)` against a target ending
+at `(36, 10)` expects a hit even though the center is about `5.66` units from
+the corner and the radius is only `4`. A focused probe confirms that
+`intersectsCircleAabb2D` is false at the reported `time: 0.5`.
+
+`sweepAabbAabb2D` uses the moving AABB's top-left corner as its reference, but
+expands both sides of the target by the moving width and height. For a top-left
+reference, the valid x interval is `target.minX - moving.width` through
+`target.maxX`; the current maximum incorrectly extends one additional moving
+width. A moving AABB that remains horizontally separated can therefore report
+a vertical impact. A focused probe returned `time: 0.55` while the two AABBs
+were still disjoint.
+
+#### Required approach
+
+Implement each sweep against its exact Minkowski geometry and keep the current
+start-overlap and zero-displacement contracts.
+
+- [ ] For circle–AABB, test face candidates and rounded-corner candidates, or
+      use an equivalent raycast against a rounded rectangle.
+- [ ] For AABB–AABB, use the correct asymmetric expansion for a top-left
+      reference, or switch to a center reference with symmetric half-extents.
+- [ ] Return the earliest valid candidate only after confirming that the
+      shapes touch at the reported time.
+- [ ] Compute the contact point on the original target, not on the expanded
+      proxy.
+- [ ] Keep deterministic equal-time tie behavior and a unit normal opposing
+      the incoming motion.
+
+#### RED-first tests
+
+Test invariants around the returned time instead of only checking that it lies
+in `[0, 1]`.
+
+- [ ] Turn the existing square-corner circle case into a miss.
+- [ ] Add a true rounded-corner tangent and a true corner impact.
+- [ ] Add AABB sweeps that pass just to the left, right, above, and below a
+      target without contact.
+- [ ] For every nonzero-time hit, assert static contact at `time` and no
+      contact at a small representable time immediately before it.
+- [ ] Cover face hits, corner ties, starting overlap, zero movement, movement
+      away, translation invariance, and high-speed tunneling.
+
+### T11-F3 — Preserve first-argument and filter semantics in collider dispatch
+
+**Priority:** High
+
+`collideWorldColliders2D` always dispatches a mixed pair through
+`collideCircleAabb2D(circle, aabb)`. When the first public argument is the AABB,
+the returned normal still moves the circle out of the AABB. It therefore
+violates the package-wide promise that the normal moves the first argument out
+of the second. Applying the returned normal to the first AABB increases the
+overlap in the reviewed case.
+
+Filtering also runs only when both colliders have an explicit filter. A
+collider using `NONE_FILTER2D`, documented as colliding with nothing, still
+returns a hit against an otherwise unfiltered collider. An absent filter must
+behave as the documented default, not bypass the other collider's mask.
+
+#### Required approach
+
+Make mixed-pair order and missing-filter normalization explicit.
+
+- [ ] Add an AABB-first circle wrapper that inverts only the circle-first
+      manifold normal while preserving depth and the world contact point.
+- [ ] Avoid casts that erase the relationship between the public argument
+      order and the selected variants.
+- [ ] Normalize each absent filter to `ALL_FILTER2D`, then perform the same
+      symmetric check for every pair.
+- [ ] Preserve `NONE_FILTER2D` as a true collide-with-nothing preset regardless
+      of the other collider's filter presence.
+- [ ] Document whether zero category bits and zero mask bits both make a
+      collider ineligible.
+
+#### RED-first tests
+
+Exercise the composed API rather than only the shape-level functions.
+
+- [ ] Call a mixed AABB/circle pair in both orders and assert inverse normals,
+      equal depth, and first-argument resolution.
+- [ ] Cover circle/circle and AABB/AABB order invariants through
+      `collideWorldColliders2D`.
+- [ ] Test filtered/filtered, filtered/unfiltered, unfiltered/filtered, and
+      unfiltered/unfiltered pairs.
+- [ ] Test `NONE_FILTER2D` on either side of an unfiltered and an all-filtered
+      collider.
+- [ ] Test one-way mask failures through `collideWorldColliders2D`, not only
+      through `canCollide2D`.
+
+### T11-F4 — Return an outward normal for a segment starting inside a circle
+
+**Priority:** Important
+
+The inside-start branch of `intersectSegmentCircle2D` computes
+`fx = start.x - circle.x` and `fy = start.y - circle.y`, then negates those
+values for the normal. That points toward the circle center. The public
+`SegmentHit2D` contract describes an outward radial normal. A segment starting
+at `(12, 10)` inside a circle centered at `(10, 10)` currently returns
+`{ x: -1, y: 0 }` instead of `{ x: 1, y: 0 }`.
+
+#### Required approach
+
+Use the normalized center-to-start vector for noncentral inside starts and
+retain the documented fallback only at the exact center.
+
+- [ ] Return `{ x: fx / distance, y: fy / distance }` for nonzero distance.
+- [ ] Preserve `time: 0` and the original start point.
+- [ ] Keep the center fallback deterministic and consistent with other circle
+      APIs.
+
+#### RED-first tests
+
+Add off-center tests because the existing test covers only the fallback.
+
+- [ ] Test inside starts in all four axial directions.
+- [ ] Test a diagonal inside start and assert a unit outward normal.
+- [ ] Test an exact boundary start under the frozen boundary policy.
+- [ ] Keep outside entry, tangent, miss, center start, and translation tests.
+
+### T11-F5 — Make immutable outputs independent of caller-owned objects
+
+**Priority:** Important
+
+The collider constructors freeze the outer collider but retain the caller's
+mutable `filter` reference. Mutating that original filter later changes the
+already-created collider and every placed collider that reuses it.
+
+The spatial hash has the inverse problem: it calls `Object.freeze(item)` on
+the caller's object, which mutates caller-owned input, but does not clone or
+freeze `item.bounds`. Mutating the original bounds changes the public
+`index.items` view while the private WeakMap buckets remain based on the old
+bounds. The index then exposes one location and queries another.
+
+`cellsOf` also assumes that derived cell coordinates can be incremented by
+one. Valid finite geometry can produce unsafe or infinite cell indices, and a
+very large span can block the JS thread while inserting or querying cells.
+
+#### Required approach
+
+Clone and validate all public immutable records before freezing them, and
+bound the spatial-hash work derived from public inputs.
+
+- [ ] Clone and freeze each filter when constructing a collider.
+- [ ] Preserve one safe frozen filter reference through placement.
+- [ ] Clone every spatial-hash item and clone/freeze its bounds; never freeze
+      the caller's item.
+- [ ] Build private buckets from the cloned canonical bounds used by
+      `index.items`.
+- [ ] Validate derived cell indices as finite safe integers.
+- [ ] Prevent unbounded item/query cell expansion with a documented maximum or
+      an explicit oversized-item strategy.
+- [ ] Add a specific structured error for invalid index capacity or range
+      instead of reporting duplicate identifiers as invalid numbers.
+
+#### RED-first tests
+
+Prove both immutability and bounded execution.
+
+- [ ] Mutate an input filter after collider construction and assert the local
+      and placed colliders do not change.
+- [ ] Assert constructor inputs remain unfrozen and otherwise untouched.
+- [ ] Mutate an input item's nested bounds after index construction and assert
+      `index.items` and query results remain coherent.
+- [ ] Assert returned items, bounds, filters, and arrays are frozen to the
+      documented depth.
+- [ ] Pass extreme finite coordinates and spans and assert a prompt structured
+      failure rather than an unbounded loop or allocation.
+
+### T11-F6 — Keep ordinary JavaScript helpers out of UI worklets
+
+**Priority:** High
+
+`CollisionLabRenderer` defines ordinary `sx` and `sy` closures, then calls them
+inside many `useDerivedValue` worklets. Those captured functions are not marked
+as worklets. This can produce a synchronous non-worklet call from the UI
+runtime on a real device even though TypeScript, Node tests, and Expo export
+all pass.
+
+The renderer also claims to draw a normal arrow and sweep path, but it renders
+only two circles for the contact point and normal endpoint. It never draws the
+line between them or the sweep path.
+
+#### Required approach
+
+Keep coordinate conversion worklet-safe and make the renderer match its
+documented output.
+
+- [ ] Inline the two scalar formulas inside each derived worklet, or move them
+      into stable helpers with an explicit `'worklet'` directive.
+- [ ] Prefer the existing `GameWorld2D` transform when it can remove repeated
+      manual viewport conversion without changing pointer alignment.
+- [ ] Draw an actual normal segment and sweep path from the headless debug
+      primitives.
+- [ ] Avoid rebuilding the Canvas or renderer when debug visibility changes.
+
+#### RED-first tests
+
+Automated tests need a seam that can catch UI-runtime boundaries where
+possible, followed by device evidence.
+
+- [ ] Add a source or worklet contract test for every helper called by a
+      Collision Lab derived worklet.
+- [ ] Mount the renderer through the real game surface and force a frame and
+      viewport update without replacing it.
+- [ ] Verify Collision Lab on a development build on physical iPhone/iPad and
+      Android before checking the device rows.
+
+### T11-F7 — Remove the 60 Hz React HUD update path
+
+**Priority:** Important
+
+`LabHud` calls `setCurrent` for every commit and describes 60 Hz as
+“low-frequency.” Collision Lab creates a new snapshot on every simulation
+tick, so React and React Native text layout can run at the simulation rate
+while the sweep is active. This reference example reintroduces the JS/UI work
+that the performance tasks removed from game presentation.
+
+#### Required approach
+
+Separate semantic controls from display-frequency diagnostics.
+
+- [ ] Keep React state updates for low-frequency pair, sweep, filter, and
+      visibility changes only.
+- [ ] Present continuously changing sweep values through the existing shared
+      presentation path, or sample them through the established diagnostics
+      policy at a documented low rate.
+- [ ] Deduplicate equivalent HUD records before calling `setState`.
+- [ ] Keep subscription cleanup stable across session replacement and screen
+      closure.
+- [ ] Do not add an unrelated timer or polling loop to hide the churn.
+
+#### RED-first tests
+
+Measure the React boundary directly.
+
+- [ ] Count HUD renders or state publications across one second of unchanged
+      commits and assert no per-tick churn.
+- [ ] Assert each button transition becomes visible once.
+- [ ] Assert close/reopen and session replacement detach the old subscription
+      exactly once.
+
+### T11-F8 — Make the broad-phase guide compile against the shipped API
+
+**Priority:** Important
+
+The guide reads `index.items.find(...).collider`, but `SpatialHashItem2D`
+contains only `id` and `bounds`. The documented example cannot typecheck and
+cannot be copied by a user. This also disproves the checked plan claim that
+every published example was compiled against package exports.
+
+#### Required approach
+
+Keep the current ID-only index unless the API is deliberately redesigned. Show
+the required application-owned lookup explicitly.
+
+- [ ] Build a `Map<string, WorldCollider2D>` or equivalent object-owned lookup.
+- [ ] Build spatial items from each collider's
+      `worldColliderBounds2D(collider)` result.
+- [ ] Query candidate IDs, retrieve each collider from the map, skip the
+      moving collider itself, then run `collideWorldColliders2D`.
+- [ ] Explain index rebuild or ownership when moving colliders change bounds.
+- [ ] Move the complete guide example into a compile-checked fixture or import
+      it from tested source so MDX cannot drift again.
+
+#### RED-first tests
+
+Compile and execute the exact documented broad-phase flow.
+
+- [ ] Typecheck the full example from object creation through narrow phase.
+- [ ] Assert a missing candidate ID is handled explicitly instead of using a
+      non-null assertion.
+- [ ] Assert the moving object does not collide with itself.
+- [ ] Assert a moved collider is found after the documented index update.
+
+### T11-F9 — Implement the promised asset-attached Collision Lab scenario
+
+**Priority:** Important
+
+The plan requires Collision Lab to show an imported sprite with visible
+`body`, `hurtbox`, `attack`, and `pickup` colliders and to prove animation does
+not silently change collision geometry. The implemented lab imports no asset,
+creates no local or world collider records, shows no named collider overlays,
+and has no animation state. The checked plan note redirects this requirement
+to another paddle example that does not satisfy the Collision Lab task.
+
+The lab also has no sensor toggle or debug-visibility toggle, does not consume
+`projectWorldCollider2D`, and has no mounted interaction-boundary test for its
+Back and control buttons.
+
+#### Required approach
+
+Complete the reference workflow rather than weakening the requirement after
+implementation.
+
+- [ ] Use one of the existing imported playground sprites and its public asset
+      manifest path.
+- [ ] Author named local `body`, `hurtbox`, `attack`, and `pickup` colliders,
+      place them from the sprite's world position, and project them through
+      the public debug API.
+- [ ] Draw every named collider over the sprite with distinct debug styles.
+- [ ] Add an animation-state control and prove the placed colliders remain
+      unchanged unless scene logic explicitly selects another definition.
+- [ ] Add separate sensor/filter and debug-visibility controls.
+- [ ] Make the renderer consume the headless debug records instead of
+      independently recreating their geometry.
+- [ ] Add mounted tests proving Back exits on the first press, controls do not
+      leak into gameplay input, and the gameplay surface remains available.
+
+#### RED-first tests
+
+Test the actual public composition shown to users.
+
+- [ ] Assert local-to-world placement for every named collider.
+- [ ] Assert animation changes sprite state without changing collider values.
+- [ ] Assert sensor/filter toggles affect eligibility without changing shape.
+- [ ] Assert debug visibility affects presentation only.
+- [ ] Assert close, reopen, pause, resume, and Back preserve the established
+      surface lifecycle.
+
+### T11-F10 — Reopen and correct the Task 11 completion record
+
+**Priority:** Important
+
+The plan currently says “Not started” while marking implementation items
+complete, leaves many RED-test and acceptance checkboxes unchecked despite the
+summary claiming completion, duplicates one Brick Breaker checklist item, and
+checks Collision Lab requirements that are not present. The contract record
+also describes coincident circle depth inconsistently with the implementation.
+
+#### Required approach
+
+Treat the plan as evidence, not a completion narrative.
+
+- [ ] Keep Task 11 in “implementation review: changes required” until T11-F1
+      through T11-F9 are resolved.
+- [ ] Uncheck every requirement whose code or executable evidence is absent.
+- [ ] Remove duplicate checklist entries and claims redirected to unrelated
+      examples.
+- [ ] Correct the frozen contract record so normal, depth, point, sweep, and
+      filter semantics match the repaired implementation.
+- [ ] Record the fix commits and focused RED tests under this feedback section.
+- [ ] Leave all physical-device rows unchecked until the named hardware runs
+      occur.
+- [ ] Run the full repository gate only after focused fixes pass, then record
+      its exact result without replacing device evidence.
+
+#### Acceptance criteria
+
+The review is resolved only when the implementation, tests, examples,
+documentation, and plan report the same behavior.
+
+- [ ] Every focused RED test fails against `cb4cc9e` and passes after its fix.
+- [ ] The complete automated gate is green after the focused fixes.
+- [ ] Collision Lab demonstrates the promised asset-attached workflow.
+- [ ] The broad-phase guide is compile-checked.
+- [ ] Device-gated rows remain honest and separate from automated completion.

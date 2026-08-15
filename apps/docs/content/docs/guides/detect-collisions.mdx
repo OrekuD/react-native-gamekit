@@ -75,22 +75,37 @@ Offsets are in the same logical world units as the sprite anchor. `body` and `hu
 Past a few dozen shapes, check candidates before narrow-phase manifolds:
 
 ```ts
-import { buildSpatialHash2D, querySpatialHash2D, collideWorldColliders2D } from 'rn-gamekit';
+import { buildSpatialHash2D, collideWorldColliders2D, querySpatialHash2D, worldColliderBounds2D } from 'rn-gamekit';
 
-const index = buildSpatialHash2D({ items, cellSize: 32 });
+// Application-owned lookup: id -> placed world collider.
+const colliders = new Map<string, WorldCollider2D>();
+colliders.set('player', placeCollider2D(...));
+colliders.set('enemy', placeCollider2D(...));
+
+const index = buildSpatialHash2D({
+  items: [...colliders.entries()].map(([id, collider]) => ({
+    id,
+    bounds: worldColliderBounds2D(collider),
+  })),
+  cellSize: 32,
+});
 
 // Per tick, for each moving object:
-const candidates = querySpatialHash2D(index, myBounds);
+const moving = colliders.get('player');
+if (moving === undefined) return;
+const candidates = querySpatialHash2D(index, worldColliderBounds2D(moving));
 for (const id of candidates) {
-  const hit = collideWorldColliders2D(myCollider, index.items.find((i) => i.id === id)!.collider);
+  if (id === 'player') continue; // Never collide with yourself.
+  const other = colliders.get(id);
+  if (other === undefined) continue; // The index is stale; skip explicitly.
+  const hit = collideWorldColliders2D(moving, other);
   if (hit !== undefined) {
     // Respond.
   }
 }
 ```
 
-The index returns deterministic candidate ids in insertion order; it is conservative, so candidates still need the narrow phase.
-
+The index returns deterministic candidate ids in insertion order; it is conservative, so candidates still need the narrow phase. Moving colliders change their bounds — rebuild the index when they move, or the candidates go stale. The complete example is compile-checked at `apps/playground/src/docs-examples/broadphase-guide.ts`.
 ## Filters keep systems apart
 
 Give players, enemies, and terrain their own category bits, and let masks decide who touches whom:

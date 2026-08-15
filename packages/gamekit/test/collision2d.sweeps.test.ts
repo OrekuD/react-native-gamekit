@@ -63,16 +63,14 @@ describe('swept circle-AABB', () => {
     assert.deepEqual(hit.normal, { x: 0, y: 1 });
   });
 
-  it('resolves corner impacts with a unit normal', () => {
-    // The center path passes exactly through the expanded corner (40, 14)
-    // at t = 0.5.
+  it('resolves corner impacts with a unit normal at the rounded entry', () => {
     const hit = sweepCircleAabb2D({
       circle: { x: 50, y: 24, radius: 4 },
       displacement: { x: -20, y: -20 },
       target: { x: 0, y: 0, width: 36, height: 10 },
     });
     assert.ok(hit !== undefined);
-    close(hit.time, 0.5);
+    close(hit.time, (1120 - Math.sqrt(51200)) / 1600);
     close(Math.hypot(hit.normal.x, hit.normal.y), 1);
     close(hit.point.x, 36);
     close(hit.point.y, 10);
