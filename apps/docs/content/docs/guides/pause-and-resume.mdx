@@ -87,10 +87,14 @@ const styles = StyleSheet.create({
 });
 ```
 
-This is the same component the repository keeps as its reference example
-(`apps/playground/src/docs-examples/paddle-tutorial/PauseOverlay.tsx`,
-mounted in the playground's Paddle catalog game), so the guide cannot drift
-from the tested code.
+The snippet is maintained as a compile-checked file at
+`apps/playground/src/docs-examples/paddle-tutorial/PauseGameScreen.tsx`, so
+missing imports or renamed APIs fail the playground typecheck. It is a
+parallel, self-contained implementation of the shared `PauseOverlay`
+component that the playground's Paddle catalog game actually mounts (that
+component adds the safe-area-aware header separation shown in the Paddle
+screen); the interaction behavior of both is covered by the mounted tests in
+`pauseOverlay.test.tsx`.
 
 
 

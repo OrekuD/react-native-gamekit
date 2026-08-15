@@ -16,6 +16,48 @@ import type { SessionDiagnostics } from './diagnostics';
 import { createDeepFreeze, type DeepFreezer } from './deepFreeze';
 
 const DEFAULT_FIXED_STEP_MS = 1000 / 60;
+
+/**
+ * A captured failure: an explicit boolean record so an arbitrary thrown
+ * value (including `undefined`) is never confused with "no failure".
+ */
+interface CapturedFailure {
+  readonly failed: true;
+  readonly value: unknown;
+}
+
+type FailureRecord = { readonly failed: false } | CapturedFailure;
+
+const NO_FAILURE: FailureRecord = { failed: false };
+
+/** Run a closure and capture its thrown value, whatever its type. */
+function captureFailure(run: () => void): FailureRecord {
+  try {
+    run();
+    return NO_FAILURE;
+  } catch (error) {
+    return { failed: true, value: error };
+  }
+}
+
+/** Surface a captured failure, throwing `undefined` if that was the value. */
+function throwFailure(record: FailureRecord): void {
+  if (record.failed) {
+    throw record.value;
+  }
+}
+
+/**
+ * Immutably compose two failures into one lossless error: an AggregateError
+ * with a stable message and ordered `errors`. Neither thrown value is
+ * mutated or wrapped away.
+ */
+function composeFailures(first: unknown, second: unknown): unknown {
+  return new AggregateError(
+    [first, second],
+    'Lifecycle operation failed with multiple errors',
+  );
+}
 const DEFAULT_MAX_CATCH_UP_STEPS = 5;
 
 interface SessionOptions {
@@ -191,18 +233,18 @@ export function createGameSessionWithDriver<
   // aborts the pass: the remaining snapshot listeners still run, and the
   // first failure is rethrown once every queued transition has been
   // delivered (the transition itself is already authoritative).
-  const deliverStatusPass = (current: GameSessionStatus): unknown => {
-    let firstError: unknown;
+  const deliverStatusPass = (current: GameSessionStatus): FailureRecord => {
+    let firstFailure: FailureRecord = NO_FAILURE;
     for (const listener of [...statusListeners]) {
       try {
         listener(current);
       } catch (error) {
-        if (firstError === undefined) {
-          firstError = error;
+        if (!firstFailure.failed) {
+          firstFailure = { failed: true, value: error };
         }
       }
     }
-    return firstError;
+    return firstFailure;
   };
 
   const notifyStatus = (): void => {
@@ -213,17 +255,17 @@ export function createGameSessionWithDriver<
       return;
     }
     deliveringStatus = true;
-    let firstError: unknown;
+    let firstFailure: FailureRecord = NO_FAILURE;
     try {
-      const error = deliverStatusPass(status);
-      if (firstError === undefined) {
-        firstError = error;
+      const passFailure = deliverStatusPass(status);
+      if (!firstFailure.failed) {
+        firstFailure = passFailure;
       }
       while (queuedStatuses.length > 0) {
         const queued = queuedStatuses.shift() as GameSessionStatus;
-        const queuedError = deliverStatusPass(queued);
-        if (firstError === undefined) {
-          firstError = queuedError;
+        const queuedFailure = deliverStatusPass(queued);
+        if (!firstFailure.failed) {
+          firstFailure = queuedFailure;
         }
       }
     } finally {
@@ -234,9 +276,7 @@ export function createGameSessionWithDriver<
         diagnostics?.onStatusListenerCount?.(statusListeners.size);
       }
     }
-    if (firstError !== undefined) {
-      throw firstError;
-    }
+    throwFailure(firstFailure);
   };
 
   // Status becomes authoritative only after the command's scheduling and
@@ -649,32 +689,23 @@ export function createGameSessionWithDriver<
     },
     pause() {
       assertLive();
-      let listenerError: unknown;
-      try {
-        pauseInternal();
-      } catch (error) {
-        listenerError = error;
-      }
+      const pauseFailure = captureFailure(() => pauseInternal());
       // The command must complete: a pending external transition is resolved
       // at the pause boundary even when a status listener threw, so a later
       // start() can never commit a stale transition on an unexpected frame.
-      if (pendingTransition !== undefined) {
-        const pending = pendingTransition;
-        pendingTransition = undefined;
-        try {
+      const transitionFailure = captureFailure(() => {
+        if (pendingTransition !== undefined) {
+          const pending = pendingTransition;
+          pendingTransition = undefined;
           commitTransition(pending, activeScene.state, undefined);
           commitOrPause();
-        } catch (error) {
-          if (listenerError === undefined) {
-            listenerError = error;
-          } else if (listenerError instanceof Error) {
-            (listenerError as Error & { cause?: unknown }).cause ??= error;
-          }
         }
+      });
+      if (pauseFailure.failed && transitionFailure.failed) {
+        throw composeFailures(pauseFailure.value, transitionFailure.value);
       }
-      if (listenerError !== undefined) {
-        throw listenerError;
-      }
+      throwFailure(pauseFailure);
+      throwFailure(transitionFailure);
     },
     setScene(name: keyof TScenes) {
       assertLive();
@@ -731,28 +762,16 @@ export function createGameSessionWithDriver<
       // notification so notifyStatus's finally performs the clear; for the
       // re-entrant path the clear happens after the queued pass drains.
       releaseStatusListeners = true;
-      let listenerError: unknown;
-      try {
-        setStatus('disposed');
-      } catch (error) {
-        listenerError = error;
-      }
-      let sceneError: unknown;
-      try {
+      const notificationFailure = captureFailure(() => setStatus('disposed'));
+      const cleanupFailure = captureFailure(() => {
         listeners.clear();
         activeScene.definition.dispose?.(activeScene.state);
-      } catch (error) {
-        sceneError = error;
+      });
+      if (notificationFailure.failed && cleanupFailure.failed) {
+        throw composeFailures(notificationFailure.value, cleanupFailure.value);
       }
-      if (listenerError !== undefined) {
-        if (sceneError !== undefined && listenerError instanceof Error) {
-          (listenerError as Error & { cause?: unknown }).cause ??= sceneError;
-        }
-        throw listenerError;
-      }
-      if (sceneError !== undefined) {
-        throw sceneError;
-      }
+      throwFailure(notificationFailure);
+      throwFailure(cleanupFailure);
     },
     getRenderFrame() {
       const alpha = commitFrame.hardCut

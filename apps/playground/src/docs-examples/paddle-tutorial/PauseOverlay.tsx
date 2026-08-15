@@ -11,17 +11,25 @@ import type { GameSessionStatus } from 'rn-gamekit';
  * visibility derives from the session status, so there is no second
  * isPaused state that can drift.
  */
+export const PAUSE_BUTTON_TOP_MARGIN = 12;
+
 export function PauseOverlay({
   status,
   onPause,
   onResume,
   topInset = 0,
+  contentTopInset = 0,
 }: {
   readonly status: GameSessionStatus;
   readonly onPause: () => void;
   readonly onResume: () => void;
   /** Safe-area top inset: the pause button sits below it. */
   readonly topInset?: number;
+  /**
+   * Top of the gameplay stage: the blocking overlay starts below screen
+   * chrome (the header) so chrome stays interactive while paused.
+   */
+  readonly contentTopInset?: number;
 }) {
   return (
     <>
@@ -30,7 +38,7 @@ export function PauseOverlay({
           accessibilityLabel="Pause the game"
           accessibilityRole="button"
           onPress={onPause}
-          style={[styles.pauseButton, { top: topInset + 12 }]}
+          style={[styles.pauseButton, { top: topInset + PAUSE_BUTTON_TOP_MARGIN }]}
           hitSlop={12}
         >
           <Text style={styles.pauseLabel}>Pause</Text>
@@ -38,7 +46,10 @@ export function PauseOverlay({
       ) : null}
 
       {status === 'paused' ? (
-        <View style={styles.overlay} pointerEvents="auto">
+        <View
+          style={[styles.overlay, { top: contentTopInset }]}
+          pointerEvents="auto"
+        >
           <Text style={styles.overlayTitle}>Paused</Text>
           <Pressable
             accessibilityLabel="Resume the game"

@@ -27,12 +27,62 @@ mock.module('react-native', {
     View: host('view'),
     Text: host('text'),
     Pressable: host('pressable'),
+    Platform: { OS: 'ios', select: (options: Record<string, unknown>) => options.ios ?? options.default },
+    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => {} }) },
     StyleSheet: {
       create: (styles: Record<string, unknown>) => styles,
       absoluteFill: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
     },
   },
 });
+
+mock.module('react-native-safe-area-context', {
+  namedExports: {
+    useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+  },
+});
+
+// The rn-gamekit/react barrel transitively imports the native module
+// surface. None of it renders in this test — the values only need to exist
+// for the import graph.
+mock.module('@shopify/react-native-skia', {
+  namedExports: {
+    Canvas: host('canvas'),
+    Atlas: host('atlas'),
+    Group: host('group'),
+    Circle: host('circle'),
+    Rect: host('rect'),
+    Image: host('image'),
+    Skia: { makeImageFromView: () => undefined },
+    useRectBuffer: () => ({ current: undefined }),
+    useRSXformBuffer: () => ({ current: undefined }),
+  },
+});
+mock.module('react-native-reanimated', {
+  namedExports: {
+    useSharedValue: (initial: unknown) => ({ value: initial }),
+    useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
+    useFrameCallback: () => {},
+  },
+});
+mock.module('react-native-worklets', {
+  namedExports: {
+    scheduleOnRN: () => {},
+  },
+});
+mock.module('react-native-gesture-handler', {
+  namedExports: {
+    GestureDetector: host('gesture-detector'),
+    GestureStateManager: {},
+    useManualGesture: () => ({ gesture: null, gestureState: undefined }),
+  },
+});
+mock.module('expo-asset', {
+  namedExports: {
+    Asset: class {},
+  },
+});
+
 
 type PauseOverlayModule = typeof import('./PauseOverlay');
 let PauseOverlay: PauseOverlayModule['PauseOverlay'];
@@ -137,5 +187,100 @@ describe('PauseOverlay', () => {
     const resumeStyle = paused[0]!.props.style as { paddingVertical?: number };
     const height = (resumeStyle.paddingVertical ?? 0) * 2 + 16;
     assert.ok(height >= 44, `resume hit target is at least 44pt tall (${height})`);
+  });
+});
+
+/**
+ * Full-screen composition (T10-FF2): the header chrome must stay above the
+ * blocking pause overlay, so Back works on the first press while paused.
+ */
+describe('PaddleContent composition while paused', () => {
+  type Session = import('rn-gamekit').GameSession;
+  let PaddleContent: React.ComponentType<import('../../shell/PlaygroundGameContentProps').PlaygroundGameContentProps>;
+  let createSession: () => Session;
+
+  before(async () => {
+    const { createGameSessionWithDriver } = await import('rn-gamekit/testing');
+    const { paddleGame } = await import('./game');
+    const { ManualFrameDriver } = await import('../../../../../packages/gamekit/test/helpers/ManualFrameDriver.ts');
+    PaddleContent = (await import('../../screens/paddle/PaddleContent')).default;
+    createSession = () =>
+      createGameSessionWithDriver(paddleGame, {
+        frameDriver: new ManualFrameDriver(),
+      }) as unknown as Session;
+  });
+
+  function mountContent(session: Session, exits: { count: number }) {
+    let renderer!: ReturnType<typeof create>;
+    act(() => {
+      renderer = create(
+        <PaddleContent
+          game={session as never}
+          onExit={() => {
+            exits.count += 1;
+          }}
+          onOpenGame={() => {}}
+        />,
+      );
+    });
+    return renderer;
+  }
+
+  it('keeps Back responsive on the first press while running and paused', () => {
+    const exits = { count: 0 };
+    const session = createSession();
+    act(() => session.start());
+    let renderer = mountContent(session, exits);
+
+    // Running: Back works.
+    const backWhileRunning = renderer.root.findAll(
+      (node) => (node.type as string) === 'pressable' && node.props.accessibilityLabel === 'Back to playground',
+    );
+    assert.equal(backWhileRunning.length, 1);
+    act(() => (backWhileRunning[0]!.props.onPress as () => void)());
+    assert.equal(exits.count, 1, 'Back works on the first press while running');
+
+    // Paused: Back still works and does not resume or mutate the session.
+    act(() => session.pause());
+    renderer = mountContent(session, exits);
+    const backWhilePaused = renderer.root.findAll(
+      (node) => (node.type as string) === 'pressable' && node.props.accessibilityLabel === 'Back to playground',
+    );
+    assert.equal(backWhilePaused.length, 1, 'Back is present while paused');
+    act(() => (backWhilePaused[0]!.props.onPress as () => void)());
+    assert.equal(exits.count, 2, 'Back works on the first press while paused');
+    assert.equal(session.status, 'paused', 'Back never mutates the session');
+
+    act(() => session.dispose());
+  });
+
+  it('constrains the blocking overlay to the stage below the header region', () => {
+    const exits = { count: 0 };
+    const session = createSession();
+    act(() => session.start());
+    act(() => session.pause());
+    const renderer = mountContent(session, exits);
+
+    const overlays = renderer.root.findAll(
+      (node) =>
+        (node.type as string) === 'view' &&
+        node.props.pointerEvents === 'auto' &&
+        Array.isArray(node.props.style),
+    );
+    assert.equal(overlays.length, 1, 'exactly the paused overlay blocks');
+    const overlayStyle = (overlays[0]!.props.style as Array<Record<string, unknown>>)[1] as {
+      top?: number;
+    };
+    // 47 (insets.top) + 44 (header padding) + 36 (back button height).
+    assert.equal(overlayStyle.top, 127, 'the overlay starts below the header region');
+
+    // The header container itself stays touch-transparent (box-none), so
+    // only Back is interactive above the overlay.
+    const headerContainers = renderer.root.findAll(
+      (node) => (node.type as string) === 'view' && node.props.pointerEvents === 'box-none',
+    );
+    assert.ok(headerContainers.length >= 2, 'the chrome layer stays box-none');
+
+    act(() => session.dispose());
   });
 });

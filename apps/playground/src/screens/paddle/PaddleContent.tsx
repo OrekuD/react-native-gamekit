@@ -5,6 +5,10 @@ import type { GameSession } from 'rn-gamekit';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import { PauseOverlay } from '../../docs-examples/paddle-tutorial/PauseOverlay';
 
+/** Named header measurements: the overlay starts below this region. */
+const HEADER_PADDING_TOP = 44;
+const BACK_BUTTON_HEIGHT = 36;
+
 /**
  * Paddle: the getting-started tutorial game as a catalog entry.
  *
@@ -18,9 +22,28 @@ export default function PaddleContent({ game, onExit }: PlaygroundGameContentPro
   const status = useGameSessionStatus(session);
   const insets = useSafeAreaInsets();
 
+  const contentTopInset = insets.top + HEADER_PADDING_TOP + BACK_BUTTON_HEIGHT;
+
   return (
     <View pointerEvents="box-none" style={styles.safeArea}>
-      <View pointerEvents="box-none" style={[styles.header, { paddingTop: insets.top + 44 }]}>
+      {/* The header renders as a sibling ABOVE the stage layer: its only
+          interactive child (Back) stays reachable while the pause overlay
+          blocks the gameplay stage below it. */}
+      <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+        {status === undefined ? null : (
+          <PauseOverlay
+            status={status}
+            onPause={() => session.pause()}
+            onResume={() => session.start()}
+            topInset={insets.top}
+            contentTopInset={contentTopInset}
+          />
+        )}
+      </View>
+      <View
+        pointerEvents="box-none"
+        style={[styles.header, { paddingTop: insets.top + HEADER_PADDING_TOP }]}
+      >
         <Pressable
           accessibilityLabel="Back to playground"
           accessibilityRole="button"
@@ -31,14 +54,6 @@ export default function PaddleContent({ game, onExit }: PlaygroundGameContentPro
           <Text style={styles.backLabel}>Back</Text>
         </Pressable>
       </View>
-      {status === undefined ? null : (
-        <PauseOverlay
-          status={status}
-          onPause={() => session.pause()}
-          onResume={() => session.start()}
-          topInset={insets.top + 44}
-        />
-      )}
     </View>
   );
 }

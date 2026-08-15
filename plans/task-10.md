@@ -2,9 +2,12 @@
 
 ## Status
 
-**Implementation review (T10-F1 through T10-F5 addressed).** Core,
-React, and example fixes landed; automated gates green. Physical-device rows
-remain open. This task turns the existing imperative session pause support
+**Follow-up review (T10-FF1 through T10-FF3) addressed.** The two
+misnamed single-failure tests were replaced with real simultaneous-failure
+coverage, error composition is now lossless for arbitrary thrown values,
+and the paused Back interaction boundary is structurally separated and
+tested at the screen-composition level. Automated gates green.
+Physical-device rows remain open. This task turns the existing imperative session pause support
 into a complete engine lifecycle contract. It adds observable status, a React
 status hook, authoritative `GameView` synchronization, paused-input policy,
 and a reference pause overlay without confusing session lifecycle with a
@@ -1086,3 +1089,136 @@ completed deliverable.
       unchecked until run on the named hardware.
 - [ ] After focused fixes pass, update the definition-of-done list and record
       the fix commit identifiers without overwriting the device-gated remainder.
+
+---
+
+## Follow-up feedback — review of `48f5cd1` and `cb4d853`
+
+The original listener leak, skipped cleanup, stale pending transition, and
+external-store subscription churn are corrected on their normal tested paths.
+The following remaining gaps must be addressed before the follow-up can be
+considered complete.
+
+### T10-FF1 — Test and preserve actual simultaneous failures
+
+**Priority:** Important
+
+The test named “surfaces both a listener failure and a scene-disposer failure”
+does not create a scene-disposer failure. `makeGame()` always uses a successful
+disposer, and the test comment explicitly acknowledges that only one error is
+present. Likewise, the test named “when the transition itself fails” uses the
+same successful `menu` scene as the happy path, so the transition does not
+fail. These tests cannot verify the error-composition behavior required by
+T10-F1 and T10-F2.
+
+The implementation also does not preserve both failures for every valid
+JavaScript throw:
+
+- a secondary failure is attached only when the first thrown value is an
+  `Error`;
+- an existing `Error.cause` prevents the second failure from being attached;
+- the caught `Error` object is mutated in place;
+- `notifyStatus()` uses `undefined` as its “no error” sentinel, so a listener
+  that executes `throw undefined` is silently treated as success.
+
+Cleanup now completes, so this is no longer the original terminal resource
+leak. It is still a mismatch between the documented error contract, test
+names, and runtime behavior.
+
+#### Required approach
+
+- [x] Represent a captured failure with an explicit boolean/discriminated
+      record rather than using the thrown value itself as a sentinel.
+- [x] Replace in-place mutation of a listener-owned `Error.cause` with an
+      immutable error-composition helper.
+- [x] When two operations fail, preserve both arbitrary thrown values. Prefer
+      `AggregateError` with a stable message and ordered `errors`, or document
+      and test an equally lossless wrapper.
+- [x] Apply the same helper to disposal and the pause command transaction so
+      the two paths cannot drift.
+- [x] Keep cleanup, final status, cleared pending intent, and exactly-once scene
+      disposal independent of error representation.
+
+#### RED-first tests
+
+- [x] Configure the active scene disposer to throw a real `scene dispose boom`
+      while a status listener also throws. Assert both values are observable,
+      the remaining listener snapshot runs, listener counts reach zero, and
+      repeated disposal does not retry the scene.
+- [x] Configure the queued target scene's `create()` or transition disposal to
+      throw while the `paused` listener also throws. Assert both failures are
+      observable, the pending intent is cleared, the original scene remains
+      coherent, and resume cannot replay the transition.
+- [x] Cover `throw undefined`, a thrown string, and an `Error` that already has
+      a cause so no valid thrown value is swallowed or overwritten.
+- [x] Rename or remove any test whose setup does not produce the failure stated
+      in its title.
+
+### T10-FF2 — Keep Back outside the paused gameplay overlay
+
+**Priority:** High
+
+`PaddleContent` renders the header first and then renders `PauseOverlay` as a
+later sibling. In the paused state, that later sibling is an absolute-fill
+`View` with `pointerEvents="auto"`. It therefore occupies the full screen above
+the header and intercepts touches intended for the Back button. This violates
+the task's checked requirement that the back/close control remain separate and
+responsive while paused.
+
+The new mounted tests render only `PauseOverlay`; they never mount
+`PaddleContent`, the Back control, the sibling order, or the shell composition.
+As a result, they prove the resume button and overlay policy in isolation but
+cannot catch this interaction-boundary regression.
+
+The guide also says its manually duplicated snippet is “the same component”
+and therefore cannot drift, but it does not consume `PauseOverlay`, does not
+pass the safe-area inset used by the runnable screen, and is already a separate
+implementation. That statement should not be presented as an enforced fact.
+
+#### Required approach
+
+- [x] Make screen chrome and gameplay structurally separate. Constrain the
+      blocking pause overlay to the gameplay stage below the header, or render
+      an explicit header layer above it whose only interactive child is Back.
+      Do not rely solely on an unexplained `zIndex` patch.
+- [x] Keep the pause control below the actual safe-area boundary without the
+      current unexplained extra 44-point top offset unless that offset is a
+      named header measurement (named constants: `HEADER_PADDING_TOP`,
+      `BACK_BUTTON_HEIGHT`, `PAUSE_BUTTON_TOP_MARGIN`).
+- [x] Add a mounted `PaddleContent` or screen-composition test in the paused
+      state. Invoke Back and assert `onExit` runs once without resuming or
+      otherwise mutating the session.
+- [x] Assert the blocking overlay covers the gameplay stage while leaving the
+      header interaction region outside its hit target.
+- [x] Either source the documentation example from tested code or describe it
+      honestly as a parallel snippet and add a compile fixture that prevents
+      missing imports/styles and safe-area drift (guide snippet extracted to
+      `PauseGameScreen.tsx`, compile-checked; wording corrected).
+
+#### Acceptance checks
+
+- [ ] Back works on the first press while the game is running and paused.
+- [ ] Pressing Back while paused cannot trigger Resume or gameplay input.
+- [ ] The pause overlay still blocks all pointer input inside the gameplay
+      stage.
+- [ ] The screen-composition test, not only the isolated overlay test, proves
+      the interaction boundary.
+
+### T10-FF3 — Reopen the follow-up record until FF1 and FF2 are resolved
+
+**Priority:** Important
+
+The plan currently states that T10-F1 through T10-F5 are addressed and checks
+the accessible reference-game definition-of-done item. The unexercised dual
+failure paths and paused Back interception mean that record is premature.
+
+- [x] Change the status to show that follow-up review is open.
+- [x] Keep the reference-game interaction criterion unchecked until the
+      paused Back composition is directly tested (now proven by the
+      `PaddleContent composition while paused` mounted suite).
+- [x] Do not count the two incorrectly named single-failure tests as evidence
+      for simultaneous-failure handling (both tests rewritten to produce the
+      failures their titles state).
+- [x] Record the follow-up fix commit and focused regression names after both
+      issues are resolved (recorded below).
+- [x] Keep the existing physical-device rows unchanged and unchecked.
