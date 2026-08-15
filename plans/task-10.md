@@ -1092,6 +1092,15 @@ completed deliverable.
 
 ---
 
+> **Follow-up fix record (8075ea7).** T10-FF1: boolean failure records,
+> ordered `AggregateError` composition, real simultaneous-failure tests
+> (`statusDisposal.test.ts` — 7 tests, including throw-undefined/string/
+> pre-caused values). T10-FF2: overlay constrained below a structurally
+> separate header (named measurements), mounted `PaddleContent` composition
+> suite proves Back works on the first press while paused and the overlay
+> starts at the header boundary. T10-FF3: plan record corrected. Full
+> automated gate green (`pnpm check` exit 0). Device rows remain open.
+
 ## Follow-up feedback — review of `48f5cd1` and `cb4d853`
 
 The original listener leak, skipped cleanup, stale pending transition, and
