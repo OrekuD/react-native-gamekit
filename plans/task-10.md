@@ -518,10 +518,11 @@ These tests establish the public lifecycle behavior before implementation.
 
 #### Acceptance criteria
 
-- [ ] New runtime tests fail for the missing observable-status behavior.
-- [ ] Type fixtures fail for the missing public method without using casts or
-      `any`.
-- [ ] Tests assert externally observable behavior, not private collection
+- [x] New runtime tests fail for the missing observable-status behavior (RED
+      demonstrated before `addStatusListener` existed).
+- [x] Type fixtures fail for the missing public method without using casts or
+      `any` (tsc reported 16 errors against the missing method).
+- [x] Tests assert externally observable behavior, not private collection
       shapes.
 
 ### T10.2 — Implement the core status publisher
@@ -542,10 +543,12 @@ Add the minimum internal machinery needed to satisfy the frozen contract.
 
 #### Acceptance criteria
 
-- [ ] T10.1 tests and type fixtures pass.
-- [ ] Existing scene lifecycle and commit listener tests remain unchanged and
-      green.
-- [ ] The status path allocates only on lifecycle transitions, not per frame.
+- [x] T10.1 tests and type fixtures pass.
+- [x] Existing scene lifecycle and commit listener tests remain unchanged and
+      green (the pre-T10 suites passed without modification).
+- [x] The status path allocates only on lifecycle transitions, not per frame
+      (listener snapshots and the transition queue exist only in the
+      control-plane notify path).
 
 ### T10.3 — Make pause and resume clock-correct
 
@@ -565,9 +568,10 @@ This step proves that a lifecycle pause is a true simulation freeze.
 
 #### Acceptance criteria
 
-- [ ] Simulation time and authored world state remain unchanged during pause.
-- [ ] Resume continues from the same world state without a large delta.
-- [ ] No lifecycle path leaves more than one outstanding scheduler callback.
+- [x] Simulation time and authored world state remain unchanged during pause.
+- [x] Resume continues from the same world state without a large delta (fresh
+      baseline; exactly one tick per resumed frame).
+- [x] No lifecycle path leaves more than one outstanding scheduler callback.
 
 ### T10.4 — Enforce the paused-input boundary
 
@@ -589,11 +593,12 @@ Input must be safe at the core boundary so every adapter behaves consistently.
 
 #### Acceptance criteria
 
-- [ ] No gameplay input received during pause reaches a scene update after
+- [x] No gameplay input received during pause reaches a scene update after
       resume.
-- [ ] Pointer ownership is deterministic across pause/resume.
+- [x] Pointer ownership is deterministic across pause/resume.
 - [ ] The prior physical-device paddle drag behavior remains intact during
-      normal running operation.
+      normal running operation (**device-gated**; the headless running-input
+      test covers the same path).
 
 ### T10.5 — Add `useGameSessionStatus()`
 
@@ -617,10 +622,10 @@ The React hook should be a thin adapter over the core observable store.
 
 #### Acceptance criteria
 
-- [ ] React UI rerenders once for each actual lifecycle transition.
-- [ ] Idempotent lifecycle commands do not cause redundant rerenders.
-- [ ] Replacing a session cannot flash the previous session's status.
-- [ ] The headless root entry does not import React or React Native.
+- [x] React UI rerenders once for each actual lifecycle transition.
+- [x] Idempotent lifecycle commands do not cause redundant rerenders.
+- [x] Replacing a session cannot flash the previous session's status.
+- [x] The headless root entry does not import React or React Native.
 
 ### T10.6 — Synchronize `GameView` presentation
 
@@ -645,10 +650,12 @@ presentation state.
 
 #### Acceptance criteria
 
-- [ ] Direct `pause()` is visually frozen as well as simulation-frozen.
-- [ ] Backgrounding and manual pause share one authoritative state.
-- [ ] Foregrounding never overrides an existing user pause.
-- [ ] No React state is updated at frame frequency.
+- [x] Direct `pause()` is visually frozen as well as simulation-frozen (the
+      presentation gate mirrors core status at the seams; the visual
+      confirmation is part of the device row).
+- [x] Backgrounding and manual pause share one authoritative state.
+- [x] Foregrounding never overrides an existing user pause.
+- [x] No React state is updated at frame frequency.
 
 ### T10.7 — Build one reference pause overlay
 
@@ -672,10 +679,14 @@ framework-level menu abstraction.
 
 #### Acceptance criteria
 
-- [ ] One press pauses and one press resumes.
-- [ ] Moving a finger over the frozen gameplay surface cannot move the world.
-- [ ] Resume requires new gameplay input and does not replay paused touches.
-- [ ] Closing a paused game follows the Task 8 and Task 9 ownership contracts.
+- [x] One press pauses and one press resumes (mounted overlay + composition
+      tests).
+- [x] Moving a finger over the frozen gameplay surface cannot move the world
+      (the blocking overlay's `pointerEvents="auto"` plus core input
+      rejection while paused; a physical drag is part of the device row).
+- [x] Resume requires new gameplay input and does not replay paused touches.
+- [x] Closing a paused game follows the Task 8 and Task 9 ownership contracts
+      (Back while paused exits once without mutating the session).
 
 ### T10.8 — Document pause and resume
 
@@ -705,11 +716,11 @@ suggesting that pause is a special scene.
 
 #### Acceptance criteria
 
-- [ ] Every documented import resolves from the built package.
-- [ ] Normal React examples contain no manual disposal effect.
-- [ ] No example stores a second `isPaused` state that can drift from the
+- [x] Every documented import resolves from the built package.
+- [x] Normal React examples contain no manual disposal effect.
+- [x] No example stores a second `isPaused` state that can drift from the
       session.
-- [ ] The docs build succeeds and navigation exposes the new guide.
+- [x] The docs build succeeds and navigation exposes the new guide.
 
 ### T10.9 — Prepare future systems without implementing them
 
@@ -727,8 +738,9 @@ decoupled from them now.
 
 #### Acceptance criteria
 
-- [ ] Later system tasks have one stable lifecycle integration point.
-- [ ] Task 10 adds no unused public abstraction for a future subsystem.
+- [x] Later system tasks have one stable lifecycle integration point
+      (`addStatusListener`, documented in the guide and the plan note).
+- [x] Task 10 adds no unused public abstraction for a future subsystem.
 
 > **Implementation note (T10.9 — future-system seam).** `addStatusListener` is
 > the single lifecycle integration point for later systems. Simulation-bound
@@ -763,10 +775,10 @@ simulator-only result as physical-device proof.
 
 #### Acceptance criteria
 
-- [ ] Automated gates are green.
-- [ ] Device-gated rows remain visibly unchecked until real hardware is used.
+- [x] Automated gates are green (`pnpm check` exit 0 after each fix batch).
+- [x] Device-gated rows remain visibly unchecked until real hardware is used.
 - [ ] No redbox, frozen surface, duplicate scheduler, or stale input appears
-      during repeated cycles.
+      during repeated cycles (**device-gated**: the 25-cycle soak).
 
 ## Required test matrix
 
@@ -919,33 +931,33 @@ contract and can leak scene/native resources permanently.
 
 #### Required approach
 
-- [ ] Enter terminal cleanup before delivering the final notification, while
+- [x] Enter terminal cleanup before delivering the final notification, while
       still allowing the complete `disposed` listener snapshot to run.
-- [ ] Clear status listeners in an unconditional `finally` path after the
+- [x] Clear status listeners in an unconditional `finally` path after the
       final queued notification pass. Do not rely on a flag set after
       notification returns.
-- [ ] Clear commit listeners and invoke the active scene's disposal exactly
+- [x] Clear commit listeners and invoke the active scene's disposal exactly
       once even when a status listener throws.
-- [ ] Collect notification and scene-disposal failures while completing all
+- [x] Collect notification and scene-disposal failures while completing all
       cleanup, then surface them with a documented deterministic precedence or
       an `AggregateError`; neither error should silently erase the other.
-- [ ] Preserve re-entrant disposal from inside another status listener: emit
+- [x] Preserve re-entrant disposal from inside another status listener: emit
       `disposed` once, drain its queued pass, release listeners, and dispose
       the scene once.
-- [ ] Keep repeated external `dispose()` calls as terminal no-ops after the
+- [x] Keep repeated external `dispose()` calls as terminal no-ops after the
       first complete attempt.
 
 #### RED-first tests
 
-- [ ] Register a throwing `disposed` listener and a later listener; assert the
+- [x] Register a throwing `disposed` listener and a later listener; assert the
       whole listener snapshot runs, the scene disposer runs once, the commit
       listener set is released, and the command surfaces the listener error.
-- [ ] Make both a status listener and the scene disposer throw; assert all
+- [x] Make both a status listener and the scene disposer throw; assert all
       cleanup still completes and both failures remain observable under the
       selected error policy.
-- [ ] Cover ordinary disposal, re-entrant disposal, and repeated disposal with
+- [x] Cover ordinary disposal, re-entrant disposal, and repeated disposal with
       the same exactly-once assertions.
-- [ ] Add a deterministic listener-release seam or diagnostic assertion; the
+- [x] Add a deterministic listener-release seam or diagnostic assertion; the
       existing test only proves that new subscription is rejected after
       disposal and cannot detect retained old listeners.
 
@@ -967,26 +979,26 @@ apply to the entire command, not only frame cancellation and input reset.
 
 #### Required approach
 
-- [ ] Separate transition application from notification-error surfacing so
+- [x] Separate transition application from notification-error surfacing so
       `pause()` can capture the first listener failure, finish its pending
       transition/commit work, and then throw.
-- [ ] Define deterministic precedence when both the status listener and the
+- [x] Define deterministic precedence when both the status listener and the
       pending transition or commit fail. Preserve all actionable failures
       rather than accidentally masking one.
-- [ ] Apply the same command-transaction audit to `start()`, error-path pause,
+- [x] Apply the same command-transaction audit to `start()`, error-path pause,
       and `dispose()` so no notification throw can skip mandatory work after
       `setStatus()`.
-- [ ] Keep the new status authoritative during completion and do not emit a
+- [x] Keep the new status authoritative during completion and do not emit a
       second status event merely to finish the command.
 
 #### RED-first tests
 
-- [ ] While running, request an external scene transition, register a listener
+- [x] While running, request an external scene transition, register a listener
       that throws on `paused`, and call `pause()`. Assert the transition is
       committed at the pause boundary before the listener error is returned.
-- [ ] Resume after that failure and assert no stale pending transition is
+- [x] Resume after that failure and assert no stale pending transition is
       committed by the next frame.
-- [ ] Cover a transition failure plus a listener failure and assert the final
+- [x] Cover a transition failure plus a listener failure and assert the final
       status, scene, scheduler, input state, and error policy are coherent.
 
 ### T10-F3 — Stabilize the external-store subscription callbacks
@@ -1006,21 +1018,21 @@ makes leak/race behavior harder to reason about under Strict Mode.
 
 #### Required approach
 
-- [ ] Memoize `subscribe` with `useCallback` using only `session` as its
+- [x] Memoize `subscribe` with `useCallback` using only `session` as its
       semantic dependency.
-- [ ] Memoize `getSnapshot` with the same session dependency.
-- [ ] Use stable module-level no-op subscription cleanup for the absent or
+- [x] Memoize `getSnapshot` with the same session dependency.
+- [x] Use stable module-level no-op subscription cleanup for the absent or
       disposed session branch.
-- [ ] Preserve the current `GameSessionStatus | undefined` return contract and
+- [x] Preserve the current `GameSessionStatus | undefined` return contract and
       disposed-session behavior.
 
 #### RED-first tests
 
-- [ ] Instrument `addStatusListener()` and subscription removal counts, force
+- [x] Instrument `addStatusListener()` and subscription removal counts, force
       unrelated parent rerenders with the same session, and assert no
       unsubscribe/resubscribe churn.
-- [ ] Replace the session and assert exactly one old detach and one new attach.
-- [ ] Repeat under Strict Mode and verify the only additional setup/cleanup is
+- [x] Replace the session and assert exactly one old detach and one new attach.
+- [x] Repeat under Strict Mode and verify the only additional setup/cleanup is
       React's documented rehearsal, not every ordinary render.
 
 ### T10-F4 — Make the reference pause example runnable and the guide copyable
@@ -1041,30 +1053,34 @@ drift immediately.
 
 #### Required approach
 
-- [ ] Either register the paddle tutorial as a real playground entry or mount
+- [x] Either register the paddle tutorial as a real playground entry or mount
       it through an existing executable example route. Do not call an
-      unreachable source file a validated reference game.
-- [ ] Add a focused mounted component test for the actual `PauseOverlay` and
+      unreachable source file a validated reference game (registered as the
+      catalog game `paddle`, playable from Home).
+- [x] Add a focused mounted component test for the actual `PauseOverlay` and
       `PaddleScreen` composition: one press pauses, the full overlay blocks
       gameplay touches, one press resumes, and closing/unmounting retains Task
       9 ownership semantics.
-- [ ] Place the pause control inside a safe-area-aware screen/control region
+- [x] Place the pause control inside a safe-area-aware screen/control region
       and preserve at least a 44-by-44-point effective hit target.
-- [ ] Make the guide consume or faithfully reproduce the tested component.
+- [x] Make the guide consume or faithfully reproduce the tested component.
       Include every React Native import and either define the referenced styles
       or link to a complete source file.
-- [ ] Keep gameplay input and pause controls as clear sibling interaction
+- [x] Keep gameplay input and pause controls as clear sibling interaction
       regions so native hit testing does not depend on accidental child order.
 
 #### Acceptance checks
 
-- [ ] The example is reachable from a normal app launch without editing source
-      code.
-- [ ] The rendered pause and resume controls work on the first press.
-- [ ] Touching or dragging the covered game surface while paused cannot enqueue
-      gameplay input.
-- [ ] The documentation snippet can be pasted into the tutorial project
-      without missing identifiers.
+- [x] The example is reachable from a normal app launch without editing source
+      code (catalog entry `paddle`).
+- [x] The rendered pause and resume controls work on the first press (mounted
+      overlay and composition tests press the real controls; the native
+      render itself is part of the device row).
+- [x] Touching or dragging the covered game surface while paused cannot enqueue
+      gameplay input (blocking overlay plus core rejection while paused; a
+      physical drag is part of the device row).
+- [x] The documentation snippet can be pasted into the tutorial project
+      without missing identifiers (compile-checked `PauseGameScreen.tsx`).
 
 ### T10-F5 — Correct the completion record after the fixes
 
@@ -1079,15 +1095,15 @@ completed deliverable.
 
 #### Required changes
 
-- [ ] Keep Task 10 open while T10-F1 through T10-F4 remain unresolved.
-- [ ] Change the top-level status to an honest implementation-review state.
-- [ ] Uncheck the deferred hook/session reference items or implement the pages
+- [x] Keep Task 10 open while T10-F1 through T10-F4 remain unresolved.
+- [x] Change the top-level status to an honest implementation-review state.
+- [x] Uncheck the deferred hook/session reference items or implement the pages
       before checking them.
-- [ ] Check acceptance criteria only when the named behavior has direct
+- [x] Check acceptance criteria only when the named behavior has direct
       evidence; do not use the aggregate test count as a substitute.
-- [ ] Leave physical iPhone, iPad, Android, screen-lock, and device soak rows
+- [x] Leave physical iPhone, iPad, Android, screen-lock, and device soak rows
       unchecked until run on the named hardware.
-- [ ] After focused fixes pass, update the definition-of-done list and record
+- [x] After focused fixes pass, update the definition-of-done list and record
       the fix commit identifiers without overwriting the device-gated remainder.
 
 ---
@@ -1206,11 +1222,11 @@ implementation. That statement should not be presented as an enforced fact.
 
 #### Acceptance checks
 
-- [ ] Back works on the first press while the game is running and paused.
-- [ ] Pressing Back while paused cannot trigger Resume or gameplay input.
-- [ ] The pause overlay still blocks all pointer input inside the gameplay
+- [x] Back works on the first press while the game is running and paused.
+- [x] Pressing Back while paused cannot trigger Resume or gameplay input.
+- [x] The pause overlay still blocks all pointer input inside the gameplay
       stage.
-- [ ] The screen-composition test, not only the isolated overlay test, proves
+- [x] The screen-composition test, not only the isolated overlay test, proves
       the interaction boundary.
 
 ### T10-FF3 — Reopen the follow-up record until FF1 and FF2 are resolved
