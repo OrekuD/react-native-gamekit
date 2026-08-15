@@ -38,7 +38,7 @@ export interface BuildSpatialHash2DOptions {
   readonly cellSize: number;
 }
 
-/** Maximum cells an item or query may span per axis (bounded execution). */
+/** Maximum cells an item or query may OCCUPY per axis (bounded execution). */
 export const MAX_SPATIAL_HASH_SPAN_CELLS = 1024;
 
 /** Opaque per-index internal buckets and order, never exposed publicly. */
@@ -128,7 +128,9 @@ export function querySpatialHash2D(index: SpatialHashIndex2D, bounds: Aabb2D): r
   }
   // Preserve original insertion order regardless of bucket order.
   collected.sort((a, b) => state.order.get(a)! - state.order.get(b)!);
-  return collected;
+  // The public result is frozen (T11-FF5): the immutable contract is
+  // runtime-enforced, not only a type-level promise.
+  return Object.freeze(collected);
 }
 
 interface Cell {
@@ -166,11 +168,12 @@ function cellIndex(coord: number, cellSize: number): number {
 
 /** Reject spans that would block the JS thread (bounded execution). */
 function assertSpan(span: number, axis: 'x' | 'y'): void {
-  if (span > MAX_SPATIAL_HASH_SPAN_CELLS) {
+  const cells = span + 1; // The inclusive loop visits span + 1 cells.
+  if (cells > MAX_SPATIAL_HASH_SPAN_CELLS) {
     throw new GeometryError(
       'GEOMETRY_SPATIAL_INDEX_RANGE',
       `bounds.${axis}`,
-      `bounds span ${span} cells, exceeding the maximum of ${MAX_SPATIAL_HASH_SPAN_CELLS}`,
+      `bounds occupy ${cells} cells, exceeding the maximum of ${MAX_SPATIAL_HASH_SPAN_CELLS}`,
     );
   }
 }

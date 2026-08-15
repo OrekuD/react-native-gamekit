@@ -19,13 +19,14 @@ import {
   defineGame,
   defineScene,
   placeCollider2D,
+  projectWorldCollider2D,
   querySpatialHash2D,
   rectangleCollider2D,
   spriteSheet,
   sweepCircleAabb2D,
   type CollisionHit2D,
+  type DebugPrimitive2D,
   type GameSession,
-  type WorldCollider2D,
 } from 'rn-gamekit';
 
 export const labAssets = defineAssets({
@@ -108,8 +109,9 @@ export interface CollisionLabSnapshot {
   readonly sweptHit: { readonly time: number } | undefined;
   readonly candidates: readonly string[];
   readonly sprite: { readonly x: number; readonly y: number };
-  /** Placed world colliders for the sprite, unchanged by animation. */
-  readonly colliders: readonly WorldCollider2D[];
+  /** Projected debug primitives for the sprite colliders (FF1: projected
+   *  in the headless snapshot, never on the UI runtime). */
+  readonly colliderDebug: readonly DebugPrimitive2D[];
   readonly projectileStart: { readonly x: number; readonly y: number };
   readonly projectile: { readonly x: number; readonly y: number; readonly radius: number };
   readonly target: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -146,12 +148,13 @@ const labScene = defineScene({
   snapshot: ({ state }): CollisionLabSnapshot => {
     const { ball, box, projectile, target, sprite, cellSize, filterA, filterB } = COLLISION_LAB_CONFIG;
     const stepSeconds = 1 / 60;
+    const worldSpan = COLLISION_LAB_CONFIG.logicalWidth + 40;
     const travelled = projectile.vx * stepSeconds * state.projectileTicks;
-    const projectileX = projectile.x + (travelled % (COLLISION_LAB_CONFIG.logicalWidth + 40));
-    const projectileStart = {
-      x: projectile.x + (Math.max(0, travelled - projectile.vx * stepSeconds) % (COLLISION_LAB_CONFIG.logicalWidth + 40)),
-      y: projectile.y,
-    };
+    const previousTravelled = Math.max(0, travelled - projectile.vx * stepSeconds);
+    const projectileX = projectile.x + (travelled % worldSpan);
+    const projectilePrevX = projectile.x + (previousTravelled % worldSpan);
+    // The modulo wrap is an explicit teleport: never sweep across the world.
+    const wrapped = projectileX < projectilePrevX;
 
     // Static contact for the selected pair.
     let staticHit: CollisionHit2D | undefined;
@@ -172,12 +175,13 @@ const labScene = defineScene({
       staticHit = undefined;
     }
 
-    // Swept projectile against the thin target.
+    // Swept projectile against the thin target, from the PREVIOUS
+    // fixed-step position with only the current step's displacement.
     const sweptHit =
-      state.swept && state.projectileTicks > 0
+      state.swept && state.projectileTicks > 0 && !wrapped
         ? sweepCircleAabb2D({
-            circle: { x: projectile.x, y: projectile.y, radius: projectile.radius },
-            displacement: { x: projectileX - projectile.x, y: 0 },
+            circle: { x: projectilePrevX, y: projectile.y, radius: projectile.radius },
+            displacement: { x: projectileX - projectilePrevX, y: 0 },
             target,
           })
         : undefined;
@@ -194,12 +198,13 @@ const labScene = defineScene({
     const candidates = querySpatialHash2D(index, { x: ball.x - 1, y: ball.y - 1, width: 2, height: 2 });
 
     // Asset-attached colliders: placed from the sprite position, unchanged
-    // by the animation.
-    const colliders = [
-      placeCollider2D(LAB_SPRITE_COLLIDERS.body, sprite),
-      placeCollider2D(LAB_SPRITE_COLLIDERS.hurtbox, sprite),
-      placeCollider2D(LAB_SPRITE_COLLIDERS.attack, sprite),
-      placeCollider2D(LAB_SPRITE_COLLIDERS.pickup, sprite),
+    // by the animation, then PROJECTED into debug primitives here (FF1) so
+    // the renderer consumes records without calling collision helpers.
+    const colliderDebug = [
+      projectWorldCollider2D(placeCollider2D(LAB_SPRITE_COLLIDERS.body, sprite)),
+      projectWorldCollider2D(placeCollider2D(LAB_SPRITE_COLLIDERS.hurtbox, sprite)),
+      projectWorldCollider2D(placeCollider2D(LAB_SPRITE_COLLIDERS.attack, sprite)),
+      projectWorldCollider2D(placeCollider2D(LAB_SPRITE_COLLIDERS.pickup, sprite)),
     ];
 
     return {
@@ -212,8 +217,8 @@ const labScene = defineScene({
       sweptHit: sweptHit === undefined ? undefined : { time: sweptHit.time },
       candidates,
       sprite: { x: sprite.x, y: sprite.y },
-      colliders,
-      projectileStart,
+      colliderDebug,
+      projectileStart: { x: projectilePrevX, y: projectile.y },
       projectile: { x: projectileX, y: projectile.y, radius: projectile.radius },
       target: { x: target.x, y: target.y, width: target.width, height: target.height },
       ball: { x: ball.x, y: ball.y, radius: ball.radius },

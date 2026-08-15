@@ -83,6 +83,45 @@ describe('spatial hash immutability (T11-F5)', () => {
     );
   });
 
+  it('returns frozen query results that reject runtime mutation (T11-FF5)', () => {
+    const index = buildSpatialHash2D({
+      items: [{ id: 'a', bounds: { x: 0, y: 0, width: 10, height: 10 } }],
+      cellSize: 16,
+    });
+    const empty = querySpatialHash2D(index, { x: 500, y: 500, width: 4, height: 4 });
+    assert.equal(Object.isFrozen(empty), true, 'the empty result is frozen');
+    const result = querySpatialHash2D(index, { x: 0, y: 0, width: 4, height: 4 });
+    assert.equal(Object.isFrozen(result), true, 'the result is frozen');
+    assert.throws(() => {
+      (result as string[]).push('mutated');
+    }, TypeError);
+  });
+
+  it('enforces the per-axis cell maximum as occupied cells (T11-FF5)', () => {
+    // Exactly 1024 occupied cells: allowed.
+    const at = buildSpatialHash2D({
+      items: [{ id: 'a', bounds: { x: 0, y: 0, width: 16 * 1024 - 1, height: 4 } }],
+      cellSize: 16,
+    });
+    assert.ok(at !== undefined);
+    // 1025 occupied cells: rejected with the structured range error.
+    assert.throws(
+      () =>
+        buildSpatialHash2D({
+          items: [{ id: 'a', bounds: { x: 0, y: 0, width: 16 * 1024, height: 4 } }],
+          cellSize: 16,
+        }),
+      (error: unknown) =>
+        error instanceof GeometryError && error.code === 'GEOMETRY_SPATIAL_INDEX_RANGE',
+    );
+    // Zero-size bounds exactly on a cell boundary occupy one cell.
+    const boundary = buildSpatialHash2D({
+      items: [{ id: 'a', bounds: { x: 16, y: 16, width: 0, height: 0 } }],
+      cellSize: 16,
+    });
+    assert.deepEqual(querySpatialHash2D(boundary, { x: 16, y: 16, width: 0, height: 0 }), ['a']);
+  });
+
   it('uses the structured duplicate-id error', () => {
     assert.throws(
       () =>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GameSession } from 'rn-gamekit';
@@ -69,6 +69,10 @@ interface LabHudRecord {
   readonly debugVisible: boolean;
   readonly animation: CollisionLabSnapshot['animation'];
   readonly hit: { readonly depth: number; readonly nx: number; readonly ny: number; readonly px: number; readonly py: number } | undefined;
+  /** Sweep-hit state (present or absent) with the value captured at the
+   *  transition — the continuously changing time never republishes. */
+  readonly sweptActive: boolean;
+  readonly sweptHitTime: number | undefined;
   readonly candidates: number;
 }
 
@@ -79,7 +83,8 @@ function hudEqual(first: LabHudRecord, second: LabHudRecord): boolean {
     first.filterEnabled !== second.filterEnabled ||
     first.debugVisible !== second.debugVisible ||
     first.animation !== second.animation ||
-    first.candidates !== second.candidates
+    first.candidates !== second.candidates ||
+    first.sweptActive !== second.sweptActive
   ) {
     return false;
   }
@@ -112,21 +117,39 @@ function recordOf(snap: CollisionLabSnapshot): LabHudRecord {
             px: snap.staticHit.point.x,
             py: snap.staticHit.point.y,
           },
+    sweptActive: snap.sweptHit !== undefined,
+    sweptHitTime: snap.sweptHit?.time,
     candidates: snap.candidates.length,
   };
 }
 
-function LabHud({ game }: { readonly game: GameSession }) {
-  // Deduplicated low-frequency HUD: setState only when the semantic record
-  // changes, never per simulation tick.
+export function LabHud({
+  game,
+  onPublish,
+}: {
+  readonly game: GameSession;
+  /** Test instrumentation: called exactly when setDisplay publishes. */
+  readonly onPublish?: () => void;
+}) {
+  // Deduplicated low-frequency HUD (T11-FF3): the last published record
+  // lives in a ref; the commit callback compares BEFORE calling setState,
+  // so no setter, updater, or render happens for unchanged commits.
   const [display, setDisplay] = useState<LabHudRecord | undefined>(undefined);
+  const lastPublishedRef = useRef<LabHudRecord | undefined>(undefined);
+  const onPublishRef = useRef(onPublish);
+  onPublishRef.current = onPublish;
   useEffect(() => {
+    lastPublishedRef.current = undefined;
     const update = (frame: unknown): void => {
       const snap = (frame as { current: CollisionLabSnapshot }).current;
-      setDisplay((previous) => {
-        const next = recordOf(snap);
-        return previous !== undefined && hudEqual(previous, next) ? previous : next;
-      });
+      const next = recordOf(snap);
+      const last = lastPublishedRef.current;
+      if (last !== undefined && hudEqual(last, next)) {
+        return; // No setState at all for an unchanged semantic record.
+      }
+      lastPublishedRef.current = next;
+      setDisplay(next);
+      onPublishRef.current?.();
     };
     update(game.getRenderFrame());
     const subscription = game.addCommitListener(update);
@@ -147,9 +170,11 @@ function LabHud({ game }: { readonly game: GameSession }) {
         contact{' '}
         {display.hit === undefined
           ? 'none'
-          : `normal (${display.hit.nx.toFixed(2)}, ${display.hit.ny.toFixed(2)}) depth ${display.hit.depth.toFixed(2)}`}
+          : `normal (${display.hit.nx.toFixed(2)}, ${display.hit.ny.toFixed(2)}) depth ${display.hit.depth.toFixed(2)} point (${display.hit.px.toFixed(1)}, ${display.hit.py.toFixed(1)})`}
       </Text>
-      <Text style={styles.hudLine}>candidates {display.candidates}</Text>
+      <Text style={styles.hudLine}>
+        sweep {display.sweptActive ? `hit at t=${display.sweptHitTime?.toFixed(3)}` : 'no hit'} · candidates {display.candidates}
+      </Text>
     </View>
   );
 }

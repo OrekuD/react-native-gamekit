@@ -2,12 +2,12 @@
 
 ## Status
 
-**Implementation review: T11-F1 through T11-F10 addressed.** The initial
-implementation and automated gate were complete, the review below found
-correctness, immutability, UI-runtime, reference-example, and documentation
-failures, and the fix record at the end of the feedback section documents
-their repair. The complete automated gate is green. Physical-device rows
-remain open.
+**Follow-up implementation review: changes still required.** Commit `8e9c302`
+repairs the core manifold, sweep-correctness, pair-order, filter, segment, and
+caller-input ownership failures. The follow-up review below found remaining
+UI-runtime, reactivity, React-publication, reference-example, immutability,
+hot-path, and completion-record gaps. The reported complete automated gate is
+green; physical-device rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -1477,3 +1477,287 @@ documentation, and plan report the same behavior.
 - [ ] Collision Lab demonstrates the promised asset-attached workflow.
 - [ ] The broad-phase guide is compile-checked.
 - [ ] Device-gated rows remain honest and separate from automated completion.
+
+## Follow-up feedback — review of `8e9c302` and `100053b`
+
+This follow-up is limited to the code and records changed to address T11-F1
+through T11-F10. It does not rerun the complete repository gate already
+reported by the implementation agent. The review uses source inspection and
+the installed Reanimated/Worklets implementation to verify UI-runtime
+boundaries.
+
+### Resolution audit
+
+| Original finding | Follow-up result |
+| --- | --- |
+| T11-F1 | Core implementation resolved; containment uses directional exits. |
+| T11-F2 | Geometric correctness resolved; see T11-FF7 for hot-path cost. |
+| T11-F3 | Core implementation resolved; argument order and filters agree. |
+| T11-F4 | Core implementation resolved; finish the promised boundary test. |
+| T11-F5 | Caller ownership resolved; returned query arrays remain mutable. |
+| T11-F6 | Not resolved: one ordinary helper is still called on the UI runtime. |
+| T11-F7 | Not resolved: `setState` is still invoked for every commit. |
+| T11-F8 | Partially resolved: the MDX and tested fixture are different examples. |
+| T11-F9 | Partially resolved: the lab data exists, but its overlay is not reactive. |
+| T11-F10 | Not resolved: the status and checklists overstate completion. |
+
+### T11-FF1 — Remove the remaining non-worklet call from the UI runtime
+
+**Priority:** High
+
+`CollisionLabRenderer` now marks `toSurfaceX`, `toSurfaceY`, and
+`toSurfaceSize` as worklets, but the `colliderOverlays` derived worklet calls
+`projectWorldCollider2D`. That imported package function has no `'worklet'`
+directive. With the installed Worklets runtime it is a remote function, and a
+synchronous call from a UI worklet throws. The Node renderer mock cannot catch
+this because its `useDerivedValue` executes on the JS runtime.
+
+This also misses the original design requirement that the renderer consume
+headless debug records. The snapshot publishes world colliders, then the
+renderer performs the projection itself.
+
+#### Required approach
+
+- [ ] Project the named world colliders through `projectWorldCollider2D` in
+      the headless snapshot/presentation producer, where it is ordinary JS.
+- [ ] Publish typed immutable debug primitives with the frame; make the Skia
+      renderer consume those records without calling collision helpers.
+- [ ] Audit every function called by every Collision Lab derived worklet. A
+      function must be inline, explicitly workletized, or removed from the UI
+      path.
+- [ ] Do not use `scheduleOnRN` for a per-frame projection; it would add a
+      thread hop and make presentation stale.
+
+#### RED-first evidence
+
+- [ ] Add a contract test that inventories calls made inside the renderer's
+      derived worklets and rejects ordinary imported functions.
+- [ ] Add development-build evidence that opening Collision Lab and toggling
+      Debug produces no synchronous-remote-function error.
+
+### T11-FF2 — Keep the collider overlay reactive without reading `.value` in render
+
+**Priority:** High
+
+`colliderOverlays` is a derived shared value, but the React component renders
+it with `colliderOverlays.value.map(...)`. Reading `.value` while React renders
+is explicitly rejected by Reanimated's strict-mode diagnostics, and a shared
+value update does not cause a React render. Therefore the component tree is
+built from the initial array only: changing `debugVisible` cannot reliably
+remove or restore the overlays, and later collider-coordinate changes cannot
+update their plain numeric props.
+
+#### Required approach
+
+- [ ] Keep a fixed React/Skia topology for the four authored colliders.
+- [ ] Feed each fixed shape reactive shared-value props/selectors, including
+      visibility via a derived group opacity or zero-size policy.
+- [ ] Alternatively, record all debug shapes into one UI-owned Picture, but
+      do not rebuild React children from a shared value on every frame.
+- [ ] Use stable collider ids for topology and styles; do not key the shapes
+      by array index if the authored order can change later.
+- [ ] Ensure Debug changes presentation only and never rebuilds the Canvas,
+      session, renderer, or collision records.
+
+#### RED-first evidence
+
+- [ ] Add a source/runtime contract that fails on `.value` reads in the
+      renderer's React return path.
+- [ ] Toggle Debug off/on without causing a React renderer rerender and assert
+      that all four overlays hide and return.
+- [ ] Change a published collider position and assert its Skia props update
+      without remounting the overlay node.
+
+### T11-FF3 — Deduplicate before calling React state setters
+
+**Priority:** Important
+
+`LabHud` still invokes `setDisplay` from every commit. Returning the previous
+object from the updater may prevent a rendered output change, but the setter,
+updater, record allocation, and equality work still happen at simulation
+frequency. This does not satisfy T11-F7's requirement to deduplicate before
+calling `setState`, and the new mounted tests do not count publications or
+renders across unchanged commits.
+
+#### Required approach
+
+- [ ] Keep the last published `LabHudRecord` in a ref owned by the effect.
+- [ ] Compute/compare the next semantic record in the commit callback, and
+      call `setDisplay(next)` only when it differs.
+- [ ] Publish the initial record once and reset the ref when the session
+      changes; keep subscription cleanup idempotent.
+- [ ] Keep continuously changing presentation on the shared UI path. Do not
+      introduce a timer or move every frame back into React.
+
+#### RED-first evidence
+
+- [ ] Instrument HUD state publications and renders for 60 unchanged commits;
+      both counts must remain at the initial publication.
+- [ ] Assert each Pair, Sweep, Filter, Anim, and Debug semantic transition
+      publishes exactly once.
+- [ ] Assert session replacement detaches the old commit listener exactly
+      once and publishes the replacement snapshot once.
+
+### T11-FF4 — Make the Collision Lab sweep and displayed diagnostics truthful
+
+**Priority:** Important
+
+The lab computes `projectileStart` as the previous-tick position, but calls
+`sweepCircleAabb2D` from the original authored position with the entire
+accumulated displacement. Once the target has been crossed, the lab can keep
+reporting an old impact rather than the current step's impact. At the modulo
+wrap, the visual path and accumulated sweep also disagree.
+
+The checked T11.8 item says the lab displays contact point and sweep time.
+`LabHudRecord` stores the contact point but never renders it, and neither the
+HUD nor renderer displays the numeric `sweptHit.time`.
+
+#### Required approach
+
+- [ ] Sweep from the previous projectile position using only the current
+      fixed-step displacement.
+- [ ] Treat wrap/reset as an explicit teleport with no sweep across the world,
+      or split a wrapping step into two intentional segments.
+- [ ] Keep the sweep path, hit, contact point, and numeric time derived from
+      the same start/end pair.
+- [ ] Display the static contact point and the sweep time without reintroducing
+      per-frame React churn; a hit-state transition is semantic and can be
+      published once.
+
+#### RED-first evidence
+
+- [ ] Assert no hit before the crossing step, one valid hit on the crossing
+      step, and no stale repeated hit after the projectile has passed.
+- [ ] Assert the reported shapes touch at the lab hit time.
+- [ ] Cover the wrap/reset step and prove it does not create a reverse or
+      world-spanning sweep.
+- [ ] Mount the lab and assert the promised point and sweep-time values are
+      actually visible when a hit exists.
+
+### T11-FF5 — Finish the public immutability contract
+
+**Priority:** Important
+
+The spatial hash now clones and freezes its inputs correctly, but
+`querySpatialHash2D` returns the mutable `collected` array. Its TypeScript type
+is `readonly string[]`; that does not make the runtime value immutable. This
+is the exact returned-array case required by T11-F5, but the added
+immutability suite checks only `index.items` and nested bounds.
+
+`MAX_SPATIAL_HASH_SPAN_CELLS` is documented as a maximum cell count, while
+`assertSpan` permits a coordinate difference of 1024 and the inclusive loop
+then visits 1025 cells on that axis. Freeze whether the constant means a cell
+count or an index difference and make the validation/message agree.
+
+#### Required approach
+
+- [ ] Freeze every query result before returning it, including the empty
+      result, or explicitly change the public contract and documentation to a
+      mutable result. Prefer the existing immutable contract.
+- [ ] Define the spatial limit in actual visited cells and reject inputs
+      before entering either nested loop.
+- [ ] Re-export the public limit if callers are expected to plan around it;
+      otherwise keep it internal and make the structured error self-contained.
+
+#### RED-first evidence
+
+- [ ] Assert query results are frozen and cannot be mutated at runtime.
+- [ ] Test exactly one cell below, at, and above the documented per-axis
+      maximum, including zero-size bounds on a cell boundary.
+
+### T11-FF6 — Compile-check the exact documentation example
+
+**Priority:** Important
+
+The added fixture is valid, but it is not the code shown in the MDX guide.
+The guide's block omits the `WorldCollider2D` type import, contains
+`placeCollider2D(...)` placeholders, and uses a top-level `return`. The test
+imports the parallel fixture and checks only the ordinary overlap path; it
+does not exercise the documented stale-id handling or rebuilding after an
+object moves. The guide can therefore drift while the test stays green.
+
+#### Required approach
+
+- [ ] Make one complete TypeScript example the source of truth. Either render
+      that source into the guide or add a sync assertion that compares the
+      fenced snippet with the compile-checked fixture.
+- [ ] Ensure the published snippet imports every referenced type/value and is
+      wrapped in a complete callable flow with no ellipsis placeholders.
+- [ ] Keep the application-owned map, skip-self rule, explicit missing-id
+      branch, and rebuild/update ownership visible in that exact example.
+
+#### RED-first evidence
+
+- [ ] Typecheck the exact published snippet, not a parallel approximation.
+- [ ] Exercise a stale candidate id and prove it is skipped deliberately.
+- [ ] Move a collider, rebuild/update the index as documented, and prove the
+      query finds it at the new position rather than the old one.
+
+### T11-FF7 — Restore the sweep hot-path allocation discipline
+
+**Priority:** Important
+
+The rounded-corner sweep is geometrically correct, but each call allocates a
+four-entry `corners` array, four descriptor objects, eight predicate closures,
+and temporary root arrays. That happens even on common miss paths and
+contradicts Task 11's fixed-step requirement that shape operations avoid
+arrays and closures. Collision sweeps are intended for fast objects in the
+simulation hot path, so this should not become the frozen implementation.
+
+#### Required approach
+
+- [ ] Move immutable corner metadata out of the function or use a small
+      numeric loop/unrolled candidates with no per-call predicate closures.
+- [ ] Evaluate the two quadratic roots as scalars rather than allocating a
+      two-entry array for every corner.
+- [ ] Track the best time, normal components, point components, and hit flag as
+      scalars; allocate/freeze only the final public `SweepHit2D` on a hit.
+- [ ] Keep all exact-geometry and tie behavior from T11-F2 unchanged.
+
+#### RED-first evidence
+
+- [ ] Keep the exact sweep property suites green after the allocation
+      refactor.
+- [ ] Extend the focused collision benchmark with representative sweep hits
+      and misses so the change records distributions rather than one FPS
+      value.
+
+### T11-FF8 — Reconcile the completion record with executable evidence
+
+**Priority:** Important
+
+The plan status says all findings are addressed while every checkbox in the
+original feedback remains open. Several of those items are demonstrably still
+open, including the UI-runtime call, pre-setter HUD dedupe, exact guide
+fixture, reactive debug visibility, and displayed diagnostic values. The
+source-level manifold contract also still says coincident circles have
+"zero-depth resolution depth," while the implementation and plan correctly
+use `r1 + r2`.
+
+#### Required approach
+
+- [ ] Keep the Task 11 status at “follow-up review: changes required” until
+      T11-FF1 through T11-FF7 are resolved.
+- [ ] After each fix, check the matching original F1-F10 requirement and RED
+      evidence boxes rather than relying only on a prose fix record.
+- [ ] Correct the contradictory manifold module comment and re-audit exported
+      Collision2D JSDoc against the frozen contract table.
+- [ ] Uncheck any T11.8 claim that lacks visible or mounted evidence until the
+      lab actually demonstrates it.
+- [ ] Record the follow-up fix commit(s) and focused suites here.
+- [ ] Leave the physical-device rows unchecked until the named devices are
+      exercised.
+
+#### Follow-up acceptance
+
+- [ ] No ordinary function is synchronously called from a Collision Lab UI
+      worklet.
+- [ ] No shared `.value` is read while building the renderer's React tree.
+- [ ] HUD React publications occur only for semantic changes.
+- [ ] The lab sweep and visible diagnostics agree with one fixed simulation
+      step.
+- [ ] Public spatial-hash results satisfy the runtime immutability contract.
+- [ ] The exact MDX example is compile-checked and behavior-tested.
+- [ ] Sweep correctness remains green without per-call corner/root arrays or
+      closures.
+- [ ] Plan, code, tests, docs, and device-gated rows report the same status.

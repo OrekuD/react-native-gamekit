@@ -5,7 +5,7 @@
  * and wall time for mostly-miss distributions.
  */
 import { performance } from 'node:perf_hooks';
-import { buildSpatialHash2D, collideCircleAabb2D, querySpatialHash2D } from '../src/index.ts';
+import { buildSpatialHash2D, collideCircleAabb2D, querySpatialHash2D, sweepCircleAabb2D } from '../src/index.ts';
 import type { Aabb2D } from '../src/index.ts';
 
 interface Item {
@@ -104,6 +104,31 @@ for (const count of [128, 512]) {
   console.log(
     `dense items=${count} brute=${bruteMs.toFixed(1)}ms hash=${hashMs.toFixed(1)}ms ` +
       `candidates avg=${(candidates / queries).toFixed(0)}`,
+  );
+}
+
+// Sweep distributions: representative hits and misses (T11-FF7).
+{
+  const target = { x: 0, y: 80, width: 36, height: 10 };
+  let hitCount = 0;
+  const samples = 2000;
+  const start = performance.now();
+  for (let index = 0; index < samples; index += 1) {
+    // Alternate a centered hit path with a horizontally-missing path.
+    const x = index % 2 === 0 ? 10 : 60;
+    const y = 40 + (index % 20);
+    const hit = sweepCircleAabb2D({
+      circle: { x, y, radius: 4 },
+      displacement: { x: 0, y: 40 },
+      target,
+    });
+    if (hit !== undefined) {
+      hitCount += 1;
+    }
+  }
+  const elapsed = performance.now() - start;
+  console.log(
+    `sweeps samples=${samples} hits=${hitCount} total=${elapsed.toFixed(1)}ms per-call=${(elapsed / samples).toFixed(4)}ms`,
   );
 }
 

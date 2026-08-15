@@ -1,5 +1,6 @@
 /**
- * Swept collision queries (T11.3, repaired in T11-F2).
+ * Swept collision queries (T11.3, repaired in T11-F2, allocation-disciplined
+ * in T11-FF7).
  *
  * `time` is normalized to `[0, 1]` along the displacement. A starting
  * overlap returns `time: 0` with the static manifold normal; zero
@@ -13,6 +14,12 @@
  * (valid only in the corner's exterior quadrant). AABB-AABB sweeps use the
  * asymmetric expansion for the moving AABB's top-left reference point —
  * the Minkowski sum of two AABBs is an AABB, so the slab method is exact.
+ *
+ * T11-FF7 allocation discipline: the four corner descriptors are derived
+ * arithmetically from the corner index (no per-call arrays or predicate
+ * closures), the two quadratic roots are evaluated as scalars, and the best
+ * candidate is tracked in scalars; only the final public `SweepHit2D` is
+ * allocated.
  */
 import type { Aabb2D, Circle2D, Point2D, Vector2D } from '../geometry/types';
 import {
@@ -53,10 +60,25 @@ export interface SweepHit2D {
   readonly point: Point2D;
 }
 
-interface Candidate {
-  readonly time: number;
-  readonly normal: Vector2D;
-  readonly point: Point2D;
+/**
+ * Corner descriptors for index 0..3, derived arithmetically: bit 0 selects
+ * the max-x face (else min-x) and bit 1 selects the max-y face (else
+ * min-y). The quadrant validity of a hit point is the same bit test.
+ */
+function cornerFaceX(index: number, minX: number, maxX: number): number {
+  return index & 1 ? maxX : minX;
+}
+
+function cornerFaceY(index: number, minY: number, maxY: number): number {
+  return index & 2 ? maxY : minY;
+}
+
+function beyondFaceX(index: number, pointX: number, minX: number, maxX: number): boolean {
+  return index & 1 ? pointX >= maxX : pointX <= minX;
+}
+
+function beyondFaceY(index: number, pointY: number, minY: number, maxY: number): boolean {
+  return index & 2 ? pointY >= maxY : pointY <= minY;
 }
 
 /** Swept circle-AABB against the exact rounded-rectangle Minkowski shape. */
@@ -84,52 +106,57 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
   const dx = displacement.x;
   const dy = displacement.y;
 
-  let best: Candidate | undefined;
+  // Scalar best-candidate tracking: nothing is allocated until a hit.
+  let hasBest = false;
+  let bestTime = 0;
+  let bestNX = 0;
+  let bestNY = 0;
+  let bestPX = 0;
+  let bestPY = 0;
+
+  const accept = (time: number, nx: number, ny: number, px: number, py: number): void => {
+    if (time < 0 || time > 1 || (hasBest && bestTime < time)) {
+      return;
+    }
+    if (!hasBest || time < bestTime) {
+      hasBest = true;
+      bestTime = time;
+      bestNX = nx;
+      bestNY = ny;
+      bestPX = px;
+      bestPY = py;
+    }
+  };
 
   // Face candidates: the four expanded faces, valid within the face extent.
-  const considerFace = (time: number, x: number, y: number, normal: Vector2D): void => {
-    if (time < 0 || time > 1) {
-      return;
-    }
-    if (best !== undefined && best.time < time) {
-      return;
-    }
-    const candidate: Candidate = {
-      time,
-      normal,
-      point: Object.freeze({ x: clamp(x, minX, maxX), y: clamp(y, minY, maxY) }),
-    };
-    best = best === undefined || time < best.time ? candidate : best;
-  };
   if (dx !== 0) {
     const faceX = dx > 0 ? minX - radius : maxX + radius;
-    const t = (faceX - x0) / dx;
-    const yAt = y0 + dy * t;
+    const time = (faceX - x0) / dx;
+    const yAt = y0 + dy * time;
     if (yAt >= minY && yAt <= maxY) {
-      considerFace(t, faceX, yAt, Object.freeze({ x: dx > 0 ? -1 : 1, y: 0 }));
+      // The contact point is the closest point on the ORIGINAL target to
+      // the impact position (both coordinates clamped).
+      accept(time, dx > 0 ? -1 : 1, 0, clamp(faceX, minX, maxX), clamp(yAt, minY, maxY));
     }
   }
   if (dy !== 0) {
     const faceY = dy > 0 ? minY - radius : maxY + radius;
-    const t = (faceY - y0) / dy;
-    const xAt = x0 + dx * t;
+    const time = (faceY - y0) / dy;
+    const xAt = x0 + dx * time;
     if (xAt >= minX && xAt <= maxX) {
-      considerFace(t, xAt, faceY, Object.freeze({ x: 0, y: dy > 0 ? -1 : 1 }));
+      accept(time, 0, dy > 0 ? -1 : 1, clamp(xAt, minX, maxX), clamp(faceY, minY, maxY));
     }
   }
 
   // Corner candidates: radius circles around each corner, valid in the
-  // corner's exterior quadrant.
-  const corners: ReadonlyArray<{ readonly x: number; readonly y: number; readonly outsideX: (p: number) => boolean; readonly outsideY: (p: number) => boolean }> = [
-    { x: minX, y: minY, outsideX: (p) => p <= minX, outsideY: (p) => p <= minY },
-    { x: maxX, y: minY, outsideX: (p) => p >= maxX, outsideY: (p) => p <= minY },
-    { x: minX, y: maxY, outsideX: (p) => p <= minX, outsideY: (p) => p >= maxY },
-    { x: maxX, y: maxY, outsideX: (p) => p >= maxX, outsideY: (p) => p >= maxY },
-  ];
-  for (const corner of corners) {
-    const fx = x0 - corner.x;
-    const fy = y0 - corner.y;
-    const a = dx * dx + dy * dy;
+  // corner's exterior quadrant. The four descriptors are derived from the
+  // corner index arithmetically; both quadratic roots are scalars.
+  const a = dx * dx + dy * dy;
+  for (let corner = 0; corner < 4; corner += 1) {
+    const cornerX = cornerFaceX(corner, minX, maxX);
+    const cornerY = cornerFaceY(corner, minY, maxY);
+    const fx = x0 - cornerX;
+    const fy = y0 - cornerY;
     const b = 2 * (fx * dx + fy * dy);
     const c = fx * fx + fy * fy - radius * radius;
     const discriminant = b * b - 4 * a * c;
@@ -137,37 +164,42 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
       continue;
     }
     const root = Math.sqrt(discriminant);
-    for (const t of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) {
-      if (t < 0 || t > 1 || (best !== undefined && best.time < t)) {
+    const firstRoot = (-b - root) / (2 * a);
+    const secondRoot = (-b + root) / (2 * a);
+    for (let pass = 0; pass < 2; pass += 1) {
+      const time = pass === 0 ? firstRoot : secondRoot;
+      if (time < 0 || time > 1 || (hasBest && bestTime < time)) {
         continue;
       }
-      const hitX = x0 + dx * t;
-      const hitY = y0 + dy * t;
-      if (!corner.outsideX(hitX) || !corner.outsideY(hitY)) {
+      const hitX = x0 + dx * time;
+      const hitY = y0 + dy * time;
+      if (!beyondFaceX(corner, hitX, minX, maxX) || !beyondFaceY(corner, hitY, minY, maxY)) {
         continue;
       }
-      const outX = hitX - corner.x;
-      const outY = hitY - corner.y;
+      const outX = hitX - cornerX;
+      const outY = hitY - cornerY;
       const outDistance = Math.hypot(outX, outY);
-      const normal: Vector2D =
-        outDistance === 0
-          ? Object.freeze({ x: 0, y: 1 })
-          : Object.freeze({ x: outX / outDistance, y: outY / outDistance });
-      const candidate: Candidate = {
-        time: t,
-        normal,
-        point: Object.freeze({ x: corner.x, y: corner.y }),
-      };
-      if (best === undefined || t < best.time) {
-        best = candidate;
+      const nx = outDistance === 0 ? 0 : outX / outDistance;
+      const ny = outDistance === 0 ? 1 : outY / outDistance;
+      if (!hasBest || time < bestTime) {
+        hasBest = true;
+        bestTime = time;
+        bestNX = nx;
+        bestNY = ny;
+        bestPX = cornerX;
+        bestPY = cornerY;
       }
     }
   }
 
-  if (best === undefined) {
+  if (!hasBest) {
     return undefined;
   }
-  return Object.freeze({ time: best.time, normal: best.normal, point: best.point });
+  return Object.freeze({
+    time: bestTime,
+    normal: Object.freeze({ x: bestNX, y: bestNY }),
+    point: Object.freeze({ x: bestPX, y: bestPY }),
+  });
 }
 
 /** Swept AABB-AABB with the exact asymmetric reference expansion. */

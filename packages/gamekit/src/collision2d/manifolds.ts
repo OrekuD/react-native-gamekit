@@ -14,7 +14,7 @@
  *   penetration face wins with ties in the order left, top, right, bottom.
  * - Circle-circle: the contact point is on the first circle's boundary
  *   toward the second; coincident centers use the fallback normal `(0, 1)`
- *   (straight down the positive-y axis) with zero-depth resolution depth.
+ *   (straight up the positive-y axis) with full overlap depth `r1 + r2`.
  * - AABB-AABB: the contact point is the center of the overlap rectangle;
  *   exact corner ties use the normal `(0, 1)`.
  */
