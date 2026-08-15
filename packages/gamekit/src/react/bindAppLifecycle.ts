@@ -1,4 +1,4 @@
-import type { GameSessionStatus } from '../core/session/types';
+import type { GameSessionStatus, GameSubscription } from '../core/session/types';
 
 /** Minimal AppState-like source used to keep this seam platform-neutral. */
 export interface AppLifecycleSource {
@@ -18,6 +18,12 @@ export interface AppLifecycleSession {
   pause(): void;
   /** Resume a paused session. */
   resume(): void;
+  /**
+   * Optional status observation (T10.6): when present, the binder also
+   * guards against an external `start()` while the host is inactive, so a
+   * frame loop can never escape into the background.
+   */
+  addStatusListener?(listener: (status: GameSessionStatus) => void): GameSubscription;
 }
 
 /**
@@ -37,6 +43,10 @@ export function bindAppLifecycle(
   session: AppLifecycleSession,
 ): () => void {
   let pausedByLifecycle = false;
+  let currentState = source.currentState ?? 'active';
+
+  const isInactive = (state: string | null | undefined): boolean =>
+    state === 'inactive' || state === 'background';
 
   const pauseForBackground = () => {
     if (session.getStatus() === 'running') {
@@ -45,12 +55,27 @@ export function bindAppLifecycle(
     }
   };
 
+  // T10.6: an external start() while the host is inactive is deterministically
+  // returned to paused. The binder observes status transitions and re-pauses
+  // any running transition that happens while the app is not active, so a
+  // frame loop cannot escape into the background.
+  let statusSubscription: GameSubscription | undefined;
+  if (session.addStatusListener !== undefined) {
+    statusSubscription = session.addStatusListener((status) => {
+      if (status === 'running' && isInactive(currentState)) {
+        session.pause();
+        pausedByLifecycle = true;
+      }
+    });
+  }
+
   // Synchronize the initial app state before any change event arrives.
-  if (source.currentState === 'inactive' || source.currentState === 'background') {
+  if (isInactive(source.currentState)) {
     pauseForBackground();
   }
 
   const subscription = source.addEventListener('change', (next) => {
+    currentState = next;
     if (next === 'active') {
       if (pausedByLifecycle) {
         pausedByLifecycle = false;
@@ -62,7 +87,7 @@ export function bindAppLifecycle(
       }
       return;
     }
-    if (next === 'inactive' || next === 'background') {
+    if (isInactive(next)) {
       pauseForBackground();
     }
   });
@@ -73,6 +98,7 @@ export function bindAppLifecycle(
       return;
     }
     cleanedUp = true;
+    statusSubscription?.remove();
     subscription.remove();
     pausedByLifecycle = false;
   };

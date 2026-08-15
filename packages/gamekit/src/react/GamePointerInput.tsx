@@ -155,6 +155,23 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   const coalescerState = useSharedValue<PointerCoalescerState>(() =>
     createPointerCoalescerState(maxMoveIntervalMs),
   );
+  // T10.4: the pause transition clears the UI-side coalescer queue for the
+  // active stream (the core input buffer already cancelled ownership), so a
+  // pre-pause pointer can never flush stale moves after resume. The gesture
+  // itself is not remounted and its key does not change.
+  useEffect(() => {
+    if (game.status === 'disposed') {
+      return;
+    }
+    const subscription = game.addStatusListener((status) => {
+      if (status === 'paused') {
+        coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [coalescerState, game, maxMoveIntervalMs]);
   const viewportBinding = viewportContext.binding;
   // F3 follow-up: the binding identity includes the declared action, the
   // session input controller, and the viewport owner; changing any of them

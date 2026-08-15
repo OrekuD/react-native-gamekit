@@ -622,18 +622,20 @@ The React hook should be a thin adapter over the core observable store.
 Manual session commands and app lifecycle commands must drive the same
 presentation state.
 
-- [ ] Add mounted tests for `session.pause()` while `GameView` is present.
-- [ ] Test `session.start()` after manual pause.
-- [ ] Test app background and foreground transitions.
-- [ ] Test manual pause before background, then foreground.
-- [ ] Test an external `start()` attempt while the app is inactive.
-- [ ] Test session prop replacement while the old session is paused.
-- [ ] Subscribe to status before mount-time `start()`.
-- [ ] Drive the existing UI-thread running/presentation value from core status.
-- [ ] Freeze on the last committed frame without rebuilding the Canvas.
-- [ ] Reset interpolation timing safely on resume.
-- [ ] Remove duplicate lifecycle mirrors that can disagree with core status.
-- [ ] Detach all subscriptions on unbind without disposing the borrowed
+- [x] Add mounted tests for `session.pause()` while `GameView` is present.
+- [x] Test `session.start()` after manual pause.
+- [x] Test app background and foreground transitions.
+- [x] Test manual pause before background, then foreground.
+- [x] Test an external `start()` attempt while the app is inactive.
+- [x] Test session prop replacement while the old session is paused.
+- [x] Subscribe to status before mount-time `start()`.
+- [x] Drive the existing UI-thread running/presentation value from core status.
+- [x] Freeze on the last committed frame without rebuilding the Canvas (the
+      frame store and alpha clock hold; only the `running` gate flips).
+- [x] Reset interpolation timing safely on resume (the alpha clock resets on
+      the next commit; the pause holds alpha via the gate).
+- [x] Remove duplicate lifecycle mirrors that can disagree with core status.
+- [x] Detach all subscriptions on unbind without disposing the borrowed
       session.
 
 #### Acceptance criteria

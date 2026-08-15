@@ -130,7 +130,10 @@ function GamePresentation<
   const Renderer = renderer;
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
-  const running = useSharedValue(true);
+  // T10.6: the presentation gate mirrors CORE status, not callback-local
+  // state — a direct session.pause() freezes presentation too. Idle holds
+  // until the binding starts the session.
+  const running = useSharedValue(game.status === 'running');
   // Binding epoch: bumped per (re)subscription so a replacement session whose
   // revision restarts at zero is still accepted by the UI clock.
   const epoch = useSharedValue(0);
@@ -146,6 +149,13 @@ function GamePresentation<
     // RF6: the frame is seeded at mount from this session; the keyed remount
     // guarantees the renderer below never reads the previous session's frame.
     frame.value = game.getRenderFrame();
+    // T10.6: subscribe to core status BEFORE the mount-time start, so the
+    // idle -> running transition cannot be missed and every lifecycle change
+    // (manual pause, app background, error path) drives the same mirror.
+    running.value = game.status === 'running';
+    const statusSubscription = game.addStatusListener((status) => {
+      running.value = status === 'running';
+    });
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
       instrumentationRef.current?.onPresentCommit?.(nextFrame.revision, Date.now());
@@ -153,7 +163,6 @@ function GamePresentation<
     const cleanupLifecycle = bindAppLifecycle(AppState, {
       getStatus: () => game.status,
       pause: () => {
-        running.value = false;
         if (game.status !== 'disposed') {
           game.pause();
         }
@@ -161,13 +170,14 @@ function GamePresentation<
       resume: () => {
         if (game.status !== 'disposed') {
           game.start();
-          running.value = true;
         }
       },
+      addStatusListener: (listener) => game.addStatusListener(listener),
     });
     return () => {
       cleanupLifecycle();
       cleanupBinding();
+      statusSubscription.remove();
     };
   }, [epoch, frame, game, running]);
 
