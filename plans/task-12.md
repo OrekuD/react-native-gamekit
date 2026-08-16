@@ -2,9 +2,11 @@
 
 ## Status
 
-**Not started.** This task adds an opt-in 2D camera system shared by rendering
-and pointer input, then builds deterministic visibility culling and render
-layers on that foundation.
+**T12.0 complete; T12.1 not started.** The transform pipeline is inventoried,
+the contract is frozen, and the compile fixtures + no-camera baseline exist
+(`packages/gamekit/test/api/camera2d.types.tsx`, RED until T12.1 lands;
+`packages/gamekit/test/camera2d.baseline.test.ts`, green 5/5). Implementation
+starts with pure camera math (T12.1).
 
 Task 12 depends on the canonical geometry contracts from Task 11. T12.0 may
 inventory the existing viewport and input pipelines while Task 11 is underway,
@@ -478,6 +480,103 @@ packages/gamekit/src/
 
 Adapt the exact paths to existing package conventions. Do not create a generic
 `camera/` namespace that later forces 2D and 3D values into one type.
+
+## T12.0 completion record
+
+### Pipeline inventory (read fresh from `packages/gamekit/src`)
+
+- **Transform order today.** `resolveViewport2D(config, surfaceSize)` produces
+  `scale`, `offsetX/Y`, `visibleLogicalBounds`, `contentBounds` (fit: centered
+  minimum scale; fill: centered maximum scale; extend-world: fit scale with
+  the surface-derived logical view). `worldToSurface` is `p * scale + offset`;
+  `surfaceToWorld` is `(p - offset) / scale`. `GameWorld2D` feeds Skia the
+  element list `[T(offsetX), T(offsetY), S(scale), S(scale)]` from the
+  `viewportTransform` worklet — translate applied before scale.
+- **Ownership of shared values.** `GameView` owns the surface `View` and
+  `Canvas`; `GamePresentation` (keyed by `presentationKey` or a WeakMap
+  per-session id) owns `frame`, `alpha`, `running`, `epoch`, `clockEpoch`,
+  `clockRevision`. The alpha clock is pure (`alphaClock.ts`): resets on a new
+  commit revision, clamps at 1, holds while `running` is false (pause,
+  background, dispose), and ignores stale writes by epoch/revision.
+  `ViewportBinding` (layout revisions, immutable resolved value) is shared
+  through `GameViewportContext` with the `viewport` shared value; the renderer
+  and `GamePointerInput` both consume the same instance.
+- **Pointer pipeline.** UI side: `isBeginAllowed` mirrors `contentBounds`
+  containment before gesture activation; the coalescer crosses to JS at most
+  once per fixed step. JS side: `PointerBinding` re-checks containment, then
+  converts with `surfaceToWorld` only (no other transform exists today) and
+  forwards into the session input buffer. Packets carry `generation`
+  (monotonic binding identity), `layoutEpoch` (adapter-owned, bumped on layout
+  revisions and unmount), `seq`, `atMs`. Pause clears the coalescer; cancel
+  and finalize neutralize once.
+- **SpriteBatch.** Fixed `capacity`, UI-owned `useRectBuffer`/`useRSXformBuffer`,
+  `select` reads the committed snapshot, `write` fills slots in place; inactive
+  slots are zero-size, writes past capacity fail in development. Item order is
+  draw order.
+- **Sprite Field.** One `GameSprite` (player) + one `SpriteBatch` (enemies),
+  animation advanced in `update` with `deltaSeconds`, deterministic score.
+  World size equals the logical viewport today — no camera.
+
+### Frozen contract (T12.0 decisions)
+
+- **Coordinate spaces.** World (authored, collision, camera targets) -> logical
+  view (camera-visible authored area, an `Aabb2D`) -> surface (RN layout +
+  native touches). Forward: `logical = L + rotate(P - C, -R) * Z`; inverse:
+  `world = C + rotate((logical - L) / Z, R)`, where C is camera center, Z
+  zoom, R rotationRadians, L the logicalView center. Rotation in radians,
+  positive per the Skia convention; zoom finite > 0.
+- **Composition.** Camera composes BEFORE the existing viewport list: the
+  final surface mapping is `viewport(worldToLogical(...))`, and `GameWorld2D`
+  applies camera first, then the unchanged viewport elements.
+- **Absence.** No `camera2D` prop, no `camera` renderer prop, and no camera on
+  `GameWorld2D` keeps the exact current path — no camera object, no extra
+  transform, no rounding change, no pointer-generation reset. An explicit
+  identity camera must match within the documented floating-point tolerance;
+  the no-camera fast path is retained.
+- **Binding.** Static `defineGameCamera2D({ select })` passed to `GameView`
+  only. `GameView` evaluates the selector against the same committed frame the
+  renderer uses, interpolates center/zoom by alpha and rotation over the
+  shortest arc, and publishes `SharedValue<CameraCut2D | undefined>` to the
+  renderer and (through the mounted surface) to `GamePointerInput`. A
+  monotonically increasing `cutId` in `CameraCut2D { camera, cutId }` snaps
+  presentation: scene transitions, session replacement, binding-generation
+  change, explicit cuts, and invalid prior data. Pause freezes the presented
+  camera; resume never interpolates background time. No React state, timers,
+  or wall-clock callbacks.
+- **Why the static binding (not a direct selector prop, not a mandatory
+  frame field).** The pointer adapter is a sibling of the renderer; a direct
+  selector prop would either duplicate the selector on `GamePointerInput`
+  (split ownership, drift risk) or thread a second evaluation through context
+  anyway. A mandatory camera field in every frame would force camera data and
+  validation onto games that never use it, changing the no-camera contract.
+  The static binding keeps one evaluation, one generation, one owner.
+- **Parallax.** `GameLayer2D parallax?: { x, y }` (default `{ x: 1, y: 1 }`,
+  validated finite). Parallax scales only the camera center contribution:
+  the layer's effective center is `C' = L + (C - L) * p` per axis, and zoom +
+  rotation apply fully at every factor. p = 0 is camera-fixed on that axis;
+  p = 1 is the primary layer. Parallax never affects pointer mapping.
+- **Helpers.** `followCamera2D(camera, target, options, deltaSeconds)` with
+  `{ deadZone?: Aabb2D, perAxis?: { x?, y? }, dampingHalfLifeSeconds? }`;
+  `clampCameraBounds2D(camera, worldBounds, logicalView)` (conservative
+  enclosing-AABB containment, centers small worlds, stable near edges);
+  `sampleCameraShake2D(base, { seed, elapsedSeconds, durationSeconds,
+  amplitude, frequency? })` — deterministic, returns the unmodified base
+  after duration.
+- **Culling.** Conservative visible world AABB for rotated views; narrow
+  tests use the actual view polygon or documented conservative AABB; padding
+  optional; stable-order indexed filtering; off-screen entities keep
+  simulating. SpriteBatch culling keeps fixed capacity and slot identity.
+
+### T12.0 evidence
+
+- `packages/gamekit/test/api/camera2d.types.tsx` — contract fixture (RED
+  until the camera surface exists; validated by `pnpm typecheck:assets`,
+  excluded from the default gate typecheck by `tsconfig.json`'s `test/api`
+  exclusion).
+- `packages/gamekit/test/camera2d.baseline.test.ts` — executable no-camera
+  baseline, 5/5 green: transform composition order, conversion formulas,
+  fit-letterbox containment, pointer conversion path, and fill/extend
+  consistency. T12.3-T12.5 must keep every assertion green.
 
 ## T12.0: Inventory and freeze the contract
 
