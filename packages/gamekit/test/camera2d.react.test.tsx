@@ -397,6 +397,38 @@ describe('presented camera binding (T12.3)', () => {
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50, 'the next valid commit recovers');
   });
 
+  it('rejects partial selector output and retains the prior presentation (T12-SF3)', () => {
+    const definition = { select: (f: Frame) => f.current.camera };
+    const { presented, binding } = harness(definition);
+    const full = createCamera2D({ center: { x: 7, y: 0 } });
+    act(() => binding().commit(frame('play', full)));
+    act(() => binding().present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 7);
+
+    // Partial selector results (missing center, zoom, or rotation) are
+    // rejected at the commit boundary: the prior presentation survives.
+    const partials = [
+      { zoom: 1, rotationRadians: 0 },
+      { center: { x: 0, y: 0 }, rotationRadians: 0 },
+      { center: { x: 0, y: 0 }, zoom: 1 },
+    ];
+    for (const partial of partials) {
+      act(() => binding().commit(frame('play', partial)));
+      act(() => binding().present(0.5));
+      assert.equal(
+        (presented() as { camera: { center: { x: number } } }).camera.center.x,
+        7,
+        'a partial camera never replaces the prior presentation',
+      );
+    }
+
+    // The next FULL selector output recovers normally.
+    const cameraB = createCamera2D({ center: { x: 50, y: 0 } });
+    act(() => binding().commit(frame('play', cameraB)));
+    act(() => binding().present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50);
+  });
+
   it('copies and freezes the selector output before publishing (T12-RF4)', () => {
     // A MUTABLE camera returned by the selector: mutation after commit must
     // never alter the authored previous/current values.

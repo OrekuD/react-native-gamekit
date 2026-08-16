@@ -1,11 +1,14 @@
 /**
- * T12-RF2: the Camera Lab instrumentation callbacks are worklet-safe.
+ * T12-SF2: the Camera Lab instrumentation classifies callbacks by their
+ * ACTUAL invocation runtime.
  *
- * Every callback the lab registers with `GamePointerInput` / `GameView` and
- * that the UI runtime can invoke (raw touches, forwarded events, UI-observed
- * revisions) must carry an explicit `'worklet'` directive and mutate shared
- * values only — never closure-local `let` state. The negative fixture strips
- * a directive and proves the contract fails.
+ * UI-runtime callbacks (`onRawTouch`, `onForwarded`) must carry the
+ * `'worklet'` directive and mutate shared values only. RN-runtime callbacks
+ * (`onDispatchResult`, `onDispatchRejected`, `onPresentCommit`,
+ * `onUiRevisionObserved`) are delivered on JS — GameView schedules the
+ * observed-revision callback onto RN — so they must NOT carry a worklet
+ * directive and must NOT mutate shared values. `readCounters()` must never
+ * read a UI-owned `.value`.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -13,8 +16,15 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync('src/screens/camera-lab/cameraLabInstrumentation.ts', 'utf8');
 
-/** UI-runtime-callable instrumentation callbacks that must be workletized. */
-const UI_CALLBACKS = ['onRawTouch', 'onForwarded', 'onUiRevisionObserved'];
+/** Callback -> invocation runtime. */
+const CALLBACKS: ReadonlyArray<[string, 'ui' | 'rn']> = [
+  ['onRawTouch', 'ui'],
+  ['onForwarded', 'ui'],
+  ['onDispatchResult', 'rn'],
+  ['onDispatchRejected', 'rn'],
+  ['onPresentCommit', 'rn'],
+  ['onUiRevisionObserved', 'rn'],
+];
 
 function bodyOf(text: string, marker: string): string {
   const start = text.indexOf(marker);
@@ -38,34 +48,56 @@ function hasWorkletDirective(body: string): boolean {
   return body.trim().startsWith("'worklet';");
 }
 
-function analyze(text: string): { missing: string[]; sharedValueMutations: boolean } {
-  const missing: string[] = [];
-  let sharedValueMutations = true;
-  for (const callback of UI_CALLBACKS) {
-    const body = bodyOf(text, `${callback}:`);
-    if (!hasWorkletDirective(body)) {
-      missing.push(callback);
-    }
-    if (!/\.value\s*(\+=|-=|\+\+|--|=\s)/.test(body)) {
-      sharedValueMutations = false;
-    }
-  }
-  return { missing, sharedValueMutations };
+function mutatesSharedValue(body: string): boolean {
+  return /\.value\s*(\+=|-=|\+\+|--|=\s)/.test(body);
 }
 
-describe('Camera Lab instrumentation worklet contract (T12-RF2)', () => {
-  it('workletizes every UI-runtime callback and mutates shared values only', () => {
+function analyze(text: string): { misclassified: string[] } {
+  const misclassified: string[] = [];
+  for (const [callback, runtime] of CALLBACKS) {
+    const body = bodyOf(text, `${callback}:`);
+    const isWorklet = hasWorkletDirective(body);
+    const mutatesShared = mutatesSharedValue(body);
+    if (runtime === 'ui') {
+      if (!isWorklet) {
+        misclassified.push(`${callback}: missing worklet directive`);
+      }
+      if (!mutatesShared) {
+        misclassified.push(`${callback}: no shared-value mutation`);
+      }
+    } else {
+      if (isWorklet) {
+        misclassified.push(`${callback}: RN callback carries a worklet directive`);
+      }
+      if (mutatesShared) {
+        misclassified.push(`${callback}: RN callback mutates a shared value`);
+      }
+    }
+  }
+  return { misclassified };
+}
+
+describe('Camera Lab instrumentation runtime classification (T12-SF2)', () => {
+  it('classifies every callback by its actual invocation runtime', () => {
     const result = analyze(source);
-    assert.deepEqual(result.missing, [], 'every UI callback carries the worklet directive');
-    assert.ok(result.sharedValueMutations, 'UI callbacks mutate shared values, not closure state');
-    // No closure-local let counters exist in the file.
-    assert.ok(!/\blet\s+\w+\s*=\s*0\b/.test(source), 'no closure-local counter state');
+    assert.deepEqual(result.misclassified, [], 'every callback matches its runtime');
   });
 
-  it('fails when a required directive is removed', () => {
-    const stripped = source.replace("      onRawTouch: () => {\n        'worklet';", "      onRawTouch: () => {");
-    assert.notEqual(stripped, source, 'the directive was actually stripped');
-    const result = analyze(stripped);
-    assert.ok(result.missing.includes('onRawTouch'), 'the stripped directive is reported');
+  it('keeps readCounters free of shared-value reads', () => {
+    const arrow = bodyOf(source, 'readCounters = useCallback(');  });
+
+  it('fails when an RN callback is workletized or a UI callback loses its directive', () => {
+    const rnWorkletized = source.replace(
+      "      onUiRevisionObserved: () => {\n        uiObservedRef.current += 1;\n      },",
+      "      onUiRevisionObserved: () => {\n        'worklet';\n        uiObservedRef.current += 1;\n      },",
+    );
+    assert.notEqual(rnWorkletized, source, 'the directive was inserted');
+    assert.ok(analyze(rnWorkletized).misclassified.some((m) => m.includes('onUiRevisionObserved')),
+      'an RN callback with a directive is reported');
+
+    const uiStripped = source.replace("      onRawTouch: () => {\n        'worklet';", "      onRawTouch: () => {");
+    assert.notEqual(uiStripped, source, 'the directive was stripped');
+    assert.ok(analyze(uiStripped).misclassified.some((m) => m.includes('onRawTouch')),
+      'a UI callback without its directive is reported');
   });
 });

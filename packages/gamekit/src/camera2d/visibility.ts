@@ -15,6 +15,19 @@ import { getCameraVisibleBounds2D } from './transform';
 import type { Camera2D } from './types';
 import { assertValidCamera2D, assertValidLogicalView, assertNonnegativePadding } from './validation';
 
+function assertPointPayload(value: unknown, field: string): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      field,
+      `expected a point record, got ${value === null ? 'null' : typeof value}`,
+    );
+  }
+  const typed = value as { x?: unknown; y?: unknown };
+  assertFiniteNumber(typed.x as number, `${field}.x`);
+  assertFiniteNumber(typed.y as number, `${field}.y`);
+}
+
 function assertShapeRecord(shape: unknown): asserts shape is CameraViewShape2D {
   if (typeof shape !== 'object' || shape === null || Array.isArray(shape)) {
     throw new GeometryError(
@@ -24,28 +37,52 @@ function assertShapeRecord(shape: unknown): asserts shape is CameraViewShape2D {
     );
   }
   const kind = (shape as { kind?: unknown }).kind;
-  if (kind !== 'aabb' && kind !== 'circle' && kind !== 'point') {
-    throw new GeometryError(
-      'GEOMETRY_INVALID_NUMBER',
-      'shape.kind',
-      `expected 'aabb' | 'circle' | 'point', got ${String(kind)}`,
-    );
+  // T12-SF3: the payload is validated with Camera2D-prefixed nested paths
+  // BEFORE any Collision2D predicate dereferences it.
+  switch (kind) {
+    case 'aabb':
+      assertItemBounds((shape as { bounds?: unknown }).bounds, 'shape.bounds');
+      return;
+    case 'circle': {
+      const circle = (shape as { circle?: unknown }).circle;
+      if (typeof circle !== 'object' || circle === null || Array.isArray(circle)) {
+        throw new GeometryError(
+          'GEOMETRY_INVALID_NUMBER',
+          'shape.circle',
+          `expected a circle record, got ${circle === null ? 'null' : typeof circle}`,
+        );
+      }
+      const typed = circle as { x?: unknown; y?: unknown; radius?: unknown };
+      assertFiniteNumber(typed.x as number, 'shape.circle.x');
+      assertFiniteNumber(typed.y as number, 'shape.circle.y');
+      assertNonnegativeSize(typed.radius as number, 'shape.circle.radius');
+      return;
+    }
+    case 'point':
+      assertPointPayload((shape as { point?: unknown }).point, 'shape.point');
+      return;
+    default:
+      throw new GeometryError(
+        'GEOMETRY_INVALID_NUMBER',
+        'shape.kind',
+        `expected 'aabb' | 'circle' | 'point', got ${String(kind)}`,
+      );
   }
 }
 
-function assertItemBounds(bounds: unknown): asserts bounds is Aabb2D {
+function assertItemBounds(bounds: unknown, field = 'items.bounds'): asserts bounds is Aabb2D {
   if (typeof bounds !== 'object' || bounds === null || Array.isArray(bounds)) {
     throw new GeometryError(
       'GEOMETRY_INVALID_NUMBER',
-      'items.bounds',
+      field,
       `expected a rect record, got ${bounds === null ? 'null' : typeof bounds}`,
     );
   }
   const typed = bounds as Aabb2D;
-  assertFiniteNumber(typed.x, 'items.bounds.x');
-  assertFiniteNumber(typed.y, 'items.bounds.y');
-  assertNonnegativeSize(typed.width, 'items.bounds.width');
-  assertNonnegativeSize(typed.height, 'items.bounds.height');
+  assertFiniteNumber(typed.x, `${field}.x`);
+  assertFiniteNumber(typed.y, `${field}.y`);
+  assertNonnegativeSize(typed.width, `${field}.width`);
+  assertNonnegativeSize(typed.height, `${field}.height`);
 }
 
 function assertItemsArray(items: unknown): asserts items is readonly { readonly id: string; readonly bounds: Aabb2D }[] {

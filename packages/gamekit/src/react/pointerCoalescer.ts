@@ -228,20 +228,6 @@ export function reducePointerCoalescer(
         ]
       : [],
   };
-  return {
-    state: { ...state, active: nextActive },
-    events: shouldForward
-      ? [
-          {
-            kind: 'move',
-            pointerId: moveInput.pointerId,
-            x: moveInput.x,
-            y: moveInput.y,
-            stamp: moveInput.stamp,
-          },
-        ]
-      : [],
-  };
 }
 
 /**

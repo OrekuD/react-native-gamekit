@@ -71,17 +71,28 @@ export function followCamera2D(
   if (options !== undefined) {
     assertFollowOptionsShape(options);
   }
-  const perAxisX = options?.perAxis?.x ?? true;
-  const perAxisY = options?.perAxis?.y ?? true;
-  if (options?.perAxis !== undefined) {
-    if (typeof perAxisX !== 'boolean' || typeof perAxisY !== 'boolean') {
+  const perAxis = options?.perAxis;
+  if (perAxis !== undefined) {
+    // T12-SF3: the per-axis options must be a non-array record before any
+    // field is read.
+    if (typeof perAxis !== 'object' || perAxis === null || Array.isArray(perAxis)) {
       throw new GeometryError(
         'GEOMETRY_INVALID_NUMBER',
         'perAxis',
-        `expected boolean per-axis flags, got x=${String(perAxisX)} y=${String(perAxisY)}`,
+        `expected a per-axis record, got ${perAxis === null ? 'null' : typeof perAxis}`,
       );
     }
+    const x = (perAxis as { x?: unknown }).x;
+    const y = (perAxis as { y?: unknown }).y;
+    if (x !== undefined && typeof x !== 'boolean') {
+      throw new GeometryError('GEOMETRY_INVALID_NUMBER', 'perAxis.x', `expected a boolean, got ${String(x)}`);
+    }
+    if (y !== undefined && typeof y !== 'boolean') {
+      throw new GeometryError('GEOMETRY_INVALID_NUMBER', 'perAxis.y', `expected a boolean, got ${String(y)}`);
+    }
   }
+  const perAxisX = options?.perAxis?.x ?? true;
+  const perAxisY = options?.perAxis?.y ?? true;
   const deadZone = options?.deadZone;
   if (deadZone !== undefined) {
     assertNonnegativeDeadZone(deadZone);

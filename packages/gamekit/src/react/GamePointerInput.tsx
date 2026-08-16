@@ -53,6 +53,26 @@ export interface GamePointerInputProps<TScenes extends SceneMap, TInput extends 
   readonly instrumentation?: GamePointerInstrumentation;
 }
 
+/**
+ * T12-SF1: the event-time camera selector, workletized at MODULE scope so
+ * every UI handler's call graph stays on the UI runtime. A move ALWAYS
+ * carries its own capture (possibly `undefined` — the surface may not have
+ * presented a camera yet); a captured undefined stays undefined and never
+ * falls back to a later presentation. Edges without a stamp (begin/end/
+ * cancel) use the presented camera sampled at their own event time.
+ */
+function packetCameraFor(
+  forwarded: CoalescedPointerEvent,
+  presented: CameraCut2D | undefined,
+): CameraCut2D | undefined {
+  'worklet';
+  if (forwarded.kind === 'move') {
+    const stamp = forwarded.stamp as { readonly captured: true; readonly value: CameraCut2D | undefined } | undefined;
+    return stamp !== undefined ? stamp.value : presented;
+  }
+  return presented;
+}
+
 function advanceSharedCoalescer(
   sharedState: SharedValue<PointerCoalescerState>,
   input: PointerCoalescerInput,
@@ -121,11 +141,9 @@ function TrailingFlushSampler({
         seq: forwardSeq.value,
         atMs: Date.now(),
         // The deferred move carries the stamp captured at ITS native
-        // sample (T12-RF3) — never the flush-time camera.
-        camera:
-          forwarded.kind === 'move' && forwarded.stamp !== undefined
-            ? (forwarded.stamp as CameraCut2D)
-            : camera?.value,
+        // sample (T12-RF3, T12-SF1) — never the flush-time camera, and a
+        // captured undefined stays undefined.
+        camera: packetCameraFor(forwarded, camera?.value),
       });
     }
   });
@@ -208,10 +226,6 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // worklets and stamped onto every packet; the binding inverts through
   // that stamp, never a later JS-side read.
   const cameraShared = presentedCamera;
-  const packetCamera = (forwarded: CoalescedPointerEvent): CameraCut2D | undefined =>
-    forwarded.kind === 'move' && forwarded.stamp !== undefined
-      ? (forwarded.stamp as CameraCut2D)
-      : cameraShared?.value;
   const generation = binding.generation;
   // F6/F3: the layout epoch is adapter-owned (ref + UI mirror), bumped only
   // on layout revisions and unmount; it never resets, so replacement cannot
@@ -334,7 +348,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           x: touch.x,
           y: touch.y,
           nowMs: Date.now(),
-          stamp: cameraShared?.value,
+          stamp: { captured: true, value: cameraShared?.value },
         });
         for (const forwarded of batch) {
           instrumentation?.onForwarded?.(
@@ -349,7 +363,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
-          camera: packetCamera(forwarded),
+          camera: packetCameraFor(forwarded, cameraShared?.value),
         });
         }
       }
@@ -383,7 +397,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
-          camera: packetCamera(forwarded),
+          camera: packetCameraFor(forwarded, cameraShared?.value),
         });
         }
         const mirror = samplerMirrorFromBatch(batch);

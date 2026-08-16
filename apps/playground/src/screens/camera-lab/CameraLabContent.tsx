@@ -33,6 +33,7 @@ interface LabHudRecord {
   readonly rejectedBinding: number;
   readonly presentedCommits: number;
   readonly uiObserved: number;
+  readonly roundTripError: number;
 }
 
 function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudRecord {
@@ -55,6 +56,7 @@ function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudR
     rejectedBinding: counters.rejectedBinding,
     presentedCommits: counters.presentedCommits,
     uiObserved: counters.uiObserved,
+    roundTripError: snap.roundTripError,
   };
 }
 
@@ -77,7 +79,8 @@ function hudEqual(first: LabHudRecord, second: LabHudRecord): boolean {
     first.rejectedLayoutEpoch === second.rejectedLayoutEpoch &&
     first.rejectedBinding === second.rejectedBinding &&
     first.presentedCommits === second.presentedCommits &&
-    first.uiObserved === second.uiObserved
+    first.uiObserved === second.uiObserved &&
+    first.roundTripError === second.roundTripError
   );
 }
 
@@ -155,6 +158,7 @@ export default function CameraLabContent({
         rejectedBinding: 0,
         presentedCommits: 0,
         uiObserved: 0,
+        roundTripError: 0,
       };
       const next = recordOf(snap, counters);
       const last = lastPublishedRef.current;
@@ -240,7 +244,7 @@ export default function CameraLabContent({
             {display.visible}/{display.total} markers · follow {display.follow ? 'on' : 'off'} · rotate {display.rotating ? 'on' : 'off'} · shake {display.shaking ? 'on' : 'off'} · cull {display.culling ? 'on' : 'off'} · bounds {display.debug ? 'on' : 'off'}
           </Text>
           <Text style={styles.hudLine}>
-            raw {display.rawTouches} · fwd {display.forwarded} · ok {display.accepted} · stale-layout {display.rejectedLayoutEpoch} · stale-binding {display.rejectedBinding} · commits {display.presentedCommits} · bump {rerenderBump}
+            raw {display.rawTouches} · fwd {display.forwarded} · committed {display.accepted} · stale-layout {display.rejectedLayoutEpoch} · stale-binding {display.rejectedBinding} · commits {display.presentedCommits} · ui {display.uiObserved} · rt {display.roundTripError.toExponential(1)} · bump {rerenderBump}
           </Text>
         </View>
       )}

@@ -1,13 +1,24 @@
 /**
- * T12-F8/T12-RF7 benchmark: camera culling scenarios.
+ * T12-F8/T12-RF7/T12-SF4 benchmark: camera culling scenarios.
  *
- * Records p50/p95/p99 over identical entity populations in four
- * production-equivalent modes: no camera, static camera, moving camera,
- * and moving camera with culling. The camera advances every moving
- * iteration; the cull-off modes perform NO visibility work (the batch's
- * production path without a cull prop is a pure write loop). Headless
- * math only — UI-runtime and GPU cost is device-measured, never
- * approximated here.
+ * Executable scenario runners with WORK COUNTERS, exported so contract
+ * tests can execute and compare them: predicate calls, filter calls,
+ * authored writes, visible output, and the camera state consumed each
+ * iteration. Modes:
+ *
+ * - no-camera: the plain write loop (no camera work at all).
+ * - static-camera: the batch cull setup (visible-bounds computation) once
+ *   per iteration plus the write loop — observably different from
+ *   no-camera.
+ * - moving: the same bounds computation with the camera ADVANCED every
+ *   iteration.
+ * - moving-cull: the production SpriteBatch path — one visible-bounds
+ *   computation + one inline predicate per candidate + writes for the
+ *   visible ones. The allocating public filter is measured SEPARATELY as
+ *   the headless filter API, not as the batch path.
+ *
+ * p50/p95/p99 are recorded after a warmup. Headless math only — UI/GPU
+ * cost is device-measured.
  */
 import { performance } from 'node:perf_hooks';
 import { batchVisibleBounds2D, intersectsBounds2D } from '../src/react/sprites/batchVisibility.ts';
@@ -25,12 +36,12 @@ const FIT = {
   offsetY: 0,
 };
 
-interface Item {
+export interface Item {
   readonly id: string;
   readonly bounds: Aabb2D;
 }
 
-function makeField(count: number, worldSize: number, seed: number): Item[] {
+export function makeField(count: number, worldSize: number, seed: number): Item[] {
   const items: Item[] = [];
   let state = seed;
   const rand = (): number => {
@@ -51,8 +62,10 @@ function makeField(count: number, worldSize: number, seed: number): Item[] {
   return items;
 }
 
+export type Camera2D = ReturnType<typeof createCamera2D>;
+
 /** Moving camera: advances deterministically every iteration. */
-function advanceCamera(camera: ReturnType<typeof createCamera2D>, step: number): ReturnType<typeof createCamera2D> {
+export function advanceCamera(camera: Camera2D, step: number): Camera2D {
   const x = camera.center.x + step;
   const y = camera.center.y + step * 0.5;
   return createCamera2D({
@@ -62,17 +75,76 @@ function advanceCamera(camera: ReturnType<typeof createCamera2D>, step: number):
   });
 }
 
+export interface ScenarioCounters {
+  readonly predicateCalls: number;
+  readonly filterCalls: number;
+  readonly writes: number;
+  readonly visibleCount: number;
+  readonly cameraCenterX: number;
+}
+
+export type ScenarioMode = 'no-camera' | 'static-camera' | 'moving' | 'moving-cull';
+
+const STATIC_CAMERA: Camera2D = createCamera2D({ center: { x: 1200, y: 800 }, zoom: 1 });
+
+/** One production-equivalent path with work counters (T12-SF4). */
+export function runScenario(
+  items: readonly Item[],
+  mode: ScenarioMode,
+  iteration: number,
+): ScenarioCounters {
+  if (mode === 'no-camera') {
+    let writes = 0;
+    for (const item of items) {
+      writes += 1;
+      void item.bounds.x;
+    }
+    return { predicateCalls: 0, filterCalls: 0, writes, visibleCount: items.length, cameraCenterX: -1 };
+  }
+
+  const camera = mode === 'moving' || mode === 'moving-cull' ? advanceCamera(STATIC_CAMERA, iteration) : STATIC_CAMERA;
+  const cut = { camera, cutId: 1 };
+  const visible = batchVisibleBounds2D(cut, FIT as never, 24) as never;
+  let writes = 0;
+  let visibleCount = 0;
+
+  if (mode === 'moving-cull') {
+    // The production SpriteBatch path: ONE visible-bounds computation and
+    // ONE inline predicate per candidate.
+    let predicateCalls = 0;
+    for (const item of items) {
+      predicateCalls += 1;
+      if (intersectsBounds2D(item.bounds, visible)) {
+        writes += 1;
+        visibleCount += 1;
+      }
+    }
+    return { predicateCalls, filterCalls: 0, writes, visibleCount, cameraCenterX: camera.center.x };
+  }
+
+  // static-camera and moving WITHOUT culling: bounds computation (camera
+  // work) plus the plain write loop — no predicate, no filter.
+  const predicateCalls = 0;
+  for (const item of items) {
+    writes += 1;
+    visibleCount += 1;
+    void item.bounds.x;
+    void visible;
+  }
+  return { predicateCalls, filterCalls: 0, writes, visibleCount, cameraCenterX: camera.center.x };
+}
+
+/** The allocating public filter, measured separately (headless API only). */
+export function runFilterApi(items: readonly Item[], camera: Camera2D): number {
+  return filterCameraVisible2D(items, camera, LOGICAL_VIEW, 24).length;
+}
+
 function percentile(sorted: number[], p: number): number {
   const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
   return sorted[index]!;
 }
 
-function bench(
-  label: string,
-  run: (iteration: number) => void,
-  iterations: number,
-  warmup: number,
-): void {
+function bench(label: string, run: (iteration: number) => void, iterations: number, warmup: number): void {
   for (let index = 0; index < warmup; index += 1) {
     run(index);
   }
@@ -88,64 +160,19 @@ function bench(
   );
 }
 
-function runScenario(label: string, items: Item[], mode: 'none' | 'static' | 'moving' | 'moving-cull'): void {
-  const stationary = createCamera2D({ center: { x: 1200, y: 800 }, zoom: 1 });
-  const staticCut = { camera: stationary, cutId: 1 };
-  const staticVisible = batchVisibleBounds2D(staticCut, FIT as never, 24) as never;
-  const iterations = 3000;
-  const warmup = 300;
-
-  if (mode === 'none') {
-    // Production no-camera path: the pure write loop, no visibility work.
-    bench(`${label} no-camera`, (_iteration) => {
-      for (const item of items) {
-        void item.bounds.x;
-      }
-    }, iterations, warmup);
-    return;
-  }
-  if (mode === 'static') {
-    bench(`${label} static-camera`, (_iteration) => {
-      // The batch path WITHOUT culling: writes every item.
-      for (const item of items) {
-        void item.bounds.x;
-      }
-    }, iterations, warmup);
-    return;
-  }
-  bench(`${label} ${mode}`, (iteration) => {
-    const camera = mode === 'moving' || mode === 'moving-cull'
-      ? advanceCamera(stationary, iteration)
-      : stationary;
-    if (mode === 'moving-cull') {
-      const cut = { camera, cutId: 1 };
-      const visible = batchVisibleBounds2D(cut, FIT as never, 24);
-      // One headless filter pass (the committed-visibility path), then the
-      // batch's per-item inline test against the same conservative bounds.
-      const kept = filterCameraVisible2D(items, camera, LOGICAL_VIEW, 24);
-      for (const item of items) {
-        intersectsBounds2D(item.bounds, visible as never);
-      }
-      if (kept.length > items.length) {
-        throw new Error('impossible');
-      }
-    } else {
-      // Moving WITHOUT culling performs no visibility work at all.
-      for (const item of items) {
-        void item.bounds.x;
-      }
-    }
-    void staticVisible;
-  }, iterations, warmup);
-}
-
 const sparse = makeField(64, 2400, 7);
 const dense = makeField(512, 2400, 11);
+const ITERATIONS = 3000;
+const WARMUP = 300;
 
 console.log('Camera2D culling benchmark (Node, headless — UI/GPU cost is device-measured)');
 for (const [label, items] of [['sparse', sparse], ['dense', dense]] as const) {
-  runScenario(label, items, 'none');
-  runScenario(label, items, 'static');
-  runScenario(label, items, 'moving');
-  runScenario(label, items, 'moving-cull');
+  for (const mode of ['no-camera', 'static-camera', 'moving', 'moving-cull'] as const) {
+    bench(`${label} ${mode}`, (iteration) => {
+      runScenario(items, mode, iteration);
+    }, ITERATIONS, WARMUP);
+  }
+  bench(`${label} filter-api (allocating)`, (iteration) => {
+    runFilterApi(items, advanceCamera(STATIC_CAMERA, iteration));
+  }, ITERATIONS, WARMUP);
 }

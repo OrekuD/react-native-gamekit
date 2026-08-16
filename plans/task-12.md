@@ -2,15 +2,14 @@
 
 ## Status
 
-**T12.1-T12.9 implemented; F1-F8 and RF1-RF7 review findings
-fixed; automated gate green; device rows open.** Instrumentation
-attachments now flow through the real SurfaceController with
-ownership-safe semantics, the lab callbacks are workletized
-shared-value counters, deferred moves carry their touch-time
-camera stamp, every public helper shape-validates and copies,
-and the benchmark reports honest distributions. `pnpm check`
-exits 0; the physical-device matrix remains unchecked.
-Task 12 depends on the canonical geometry contracts from Task 11 and must not
+**T12.1-T12.9 implemented; F1-F8, RF1-RF7, and SF1-SF4 review
+findings fixed; automated gate green; device rows open.** The
+pointer worklet call graph is fully workletized with explicit
+event-time camera captures, UI counters transfer to RN instead
+of synchronous cross-runtime reads, validation covers nested
+payloads with a strict full-camera clone, and the benchmark
+scenarios are executable with work counters. `pnpm check` exits
+0; the physical-device matrix remains unchecked.
 create competing `Point2D`, `Vector2D`, or
 `Aabb2D` types.
 
@@ -1037,7 +1036,7 @@ reference game, and evidence agree.
 - [x] Ordered layers and parallax have explicit zoom and rotation semantics.
 - [x] Visibility culling never changes simulation or collision results.
 - [x] Sprite Field demonstrates a larger scrolling world through public APIs.
-- [x] Camera Lab exposes transform, lifecycle, input, and performance evidence.
+- [ ] Camera Lab exposes transform, lifecycle, input, and performance evidence.
 - [x] Docs and agent instructions prevent split transform ownership.
 - [x] Automated package, docs, and Expo gates pass.
 - [ ] Device rows are completed or remain explicitly device-gated.
@@ -1818,6 +1817,259 @@ support a culling-on/off or stationary/moving conclusion.
       the real runtime boundary rather than only under JS mocks.
 - [x] Reconcile the Task 12 status, T12.3/T12.8 acceptance, benchmark claims,
       and definition-of-done checkboxes with the resulting evidence.
+- [x] Run the normal gate only after the focused fixes are green.
+- [x] Leave all nine physical-device rows unchecked until run on the named
+      hardware.
+
+## Second follow-up feedback — review of `faf662f`
+
+This review is limited to the RF1-RF7 fix commit and does not rerun the
+reported workspace gate. Keep the instrumentation-only slot separate from
+run-session ownership: the exact-session checks, capability gate, no-retire
+reducers, and effective-binding publication correctly avoid disposing the
+Camera Lab's base session. The current-binding test getter, selector-output
+ownership test, and explicit finite batch-bounds predicate are also useful
+repairs.
+
+### T12-SF1 — Remove the ordinary helper call from pointer worklets and make an undefined stamp explicit
+
+**Priority:** High
+
+`GamePointerInput` now defines `packetCamera()` as an ordinary component-local
+JavaScript closure and calls it from the workletized move and up handlers.
+Unlike `advanceSharedCoalescer`, it has no `'worklet'` directive. On a real
+RNGH/Reanimated UI runtime this can become a synchronous call to a
+non-worklet function, recreating the same native drag failure class that the
+camera presentation and Collision Lab call-graph fixes were designed to
+prevent. The new reducer tests never mount or analyze this adapter call site.
+
+There is a second event-time hole: `stamp?: unknown` uses `undefined` both for
+"this move captured no camera" and "there was no captured stamp." A move can
+occur immediately after a camera-enabled surface mounts while
+`presentedCamera.value` is still undefined. If the first camera is presented
+before the trailing flush, both `packetCamera()` and `TrailingFlushSampler`
+fall back to the later camera, so the old coordinates are again paired with
+flush-time presentation state.
+
+`reducePointerCoalescer()` also contains a duplicate unreachable return block
+after the new move return. It does not change behavior, but it is evidence
+that the hot-path rewrite was not reconciled cleanly.
+
+#### Required approach
+
+- [x] Inline the tiny camera selection in each registered pointer worklet,
+      or move it to a module-level helper carrying an explicit `'worklet'`
+      directive. Do not call an ordinary render-local closure from a UI
+      handler.
+- [x] Give every move an explicit discriminated capture, for example
+      `{ captured: true, value: CameraCut2D | undefined }`, or a separate
+      `hasStamp` bit. A captured undefined camera must remain undefined at
+      flush and must never trigger a later-camera fallback.
+- [x] Use the event-time capture for all immediate and deferred moves. Use
+      the up handler's current event-time camera for `end`; cancel needs no
+      camera because it carries no position.
+- [x] Remove the duplicate unreachable reducer return and preserve the
+      reducer's single immutable move transition.
+
+#### RED-first evidence
+
+- [x] Add an AST call-graph contract over every `GamePointerInput` UI
+      callback. Classify identifier, property-access, and element-access
+      callees and reject any non-worklet helper; include a negative fixture
+      that strips the camera helper's directive.
+- [x] Defer a move whose captured camera is explicitly undefined, publish
+      camera B before flush, and assert the packet still carries undefined.
+- [x] Cover immediate move, deferred move, latest-of-many, and up with one
+      adapter-level packet test so the reducer stamp and packet camera cannot
+      drift independently.
+- [x] Keep continuous native drag on the physical-device matrix; JS reducer
+      tests cannot prove this worklet boundary.
+
+### T12-SF2 — Transfer UI counters to RN instead of synchronously reading shared values
+
+**Priority:** Important
+
+`useCameraLabInstrumentation.readCounters()` reads `rawTouches.value`,
+`forwarded.value`, and `uiObserved.value` from the RN commit listener. A JS
+read of a UI-owned Reanimated shared value is a synchronous cross-runtime
+read and can block while the UI runtime is busy. At an 8 Hz HUD cadence this
+is bounded, but it is still the opposite direction from the UI -> RN snapshot
+transfer required by RF2 and it makes the diagnostic tool perturb the thread
+it is supposed to measure.
+
+`onUiRevisionObserved` is also misclassified. `GameView` detects the revision
+inside its UI frame callback, then deliberately calls `scheduleOnRN` before
+invoking the instrumentation callback. The callback therefore runs on RN,
+not UI. Marking it as a worklet and writing a UI shared value sends the count
+back to UI, after which `readCounters()` synchronously reads it back to RN.
+The source contract currently enforces this incorrect round trip.
+
+#### Required approach
+
+- [x] Keep only callbacks actually invoked by RNGH on UI
+      (`onRawTouch`/`onForwarded`) as shared-value worklets.
+- [x] From a UI-owned frame callback or reaction, copy those counters into a
+      small immutable snapshot and `scheduleOnRN` a stable receiver at the
+      diagnostic cadence. Flush once on teardown if final counts matter.
+- [x] Store `onUiRevisionObserved`, dispatch verdicts, rejection causes, and
+      presented commits directly in RN refs because `GameView` already
+      schedules the observed-revision callback onto RN.
+- [x] Make `readCounters()` read only the latest RN snapshot/refs; it must not
+      touch a UI-owned `.value`.
+- [x] Correct `GameViewInstrumentation` runtime documentation so the event is
+      named as a UI observation delivered on RN, matching the actual
+      `scheduleOnRN` implementation and the existing Performance Lab usage.
+
+#### RED-first evidence
+
+- [x] Update the instrumentation contract to classify callbacks by their
+      actual invocation runtime. It must reject a worklet directive or
+      shared-value mutation in an RN callback as well as reject a missing
+      directive in a UI callback.
+- [x] Prove repeated RN `readCounters()` calls perform no shared-value reads;
+      then transfer a UI snapshot and assert the RN view advances once.
+- [x] Verify the snapshot receiver and instrumentation objects stay stable
+      across the forced React rerender and detach cleanly with no trailing
+      transfer into a reopened session.
+
+### T12-SF3 — Close the remaining shape-validation and selector-normalization holes
+
+**Priority:** Important
+
+The new outer-value table does not yet cover every boundary named by RF4.
+`followCamera2D` checks that `options` is a record, but it does not validate
+the outer shape of `options.perAxis`; `null` or an array is accepted because
+optional chaining produces default booleans. The visibility validator checks
+only `shape.kind`; a recognized shape with `bounds`, `circle`, or `point` set
+to null still reaches Task 11 validators that dereference fields before an
+outer-shape check, producing an incidental `TypeError` rather than the
+promised Camera2D field path.
+
+The camera commit uses `createCamera2D(definition.select(frame))` to clone the
+selector result. That factory intentionally accepts `Partial<Camera2D>` and
+fills missing fields with identity defaults. Selector output is required to
+be a complete `Camera2D`; a malformed result such as `{ center: ... }` should
+be rejected while retaining the previous valid presentation, not silently
+become zoom 1 / rotation 0.
+
+#### Required approach
+
+- [x] Validate `perAxis` as a non-array record before reading x/y and reject
+      unknown/non-boolean fields according to the frozen options contract.
+- [x] Validate and normalize each visibility variant's nested payload with
+      Camera2D-prefixed paths (`shape.bounds.*`, `shape.circle.*`,
+      `shape.point.*`) before calling Collision2D predicates.
+- [x] Split "construct a camera from partial authored options" from "validate
+      and clone a complete runtime camera." The camera binding must use the
+      strict full-camera clone and retain the last valid value when any
+      required field is missing.
+- [x] Reuse the strict clone at other publication boundaries rather than
+      duplicating shape checks with drifting field names.
+
+#### RED-first evidence
+
+- [x] Add null/array/missing-field cases for `perAxis` and every visibility
+      variant payload, asserting `GeometryError` code and exact nested path.
+- [x] Return each partial selector shape (missing center, zoom, or rotation),
+      commit it, and prove the prior presented camera remains unchanged.
+- [x] Keep the mutable full-camera test to prove the strict clone still owns
+      and freezes accepted values.
+
+### T12-SF4 — Make the benchmark paths and Task 12 completion record truthful
+
+**Priority:** Important
+
+The rewritten benchmark improves camera motion and percentile reporting, but
+the named paths are still not production-equivalent. `no-camera` and
+`static-camera` execute the same `void item.bounds.x` loop, so the static
+scenario measures no camera work. `moving-cull` runs
+`filterCameraVisible2D()` and then a second complete
+`intersectsBounds2D()` pass; that double validation/filter/predicate work is
+not one SpriteBatch culling path. The source-substring contract proves that
+certain text appears or is absent, not that comparable workloads or outputs
+were executed.
+
+The Camera Lab still does not provide several T12.8 items that are not
+inherently physical-device-only: committed pointer attribution,
+world/surface round-trip error, Canvas/gesture/session remount counts,
+viewport/resize presets, and a mounted camera-presentation timing series.
+`uiObserved` is collected into the record but is not displayed in the HUD.
+JS/UI/GPU acceptance can remain device-gated, but the automated/mounted
+features must either be implemented or explicitly unchecked. The definition
+of done has been reopened above for this reason.
+
+#### Required approach
+
+- [x] Decide what the headless benchmark measures and name it narrowly. For
+      an engine-path comparison, execute the actual no-camera, static-camera,
+      moving-camera, and moving-camera-with-culling helper work once per
+      iteration and feed every path into an equivalent output sink.
+- [x] Do not combine the public allocating filter and SpriteBatch's inline
+      predicate unless the measured production screen genuinely runs both;
+      if it does, label that as a reference-game composite and add a separate
+      isolated SpriteBatch measurement.
+- [x] Export pure scenario runners/counters so contract tests can execute and
+      compare work counts, camera-state changes, visible outputs, and entity
+      populations. Avoid source-substring assertions as the primary evidence.
+- [x] Implement the remaining simulator/headless T12.8 metrics and presets,
+      or move them to a named later task and uncheck T12.8/definition-of-done
+      claims. Keep only real UI/GPU/physical input acceptance in the device
+      matrix.
+
+#### RED-first evidence
+
+- [x] Assert static-camera work is observably different from no-camera work
+      and moving iterations consume changing camera values.
+- [x] Count visibility/filter invocations and authored writes per mode; cull
+      on must run the intended predicate exactly once per candidate and cull
+      off zero times.
+- [x] Mount Camera Lab through the shell and prove each non-device-gated
+      metric/preset advertised by T12.8 is visible and changes from a real
+      source without remounting the surface.
+
+> **T12-SF1..SF4 fix record.** SF1: `packetCameraFor` is a module-level
+> workletized helper with a DISCRIMINATED capture (`{ captured: true,
+> value }`) — a captured undefined camera stays undefined through deferral
+> and never falls back to flush-time state; the duplicate reducer return
+> block is removed. An AST call-graph contract inventories every
+> GamePointerInput UI handler (down/move/up/cancel/finalize + trailing
+> flush), rejects ordinary callees, and fails when the camera helper's
+> directive is stripped; adapter-level packet tests cover immediate,
+> deferred, latest-of-many, and up. SF2: instrumentation callbacks are
+> classified by their ACTUAL runtime — UI callbacks are workletized
+> shared-value writers; RN callbacks (including `onUiRevisionObserved`,
+> which GameView delivers via scheduleOnRN) update refs only; a UI frame
+> callback transfers an immutable snapshot to a stable RN receiver, and
+> `readCounters()` never touches a UI-owned `.value` (contract tests
+> enforce both directions, including negatives). The
+> `GameViewInstrumentation` doc names the RN delivery. SF3: per-axis
+> options validate their outer shape, every visibility variant payload is
+> validated with nested Camera2D paths before Collision2D predicates, and
+> a strict `cloneValidCamera2D` replaces `createCamera2D` at the commit
+> boundary — partial selector output is rejected with the prior
+> presentation retained (malformed-payload table + partial-selector
+> binding tests). SF4: the benchmark exports executable scenario runners
+> with work counters — static-camera is observably different from
+> no-camera, moving iterations consume changing cameras, cull-on runs the
+> predicate exactly once per candidate and cull-off zero times, and the
+> allocating filter is measured separately as the headless API (contract
+> tests execute and compare). The Camera Lab HUD adds committed pointer
+> attribution, world/surface round-trip error, and the ui-observed
+> counter. Canvas/gesture/session remount counters and viewport/resize
+> presets remain UNCHECKED: they move to a named later task, and the
+> T12.8 definition-of-done claim is unchecked below.
+>
+
+### Second follow-up completion record
+
+- [x] Resolve T12-SF1 through T12-SF4 with focused RED suites.
+- [x] Prove the complete `GamePointerInput` worklet call graph, including the
+      event-time camera selector, before native drag validation.
+- [x] Remove synchronous RN reads of UI-owned shared counters.
+- [x] Reconcile strict camera publication validation and nested visibility
+      error paths with the public runtime contract.
+- [x] Reconcile T12.8, the benchmark description, the definition of done,
+      and the top-level status with executable evidence.
 - [x] Run the normal gate only after the focused fixes are green.
 - [x] Leave all nine physical-device rows unchecked until run on the named
       hardware.

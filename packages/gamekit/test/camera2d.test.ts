@@ -324,6 +324,19 @@ describe('malformed outer values across every public helper (T12-RF4)', () => {
     );
   });
 
+  it('rejects malformed per-axis and visibility payloads with nested paths (T12-SF3)', () => {
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, { perAxis: null as never }), 'perAxis');
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, { perAxis: [true, false] as never }), 'perAxis');
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, { perAxis: { x: 'yes' as never } }), 'perAxis.x');
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, { perAxis: { y: 1 as never } }), 'perAxis.y');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'aabb', bounds: null as never }, CAM, VIEW), 'shape.bounds');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'circle', circle: null as never }, CAM, VIEW), 'shape.circle');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'circle', circle: { x: null as never, y: 0, radius: 1 } }, CAM, VIEW), 'shape.circle.x');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'circle', circle: { x: 0, y: NaN, radius: 1 } }, CAM, VIEW), 'shape.circle.y');    rejectsWith(() => intersectsCameraView2D({ kind: 'circle', circle: { x: 0, y: 0, radius: -1 } }, CAM, VIEW), 'shape.circle.radius');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'point', point: null as never }, CAM, VIEW), 'shape.point');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'aabb', bounds: { x: NaN, y: 0, width: 1, height: 1 } }, CAM, VIEW), 'shape.bounds.x');
+  });
+
   it('rejects non-finite cut ids and malformed cut cameras', () => {
     rejectsWith(() => interpolateCamera2D(undefined, { camera: CAM, cutId: Infinity }, 0.5), 'current.cutId');
     rejectsWith(() => interpolateCamera2D(undefined, { camera: { center: [1, 2], zoom: 1, rotationRadians: 0 } as never, cutId: 1 }, 0.5), 'current.camera.center');

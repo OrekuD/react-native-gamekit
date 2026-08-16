@@ -223,3 +223,74 @@ describe('camera stamp through deferral (T12-RF3)', () => {
     assert.ok(!('stamp' in (cancelled.events[0] as object)), 'cancel has no camera stamp');
   });
 });
+
+describe('discriminated camera capture through the adapter seam (T12-SF1)', () => {
+  const cameraA = { camera: { center: { x: 0, y: 0 }, zoom: 1, rotationRadians: 0 }, cutId: 1 };
+  const cameraB = { camera: { center: { x: 80, y: 0 }, zoom: 1, rotationRadians: 0 }, cutId: 2 };
+
+  function capture(value: unknown): { captured: true; value: unknown } {
+    return { captured: true, value };
+  }
+
+  function forward(batch: readonly { kind: string; x?: number; y?: number; stamp?: unknown }[], presented: unknown): unknown[] {
+    // The adapter's packet builder: moves use the module helper semantics.
+    const packets: unknown[] = [];
+    for (const event of batch) {
+      const camera =
+        event.kind === 'move' && event.stamp !== undefined
+          ? (event.stamp as { captured: true; value: unknown }).value
+          : presented;
+      packets.push({ kind: event.kind, x: event.x, y: event.y, camera });
+    }
+    return packets;
+  }
+
+  it('keeps a captured undefined camera undefined through deferral (never falls back)', () => {
+    let state = createPointerCoalescerState(100);
+    state = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 }).state;
+    // The surface mounted but the camera is not presented yet: captured
+    // undefined is EXPLICIT.
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 10, y: 10, nowMs: 10, stamp: capture(undefined),
+    }).state;
+    // Camera B presents before the flush.
+    const flushed = reducePointerCoalescer(state, { kind: 'flush', nowMs: 150 });
+    const packets = forward(flushed.events, cameraB);
+    assert.equal((packets[0] as { camera: unknown }).camera, undefined, 'captured undefined stays undefined');
+  });
+
+  it('pairs every move kind with its own event-time capture', () => {
+    let state = createPointerCoalescerState(100);
+    const down = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 });
+    state = down.state;
+    // Immediate move (outside the interval): stamped at its own event time.
+    const immediate = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 5, y: 5, nowMs: 200, stamp: capture(cameraA),
+    });
+    state = immediate.state;
+    // Deferred moves: the latest pair wins.
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 10, y: 10, nowMs: 210, stamp: capture(cameraA),
+    }).state;
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 20, y: 20, nowMs: 220, stamp: capture(cameraB),
+    }).state;
+    const flushed = reducePointerCoalescer(state, { kind: 'flush', nowMs: 300 });
+    const packets = forward([...immediate.events, ...flushed.events], cameraB);
+    assert.equal((packets[0] as { camera: unknown }).camera, cameraA, 'immediate move uses its own stamp');
+    assert.equal((packets[1] as { camera: unknown }).camera, cameraB, 'latest deferred move uses its own stamp');
+    assert.equal((packets[1] as { x: number }).x, 20, 'coordinates and camera from the SAME sample');
+  });
+
+  it('lets up carry its own event-time camera without a fabricated stamp', () => {
+    let state = createPointerCoalescerState(100);
+    state = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 }).state;
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 10, y: 10, nowMs: 10, stamp: capture(cameraA),
+    }).state;
+    const ended = reducePointerCoalescer(state, { kind: 'up', pointerId: 1, x: 30, y: 30, nowMs: 20 });
+    const packets = forward(ended.events, cameraB);
+    assert.equal((packets[0] as { kind: string }).kind, 'end');
+    assert.equal((packets[0] as { camera: unknown }).camera, cameraB, 'the up edge samples its own event-time camera');
+  });
+});

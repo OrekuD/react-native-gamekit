@@ -90,3 +90,37 @@ export function assertValidLogicalView(view: unknown): asserts view is Aabb2D {
 export function assertNonnegativePadding(padding: number): void {
   assertNonnegativeSize(padding, 'padding');
 }
+
+/**
+ * Strict full-camera clone (T12-SF3): validates a COMPLETE runtime camera —
+ * every required field present and finite — and returns an owned frozen
+ * copy. Unlike `createCamera2D` (which fills partial authored options with
+ * identity defaults), a missing field is rejected. Used at publication
+ * boundaries where a partial value must never be silently completed.
+ */
+export function cloneValidCamera2D(camera: unknown, field = 'camera'): Camera2D {
+  assertCameraShape(camera, field);
+  const typed = camera as Camera2D;
+  const centerField = `${field}.center`;
+  assertFiniteNumber(typed.center.x, `${centerField}.x`);
+  assertFiniteNumber(typed.center.y, `${centerField}.y`);
+  if (typeof typed.zoom !== 'number' || !Number.isFinite(typed.zoom) || !(typed.zoom > 0)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      `${field}.zoom`,
+      `expected a finite zoom greater than zero, got ${String(typed.zoom)}`,
+    );
+  }
+  if (typeof typed.rotationRadians !== 'number' || !Number.isFinite(typed.rotationRadians)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      `${field}.rotationRadians`,
+      `expected a finite rotation, got ${String(typed.rotationRadians)}`,
+    );
+  }
+  return Object.freeze({
+    center: Object.freeze({ x: typed.center.x, y: typed.center.y }),
+    zoom: typed.zoom,
+    rotationRadians: typed.rotationRadians,
+  });
+}

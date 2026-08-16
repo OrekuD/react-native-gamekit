@@ -16,10 +16,13 @@ import {
   followCamera2D,
   getCameraVisibleBounds2D,
   sampleCameraShake2D,
+  surfaceToWorld2D,
+  worldToSurface2D,
   type Aabb2D,
   type Camera2D,
   type GameSession,
 } from 'rn-gamekit';
+import { resolveViewport2D } from 'rn-gamekit';
 
 export const CAMERA_LAB_CONFIG = {
   logicalWidth: 320,
@@ -69,6 +72,8 @@ export interface CameraLabSnapshot {
   readonly visibleMarkerIds: readonly string[];
   /** The conservative visible world bounds, for the debug overlay. */
   readonly visibleBounds: Aabb2D;
+  /** World/surface round-trip error for a fixed probe (T12-SF4). */
+  readonly roundTripError: number;
   readonly elapsed: number;
 }
 
@@ -234,6 +239,20 @@ const cameraLabScene = defineScene({
       markers: all,
       visibleMarkerIds,
       visibleBounds: getCameraVisibleBounds2D(state.camera, CAMERA_LAB_VIEW),
+      // T12-SF4: headless world/surface round-trip error through the same
+      // pure conveniences the pointer adapter uses.
+      roundTripError: (() => {
+        const viewport = resolveViewport2D(
+          { logicalSize: { width: CAMERA_LAB_CONFIG.logicalWidth, height: CAMERA_LAB_CONFIG.logicalHeight }, mode: 'fit' },
+          { width: CAMERA_LAB_CONFIG.logicalWidth, height: CAMERA_LAB_CONFIG.logicalHeight },
+        );
+        if (viewport === undefined) {
+          return NaN;
+        }
+        const probe = { x: 123.25, y: -67.5 };
+        const round = surfaceToWorld2D(worldToSurface2D(probe, viewport, state.camera), viewport, state.camera);
+        return Math.hypot(round.x - probe.x, round.y - probe.y);
+      })(),
       elapsed: state.elapsed,
     };
   },

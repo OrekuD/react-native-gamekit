@@ -21,7 +21,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
-import { createCamera2D, interpolateCameraScalar2D, type CameraCut2D } from '../../camera2d';
+import { interpolateCameraScalar2D, type CameraCut2D } from '../../camera2d';
+import { cloneValidCamera2D } from '../../camera2d/validation';
 import type { CommitFrame } from '../../core/session/types';
 import type { SceneMap } from '../../definition/types';
 import type { GameCamera2DDefinition } from './defineGameCamera2D';
@@ -85,10 +86,12 @@ export function usePresentedCameraBinding<TScenes extends SceneMap>(
         let camera;
         let explicitCut = false;
         try {
-          // T12-RF4: the selector output is validated AND copied at the JS
-          // commit boundary — a mutable selector result can never alias the
-          // authored previous/current values.
-          camera = createCamera2D(definition.select(frame));
+          // T12-RF4 + T12-SF3: the selector output is validated AND copied
+          // at the JS commit boundary with the STRICT full-camera clone — a
+          // mutable selector result can never alias the authored values,
+          // and a partial camera is rejected, never completed with
+          // defaults.
+          camera = cloneValidCamera2D(definition.select(frame));
           explicitCut = definition.cut?.(frame) === true;
         } catch {
           return;
