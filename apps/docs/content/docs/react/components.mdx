@@ -1,0 +1,45 @@
+---
+title: Components
+description: "GameView, GamePointerInput, and the sprite components: what each one owns and where it mounts."
+---
+
+All components come from the `rn-gamekit/react` entry. This page lists what each one does and when you need it.
+
+## GameView
+
+The presentation surface. It borrows the session, starts it while mounted, pauses it when the app backgrounds, and hands your renderer the frame, alpha, and viewport shared values.
+
+```tsx
+import { GameView } from 'rn-gamekit/react';
+
+<GameView game={session} renderer={MyRenderer} assets={assets}>
+  <GamePointerInput game={session} action="steer" />
+</GameView>
+```
+
+Props: `game` (required), `renderer` (required), `assets` (loaded assets), `presentationKey` (forces a fresh renderer mount), `instrumentation`, `style`, and `children`. The renderer receives `frame`, `alpha`, `viewport`, and `assets` as shared values or stable props; see [How Gamekit uses React](./how-gamekit-uses-react).
+
+## GamePointerInput
+
+The touch adapter. It maps Gesture Handler events for one declared pointer action into the session's semantic input, handling ownership, cancellation, and coalescing. Mount it inside `GameView`, on top of the gameplay surface:
+
+```tsx
+<GamePointerInput game={session} action="steer" />
+```
+
+Props: `game`, `action` (a declared pointer action name), `instrumentation`. One instance per pointer action; secondary pointers are ignored until the owner releases. See [Input](../engine-systems/input).
+
+## Sprite components
+
+| Component | Purpose |
+| --- | --- |
+| `GameSprite` | A sprite driven by a scene snapshot via a `select` worklet; picks the clip from your game state (for example the current animation frame). |
+| `Sprite` | A retained sprite: one full image or one sheet frame, with plain or shared-value props. |
+| `SpriteBatch` | Many instances of one decoded sheet in a single Skia `Atlas` draw, with fixed-capacity UI-owned buffers. |
+| `GameWorld2D` | A coordinate wrapper that applies the viewport transform to its children. |
+
+The rule of thumb: `Sprite` for a modest number of individually authored sprites, `SpriteBatch` for shared-texture density. [Sprites](../engine-systems/sprites) and [Sprite batching](../engine-systems/sprite-batching) have the details; [Draw hundreds of sprites](../guides/draw-hundreds-of-sprites) is the hands-on version.
+
+## Which components mount where
+
+GameView and GamePointerInput belong in the game screen, once. Sprite components belong in the renderer, inside GameView. HUD headers and overlays are ordinary React Native views outside the canvas, and they must not sit inside the gameplay hit surface.

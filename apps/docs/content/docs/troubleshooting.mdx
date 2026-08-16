@@ -1,0 +1,44 @@
+---
+title: Troubleshooting
+description: "The failures people actually hit, in the order they hit them: native setup, sessions, rendering, and testing."
+---
+
+Most problems with Gamekit are one of five things. Each entry names the symptom, the cause, and the fix.
+
+## The app builds but the game screen is blank
+
+**Cause:** the native peers are missing or duplicated. Skia, Reanimated, Worklets, Gesture Handler, and Safe Area Context must each exist exactly once in the app's `dependencies`, as peers of `rn-gamekit`.
+
+**Fix:** check `node_modules` for duplicate copies, then rebuild the native app with `expo prebuild` and `expo run:ios` or `expo run:android`. Two copies of a native singleton link whichever one the build finds first, and the symptom is usually a blank canvas, not an error.
+
+## `GestureDetector` errors or touches don't reach the game
+
+**Cause:** missing root wrapper, or the pointer surface isn't mounted where touches happen.
+
+**Fix:** wrap the app root in `GestureHandlerRootView`. Mount `GamePointerInput` inside `GameView`, over the gameplay area, with an action the game actually declared. If the screen lives in a shell that owns the session, the shell owns the pointer surface too; the content component renders only the header and HUD. See [Move a paddle with touch](./guides/move-a-paddle).
+
+## `GameSessionDisposedError` from a hook-owned session
+
+**Cause:** calling `session.dispose()` on a session owned by `useGameSession`. Ownership is single: the hook disposes.
+
+**Fix:** remove the explicit `dispose()` call. For imperative code, use `createGameSession` with `try/finally` instead. See [Lifecycle](./core-concepts/lifecycle).
+
+## The HUD re-renders every frame and the game stutters
+
+**Cause:** React state updated from every commit.
+
+**Fix:** publish semantic records, dedupe before `setState`, and keep per-frame values in the renderer as shared values. See [Build a HUD that doesn't re-render](./guides/build-a-hud).
+
+## A derived worklet calls an ordinary function and the UI stalls
+
+**Cause:** worklets run on the UI thread; an ordinary imported function jumps threads.
+
+**Fix:** only call workletized helpers and Math built-ins inside derived worklets, and keep the `'worklet'` directive on helpers the renderer calls. The Collision Lab contract tests enforce the pattern; [Performance](./react/performance) explains it.
+
+## Asset errors
+
+Structured `GameAssetError` codes carry their own corrective actions. See [Asset errors](./api/asset-errors) for the full list.
+
+## Something else
+
+The playground is the reference: every game in the catalog runs against the shipped package, and its headless suites show the expected behavior in Node. If a bug reproduces in a playground game, the fix belongs in the package, and the plan records (see [Contributing](./advanced/contributing)) describe how issues get tracked.

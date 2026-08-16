@@ -1,9 +1,7 @@
 ---
-title: Pointer Input
-description: Pointer actions, immutable per-tick sampling, ownership, and cancellation.
+title: Input
+description: Pointer actions, immutable per-tick sampling, ownership, cancellation, and the latency tradeoffs of coalescing.
 ---
-
-# Pointer Input
 
 > **Provisional.** One primary pointer action is implemented. Multitouch
 > gameplay, virtual sticks, keyboard, mouse hover, and controllers are future
@@ -83,3 +81,44 @@ The active pointer is cancelled and neutralized by:
 Neutralization guarantees a fresh restart never sees a stuck or phantom
 pointer. Pause, transition, restart, and dispose reset the buffer directly so
 the next tick after any of those events observes neutral input.
+
+## How pointer input flows
+
+How pointer input flows and what the latency tradeoffs are.
+
+## Ownership
+
+- **UI runtime**: gesture callbacks sample raw touches and mirror the
+  letterbox containment check (the exact `contentBounds` formula) so an
+  invalid begin fails the gesture before activation.
+- **Coalescer (UI)**: at most **one move crossing per fixed step** (default
+  interval = one fixed step). Moves carry the latest dirty position only;
+  edges are never throttled or dropped.
+- **JS**: ownership, edge sampling, non-finite rejection, and containment
+  re-validation are authoritative in the session input buffer. The ordered
+  queue sends `begin` before movement; JS ignores movement for an unowned
+  action. A secondary pointer can never steal ownership.
+
+## Edge ordering
+
+- `down` forwards the begin immediately (latency-critical).
+- `up` sends the **final position and the terminal edge together**, in
+  order — the release sample contains the actual lift coordinate.
+- `cancel` neutralises exactly once.
+- Layout revisions cancel ownership and drop queued movement.
+
+## Latency tradeoffs
+
+Coalescing bounds UI→JS crossings to the configured interval, adding up to
+one fixed step of worst-case input-to-visible latency in exchange for
+bounded crossings. The session-level floor (input sample → commit) stays at
+one commit interval; measure the drag scenario before and after any interval
+change. A shorter interval at 120 Hz is only justified when measured latency
+demands it.
+
+## Semantic events
+
+Audio and haptics (future `react-native-audio-api` integration) must
+**preload** and trigger **discrete commands** (brick hit, score change, game
+over, button press) from commit selectors — never continuous audio or
+haptics from interpolation or raw pointer callbacks.

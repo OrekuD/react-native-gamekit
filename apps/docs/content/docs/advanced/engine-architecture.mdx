@@ -1,0 +1,42 @@
+---
+title: Engine architecture
+description: "The layers of the runtime, from definition to pixel: what each one owns, what crosses the boundaries, and where the threads are."
+---
+
+Gamekit is four layers with two hard boundaries. This page is the map; [Performance model](./performance-model) is the same map with timing, and [How Gamekit uses React](../react/how-gamekit-uses-react) is the React view.
+
+## The layers
+
+```
+definition  →  session  →  snapshot  →  renderer  →  pixels
+static        headless     immutable     shared       Skia
+config        simulation   data          values
+```
+
+1. **Definition.** `defineGame`, `defineScene`, `defineAssets`. Static, validated, allocation-free at definition time. Lives at module scope.
+2. **Session.** `createGameSession`. Owns state, ticks, input sampling, transitions, and lifecycle. Runs headless against a frame driver; in Node tests the driver is manual.
+3. **Snapshot.** Each tick produces an immutable commit: `previous`, `current`, `tick`, `elapsedSeconds`, `revision`, `scene`. Deep-frozen, renderer-neutral.
+4. **Renderer.** A React component tree over shared values. Reads the snapshot through worklets, draws with Skia on the UI thread.
+
+## The boundaries
+
+- **Simulation ↔ presentation.** The session never knows React or Skia exist. Commits are plain data; renderers never mutate game state. This boundary is what makes headless testing possible.
+- **UI thread ↔ JS thread.** Worklets run on the UI thread. A worklet may only call workletized helpers and Math built-ins; ordinary imports jump threads and stall. The source-level contract test in the Collision Lab enforces this.
+
+## Who runs where
+
+| Work | Thread | Owner |
+| --- | --- | --- |
+| Scene `update`, snapshots | JS (headless) | session |
+| Input coalescing | JS / native | adapter |
+| Shared-value derivation, Skia drawing | UI | renderer worklets |
+| HUD setState | JS (React) | HUD, on rare semantic changes |
+
+The `alpha` clock bridges the headless step rate and the display rate: renderers interpolate between `previous` and `current` with the presentation fraction. See [Game loop & time](../core-concepts/game-loop).
+
+## Design rules that hold the layers apart
+
+- State advances through the session, never through React re-renders.
+- Snapshots are deep-frozen; no aliasing between renderer and game data.
+- Transitions are hard cuts; frames never interpolate between scenes.
+- Every future system (camera, audio, particles) follows the same shape: headless simulation plus a renderer adapter.

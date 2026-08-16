@@ -1,0 +1,55 @@
+---
+title: Move a paddle with touch
+description: Declare a pointer action, read it in the scene update, and clamp the paddle to the world. The tutorial game, focused on input.
+---
+
+This is the input part of the [first game](../getting-started/create-your-first-game): a paddle that follows your finger. The full, runnable version lives in the playground at `src/docs-examples/paddle-tutorial`.
+
+## 1. Declare the action
+
+Input is semantic: the game says "steer", the platform decides how fingers become steers.
+
+```ts
+const paddleGame = defineGame({
+  input: {
+    steer: { type: 'pointer' },
+  },
+  // ...
+});
+```
+
+## 2. Read it in the scene
+
+```ts
+const playScene = defineScene({
+  actions: ['steer'],
+  create: () => ({ paddleX: 160 }),
+  update: ({ state, input }) => {
+    const steer = input.pointer('steer');
+    const nextX = steer.position?.x ?? state.paddleX;
+    // Clamp so the paddle can't leave the world.
+    return { paddleX: Math.min(WORLD_WIDTH - PADDLE_WIDTH / 2, Math.max(PADDLE_WIDTH / 2, nextX)) };
+  },
+  snapshot: ({ state }) => ({ paddleX: state.paddleX }),
+});
+```
+
+`steer.position` is already in logical world coordinates, so the clamp is plain math. `steer.active`, `pressed`, `released`, and `cancelled` are the other reads; see [Input](../engine-systems/input) for the full shape.
+
+## 3. Mount the adapter
+
+```tsx
+<GameView game={session} renderer={PaddleRenderer}>
+  <GamePointerInput game={session} action="steer" />
+</GameView>
+```
+
+`GamePointerInput` converts Gesture Handler events into the session's input buffer. Mount it inside `GameView`, over the gameplay area. One instance per pointer action.
+
+## 4. Don't fight the shell
+
+If your game screen lives inside a shell that already owns the session and the pointer surface (like the playground catalog does), the content component only renders the header and overlays. The pointer surface belongs to the owner; see [Project structure](../getting-started/project-structure) for who owns what.
+
+## Where to go next
+
+The [Pause a game](./pause-a-game) guide adds an overlay on top of the same session, and [Build a HUD](./build-a-hud) adds a score readout without re-rendering the game.

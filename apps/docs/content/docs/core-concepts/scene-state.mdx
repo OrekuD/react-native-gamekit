@@ -1,0 +1,46 @@
+---
+title: Scene state
+description: "Where the game's data lives: plain serializable state inside a scene, advanced by a pure update function. No ECS, no React state."
+---
+
+A scene owns its state, and that state is ordinary data: numbers, strings, small objects, and arrays. There is no entity-component system, no database, and no React state anywhere in the simulation. This page is the honest stand-in for "entities": in Gamekit, entities are whatever your scene state says they are.
+
+## The three functions of a scene
+
+Every scene definition is three functions around one state type:
+
+```ts
+const playScene = defineScene({
+  actions: ['steer'],
+  create: () => ({ paddleX: 160, lives: 3 }),          // initial state
+  update: ({ state, input, deltaSeconds }) => {
+    return { paddleX: state.paddleX + 1, lives: state.lives };
+  },                                                    // next state
+  snapshot: ({ state }) => ({ paddleX: state.paddleX }), // renderer view
+});
+```
+
+`create` runs once when the session enters the scene. `update` is a pure function from the previous state to the next state; it returns the new state and never mutates the old one. `snapshot` extracts the small, renderer-specific view the presentation reads.
+
+## What state is allowed
+
+Anything that `create` returns and `update` returns. The runtime deep-freezes snapshots, so renderer data must be plain and serializable. Functions in state are a smell: behavior belongs in `update`, not in data.
+
+## Where entities come from
+
+Keep entities as records in state:
+
+```ts
+create: () => ({
+  bricks: [
+    { id: 'a', x: 10, y: 10, alive: true },
+    { id: 'b', x: 40, y: 10, alive: true },
+  ],
+}),
+```
+
+There is no engine-imposed entity type. If your game wants an `id` field, it authors one; Gamekit only asks that the state be plain data so the snapshot stays deep-freezable and the simulation stays deterministic. The [Collision Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/collision-lab) demonstrates named colliders attached to a sprite this way.
+
+## State is per scene instance
+
+The session creates the state fresh whenever it enters a scene, and scene state is never reused across instances. `restartScene()` discards the current state and runs `create` again. Sharing data between scenes is a transition-payload problem, and payloads don't exist yet; until they do, keep cross-scene flows inside one scene's state. [Brick Breaker](../examples/brick-breaker) shows that pattern.

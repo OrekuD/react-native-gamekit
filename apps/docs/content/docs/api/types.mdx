@@ -1,0 +1,60 @@
+---
+title: Types (API)
+description: "The core types every Gamekit game touches: sessions, commits, scenes, input, and viewport."
+---
+
+The types are the contract; this page names them and points at where each one is explained in full.
+
+## Session
+
+| Type | Purpose |
+| --- | --- |
+| `GameSession<TScenes, TInput>` | The live headless session: `status`, `scene`, `input`, `start`, `pause`, `setScene`, `restartScene`, `dispose`, `getRenderFrame`, listeners. |
+| `GameSessionStatus` | `'idle' \| 'running' \| 'paused' \| 'disposed'`. |
+| `CommitFrame<TScenes>` | One simulation commit: `previous`, `current`, `tick`, `elapsedSeconds`, `revision`, `hardCut`, `stepMs`. |
+| `CommitFrameBase` | The renderer-neutral commit shape. |
+| `GameRenderFrame<TScenes>` | A commit plus the live `alpha` fraction. |
+| `GameSubscription` | Idempotently removable listener handle. |
+| `DeepReadonly<T>` | Recursive readonly view of snapshot data. |
+
+See [Lifecycle](../core-concepts/lifecycle) and [Game loop & time](../core-concepts/game-loop).
+
+## Scenes and definitions
+
+| Type | Purpose |
+| --- | --- |
+| `GameDefinition` | The static definition produced by `defineGame`. |
+| `SceneMap`, `InputMap`, `InputAction`, `ButtonInputAction`, `PointerInputAction` | Definition building blocks. |
+| `SceneDefinition`, `SceneUpdate`, `SceneSnapshotContext`, `SceneTransitionController`, `SceneSnapshot` | The scene contract: state in, snapshot out, update-scoped transitions. |
+
+See [Game](../core-concepts/game) and [Scene](../core-concepts/scene).
+
+## Input
+
+| Type | Purpose |
+| --- | --- |
+| `InputController` | Semantic input reads: `pointer(name)`, `button(name)`. |
+| `InputFrame` | One immutable per-tick input snapshot. |
+| `PointerState`, `ButtonState` | Pointer fields (`active`, `pressed`, `released`, `cancelled`, `position`, `delta`) and button edges. |
+
+See [Input](../engine-systems/input).
+
+## Viewport
+
+| Type | Purpose |
+| --- | --- |
+| `Viewport`, `ViewportMode`, `LogicalSize`, `SurfaceSize`, `Rect`, `ResolvedViewport2D` | The viewport configuration and resolved math. |
+
+See [Viewport and coordinate spaces](../core-concepts/viewport).
+
+## Assets
+
+`AssetDescriptor`, `AssetGroup`, `AssetGroupMap`, `AssetSourceHandle`, `BrandedAssetDescriptor`, `GameAssetLease`, `LoadedAssets` describe the manifest and the lease model. See [Assets](../engine-systems/assets).
+
+## Sprites
+
+`SpriteAnimationState`, `SpriteClipNames` are the animation data types. See [Animation](../engine-systems/animation).
+
+## Geometry and Collision2D
+
+The geometry primitives (`Point2D`, `Vector2D`, `Aabb2D`, `Circle2D`, `Segment2D`, `GeometryError`) and every collision type (`CollisionHit2D`, `CollisionFilter2D`, collider records, `SpatialHashIndex2D`) are exported from the main entry. See [Collision2D](../engine-systems/collision2d).

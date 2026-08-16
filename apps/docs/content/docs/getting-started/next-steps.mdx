@@ -1,0 +1,47 @@
+---
+title: Next steps
+description: Where to go from here — pick a path through the docs based on what you want to do next.
+---
+
+Your first game is on screen: a definition, a scene, pointer input, a renderer, and a session. Everything else in these docs builds on that same split between headless game and React presentation, so you already have the foundation.
+
+Pick a path.
+
+## Add a mechanic
+
+- [Detect collisions without a physics engine](../guides/detect-collisions) walks the pattern Brick Breaker uses: shapes, per-tick queries, and a response you own. The [Collision2D concept](../engine-systems/collision2d) covers the full system behind it.
+- [Pause a game](../guides/pause-a-game) builds a pause overlay from `useGameSessionStatus` and handles app backgrounding.
+
+## Learn how the pieces fit
+
+- [Game definition and session](../core-concepts/game) — what `defineGame` owns and how a session's lifecycle works.
+- [Scenes and transitions](../core-concepts/scene) — why scenes stay headless and how their state is organized.
+- [Viewport and coordinate spaces](../core-concepts/viewport) — logical units, the fit modes, and the transform that drawing and input share.
+- [Pointer input](../engine-systems/input) — semantic actions and the events you can read from the buffer.
+
+## Make it look like a game
+
+- [Sprites](../engine-systems/sprites) — clip regions and anchored rendering.
+- [Sprite animation](../engine-systems/animation) — animating clips without touching the game state.
+- [Sprite batching](../engine-systems/sprite-batching) — hundreds of sprites in one draw call.
+- [Assets](../engine-systems/assets) — the manifest, loading, and error handling.
+
+## Study a real game
+
+- [Brick Breaker](../examples/brick-breaker) — the reference game: viewport, collisions, scoring, and rendering in one walkthrough.
+
+## Measure and improve
+
+- [Performance model](../advanced/performance-model) — where the frame time goes and why.
+- [Profiling](../advanced/profiling) — instrumenting a session. [Results](../advanced/results) shows what the numbers look like.
+- [Renderer guide](../engine-systems/rendering) — writing your own renderers.
+
+## Contribute
+
+- [Repository guide](../advanced/contributing) — the workspace layout, invariants, and how to run everything.
+
+{/* prettier-ignore */}
+> [!TIP]
+> Don't read these docs front to back. Each page stands alone, so skim the ones that match the thing you're about to build, then come back when you hit a wall.
+
+One more thing: [Supported platforms](../introduction/supported-platforms) lists what Gamekit is built and tested for. If you're shipping to physical phones and tablets, read it before you commit to a device matrix.

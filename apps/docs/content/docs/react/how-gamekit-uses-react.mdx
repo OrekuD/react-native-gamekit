@@ -1,0 +1,38 @@
+---
+title: How Gamekit uses React
+description: React configures and observes a headless session. It never becomes the per-frame store, and the loop never re-renders React.
+---
+
+The short answer to "does the game loop re-render React?" is no. This page explains the boundary that makes that true.
+
+## The ownership split
+
+React owns the UI: screens, headers, HUDs, overlays. The session owns the simulation: state, ticks, input sampling, snapshots. They meet in three places, and only three:
+
+1. **Configuration.** React calls `useGameSession(definition)` to create the session and passes it to `GameView`.
+2. **Presentation.** The renderer reads committed snapshots through Reanimated shared values.
+3. **Observation.** HUD components subscribe to commits or status and render low-frequency records.
+
+Nothing else crosses. There is no React state holding the paddle position, no prop drilling of game values, no effect that copies simulation state into component state every frame.
+
+## Why no per-frame re-renders
+
+The simulation commits a new snapshot up to 60 times per second. If each commit triggered a React render, the UI thread would spend its budget on reconciliation, and the app would jank exactly when the game gets busy. Gamekit keeps commits out of React: `addCommitListener` fires your callback, but nothing in the runtime calls `setState` on a commit. Renderers receive the snapshot as a shared value and Skia draws from it on the UI thread.
+
+## What the renderer actually receives
+
+`GameView` passes three shared values to your renderer component:
+
+```ts
+interface GameRendererProps {
+  frame: SharedValue<CommitFrame<TScenes>>;   // previous + current snapshot
+  alpha: SharedValue<number>;                  // interpolation fraction
+  viewport: SharedValue<ResolvedViewport2D | undefined>;
+}
+```
+
+Your renderer builds a fixed React tree once. Each node reads `.value` inside a derived worklet, and Skia re-renders from the shared values without React involvement. The tree is configuration; the values are the per-frame data. [Components](./components) and [State & re-rendering](./state-and-re-rendering) go deeper.
+
+## The two clocks
+
+The session advances on simulation time (fixed steps). The UI presents on the display clock. The `alpha` shared value bridges them: at 120 Hz the UI samples the same tick twice with different fractions, and interpolation keeps motion smooth. See [Performance](./performance) for the full picture.

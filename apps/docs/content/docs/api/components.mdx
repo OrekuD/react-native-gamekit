@@ -1,0 +1,43 @@
+---
+title: Components (API)
+description: Every component exported from rn-gamekit/react, with its purpose and where it mounts.
+---
+
+All components below come from the `rn-gamekit/react` entry. The [Components](../react/components) concept explains how they fit together; this page is the reference list.
+
+## Game surface
+
+| Export | Purpose |
+| --- | --- |
+| `GameView` | Presentation surface: borrows the session, starts on mount, pauses on background, hands `frame`/`alpha`/`viewport` shared values to the renderer. |
+| `GamePointerInput` | Touch adapter for one declared pointer action: ownership, cancellation, coalescing. |
+
+## Sprites
+
+| Export | Purpose |
+| --- | --- |
+| `GameSprite` | Snapshot-driven sprite; a `select` worklet picks the clip and position from game state. |
+| `Sprite` | Retained sprite: one full image or one sheet frame, plain or shared-value props. |
+| `SpriteBatch` | Many instances of one decoded sheet in one Skia `Atlas` draw, fixed-capacity buffers. |
+| `GameWorld2D` | Applies the viewport transform to its children. |
+
+Related helpers: `resolveSpriteFrameRect`, `spriteFrameNameForClip`, `viewportTransform`, `computeSpriteRsxform`, `spriteAnchorWorld`, `spriteGroupCorrection`.
+
+## Asset plumbing
+
+| Export | Purpose |
+| --- | --- |
+| `createGameAssetStore` | Skia-backed asset store factory (decodes images for the UI runtime). |
+| `createGameAssetStoreCore` | Native-independent store core for tests and tooling. |
+
+Related types: `AcquireOptions`, `AssetPipelines`, `GameAssetStore`, `NativeImageHandle`.
+
+## Renderer props
+
+| Export | Purpose |
+| --- | --- |
+| `GameRendererProps` | The `frame`/`alpha`/`viewport`/`assets` props every renderer receives. |
+| `GameViewProps` | The props `GameView` accepts. |
+| `GameViewInstrumentation`, `GamePointerInstrumentation` | Diagnostics seams for tests and profiling. |
+
+See [Custom renderers](../advanced/custom-renderers) for the renderer contract and [Instrumentation](../advanced/profiling) for the diagnostics hooks.

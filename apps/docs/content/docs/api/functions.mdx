@@ -1,0 +1,49 @@
+---
+title: Functions (API)
+description: The standalone functions exported from rn-gamekit, grouped by system.
+---
+
+Everything in this table is a pure function unless noted. Signatures live in the type declarations; this page is the map.
+
+## Definitions and sessions
+
+| Function | Entry | Purpose |
+| --- | --- | --- |
+| `defineGame(options)` | `rn-gamekit` | Validate and return a static game definition. Allocates no runtime state. |
+| `defineScene(options)` | `rn-gamekit` | Build a scene: `create`, `update`, `snapshot`, optional `transitions` and `dispose`. |
+| `createGameSession(definition)` | `rn-gamekit` | Start a live headless session. Dispose with `try/finally` in imperative code. |
+| `createGameSessionWithDriver(definition, options)` | `rn-gamekit/testing` | Same, with an explicit frame driver for tests. |
+| `createAnimationFrameDriver()` | `rn-gamekit/testing` | Real display-clock driver. |
+
+## Animation
+
+| Function | Purpose |
+| --- | --- |
+| `advanceSpriteAnimation(descriptor, clip, deltaSeconds)` | Next animation state from fixed-step time. |
+| `playSpriteAnimation` / `pauseSpriteAnimation` / `resumeSpriteAnimation` | Playback controls. |
+| `setSpriteAnimationSpeed(state, speed)` | Finite, positive speed multiplier. |
+| `resetSpriteAnimation` / `startSpriteAnimation` | Restart the clip. |
+| `sampleSpriteClipFrame(descriptor, animation)` | The frame rect for a state (renderer-side). |
+| `sampleSpriteClipFrameName` / `spriteClipDurationMs` | Frame name lookup and clip duration. |
+
+## Assets
+
+| Function | Purpose |
+| --- | --- |
+| `defineAssets(groups)` | Build the typed asset manifest. |
+| `image(requireHandle)` | One full-image asset descriptor. |
+| `spriteSheet(requireHandle, options)` | Sheet descriptor with frames and animations. |
+
+## Viewport
+
+| Function | Purpose |
+| --- | --- |
+| `Viewport2D` module (`rn-gamekit`) | The headless viewport math: resolve modes, scale, offsets, and coordinate conversion. See [Viewport and coordinate spaces](../core-concepts/viewport). |
+
+## Errors
+
+`GameAssetError` (assets), `GameSessionDisposedError` and `GameSessionLifecycleError` (sessions) are the structured error classes. See [Asset errors](./asset-errors) for the asset codes.
+
+## Collision2D
+
+The collision system is a large, documented surface of its own: shape contacts, sweeps, colliders, filters, the broad phase, and debug projection. It lives on its own page: [Collision2D](../engine-systems/collision2d).

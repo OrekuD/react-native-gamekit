@@ -1,0 +1,60 @@
+---
+title: Build a HUD that doesn't re-render
+description: Publish semantic records from commit listeners, dedupe before setState, and keep React out of the per-frame path.
+---
+
+A HUD shows scores, toggles, and status text. The trap is updating it from every frame: sixty commits a second means sixty renders, and the game stutters. The fix is to publish low-frequency records. This is the pattern the Collision Lab HUD uses, and it's small enough to copy.
+
+## 1. Summarize, don't forward
+
+Define a small record with the values the HUD actually shows:
+
+```ts
+interface HudRecord {
+  readonly score: number;
+  readonly lives: number;
+  readonly paused: boolean;
+}
+```
+
+## 2. Subscribe with a dedupe gate
+
+```tsx
+function Hud({ game }: { game: GameSession }) {
+  const [display, setDisplay] = useState<HudRecord | undefined>(undefined);
+  const lastPublishedRef = useRef<HudRecord | undefined>(undefined);
+
+  useEffect(() => {
+    lastPublishedRef.current = undefined;
+    const update = (frame: CommitFrame) => {
+      const next = summarize(frame.current);
+      const last = lastPublishedRef.current;
+      if (last !== undefined && recordsEqual(last, next)) {
+        return; // no setState at all for an unchanged record
+      }
+      lastPublishedRef.current = next;
+      setDisplay(next);
+    };
+    update(game.getRenderFrame());
+    const subscription = game.addCommitListener(update);
+    return () => subscription.remove();
+  }, [game]);
+  // ...render display...
+}
+```
+
+The order matters: compare before calling `setState`. Sixty unchanged commits publish nothing, so no setter, no updater, and no render happen for them.
+
+## 3. Keep the time out of the HUD
+
+A continuously changing value (a sweep hit time, a ball angle) will republish on every commit and defeat the dedupe. Two options: present it in the renderer instead (the Collision Lab draws the sweep path on canvas and keeps the HUD textual), or make it a stable fact. The lab's contact entry time is a good example: the scene latches the entry time once per contact interval, and the HUD shows that, never the raw per-frame value.
+
+## 4. Status goes through the status hook
+
+Lifecycle text (paused, running) doesn't need a commit listener at all:
+
+```tsx
+const status = useGameSessionStatus(game);
+```
+
+It only re-renders when the status changes. See [Pause a game](./pause-a-game) for the overlay built on it, and [State & re-rendering](../react/state-and-re-rendering) for the full map of where state lives.

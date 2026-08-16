@@ -1,0 +1,55 @@
+---
+title: Transition between scenes
+description: Move between named scenes from inside update with transition.setScene, or from outside with session.setScene. No payloads yet.
+---
+
+Scenes are how a game moves from menu to play to game over. This guide covers the two ways to switch: from inside a scene's `update`, and from outside the simulation. Brick Breaker uses all of it with three named scenes.
+
+## 1. Declare where each scene may go
+
+```ts
+const ready = defineScene({
+  actions: ['primary'],
+  transitions: ['play'],        // the only scenes 'ready' may enter
+  create: () => ({ ready: true }),
+  update: ({ state, input, transition }) => {
+    if (input.pointer('primary').pressed) {
+      transition.setScene('play');
+    }
+    return state;
+  },
+  snapshot: ({ state }) => ({ ready: state.ready }),
+});
+```
+
+`transitions` is the compile-time allowlist. `defineGame` rejects undeclared targets at type-check time, and the runtime throws `GameSessionLifecycleError` if a misbehaving scene violates it.
+
+## 2. Transition from inside update
+
+The `transition` value is valid only for the duration of that `update` call:
+
+- `transition.setScene('play')` commits after the current update completes. Setting the current scene is a no-op.
+- `transition.restartScene()` recreates the current scene with fresh state, which is how Brick Breaker restarts a round.
+- Conflicting requests in one update throw instead of depending on call order. Retaining the controller and calling it later throws too.
+
+## 3. Transition from outside
+
+The session exposes the same operations for React and imperative code:
+
+```ts
+session.scene;            // current scene name, live
+session.setScene('play'); // only declared names
+session.restartScene();
+```
+
+`setScene` commits at the next fixed-step boundary while running, and synchronously while idle or paused. Setting the current scene is an idempotent no-op.
+
+## 4. What transitions commit
+
+A transition is a hard cut, never an interpolation: the commit frame's `previous` and `current` both come from the new scene, and `hardCut` is true. Renderers keep their fixed topology and swap what they draw from the snapshot. If your renderer keyed nodes per scene, that's a rebuild per transition; prefer drawing whatever `frame.scene` says.
+
+## 5. The payload gap
+
+Transitions carry no payloads yet. A scene that needs to share results keeps the flow in its own state, which is why Brick Breaker's win state lives inside the play scene and the game-over scene is deliberately result-free. When payloads land (see [Roadmap](../introduction/roadmap)), a results screen can read the score directly.
+
+The [Scene](../core-concepts/scene) concept page has the full contract, and the [Brick Breaker walkthrough](../examples/brick-breaker) shows the three-scene game end to end.

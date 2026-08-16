@@ -1,0 +1,44 @@
+---
+title: State & re-rendering
+description: Where state lives, and how to read game data from React without re-rendering every frame.
+---
+
+Most React apps derive UI from state and let React figure out the rest. Game loops can't work that way: sixty commits a second would re-render the tree sixty times a second. This page is the map of where state lives and how to read it cheaply.
+
+## The state hierarchy
+
+| Layer | State | Changes |
+| --- | --- | --- |
+| Scene | game values: positions, scores, lives | per tick (60 Hz) |
+| Renderer | shared values derived from the snapshot | per tick, on the UI thread |
+| HUD | semantic records: pair, toggles, counts | per meaningful change |
+| Screen | navigation, modals, settings | per user action |
+
+Rules of thumb: anything that changes per tick stays out of React state. Anything a HUD shows must be a low-frequency summary, not raw per-frame values. Game values you need in React (like a score) belong in the snapshot, read through a commit listener that filters.
+
+## The HUD pattern
+
+HUDs read commits, but they publish records, not frames:
+
+```tsx
+useEffect(() => {
+  const update = (frame: CommitFrame) => {
+    const next = summarize(frame.current);   // small semantic record
+    if (equals(lastPublished.current, next)) return; // dedupe BEFORE setState
+    lastPublished.current = next;
+    setDisplay(next);                        // rare: only on real changes
+  };
+  const subscription = game.addCommitListener(update);
+  return () => subscription.remove();
+}, [game]);
+```
+
+The dedupe check matters: comparing before calling `setState` means sixty unchanged commits publish nothing, and React never renders for them. The Collision Lab HUD publishes once per semantic transition and stays silent for steady-state commits; [Build a HUD that doesn't re-render](../guides/build-a-hud) builds it step by step.
+
+## Read-once values
+
+For values that change rarely, you don't need a listener at all: read `session.getRenderFrame().current` once, or subscribe to status with `useGameSessionStatus`. The commit listener is for values that change with the game.
+
+## What never goes in React state
+
+Positions, velocities, animation frames, contact manifolds. All of it belongs in the scene and flows to the renderer as shared values. If you see `useState` being updated from a commit listener with the raw snapshot, that's the anti-pattern this page exists to catch.

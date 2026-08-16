@@ -1,0 +1,36 @@
+---
+title: Performance
+description: Interpolation, batching, worklet ownership, and where the frame time actually goes.
+---
+
+The performance rules of Gamekit come from one sentence: the simulation is headless, and the UI thread only presents. This page is the React-side summary; [Performance model](../advanced/performance-model) is the full model, and [Profiling](../advanced/profiling) is how to measure.
+
+## Interpolate, don't wait
+
+At refresh rates above the simulation rate, the UI presents the same tick twice. Renderers should derive positions from `alpha` between the previous and current snapshot, not jump to the current one. The renderer guide shows the pattern:
+
+```tsx
+const x = useDerivedValue(() => {
+  'worklet';
+  const current = frame.value.current;
+  const previous = frame.value.previous;
+  const t = alpha.value;
+  return lerp(previous.ball.x, current.ball.x, t);
+});
+```
+
+## Keep the React tree fixed
+
+Build the renderer's tree once from stable props. Per-frame data arrives as shared values, so Skia re-renders without React. A renderer that rebuilds nodes per frame defeats the design; the contract test in the Collision Lab enforces a fixed topology with stable keys.
+
+## Batch what repeats
+
+Many instances of one sprite sheet belong in a `SpriteBatch` (one `Atlas` draw), not in hundreds of `Sprite` nodes. Shared texture, fixed-capacity buffers, zero per-instance React. [Draw hundreds of sprites](../guides/draw-hundreds-of-sprites) shows the threshold and the setup.
+
+## Threads and worklets
+
+Renderers run on the UI thread. Worklets derived from shared values must only call workletized helpers and Math built-ins; an ordinary imported function called from a derived worklet jumps threads and stalls the UI. The runtime contract is enforced by a source-level test in the Collision Lab; treat it as the rule, not the exception.
+
+## Where the frame time goes
+
+Simulation ticks commit snapshots; the renderer transforms and draws them. The three costs to watch are simulation work per tick (scene update), snapshot size (what gets deep-frozen and copied), and draw complexity (Skia work). Measure all three with the [profiling harness](../advanced/profiling) before optimizing any one of them.

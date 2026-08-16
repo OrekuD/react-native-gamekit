@@ -1,0 +1,34 @@
+---
+title: Custom renderers
+description: The GameRendererProps contract, fixed topology, grouped select() worklets, and when a picture or atlas renderer is warranted.
+---
+
+A renderer is a React component that receives the frame as shared values and returns Skia elements. Writing one is the main customization surface of Gamekit; the [Renderer guide](../engine-systems/rendering) is the full how-to, and this page is the contract in brief.
+
+## The props
+
+```ts
+interface GameRendererProps<TScenes, TAssets> {
+  frame: SharedValue<CommitFrame<TScenes>>;
+  alpha: SharedValue<number>;
+  viewport: SharedValue<ResolvedViewport2D | undefined>;
+  assets?: LoadedAssets<TAssets>;
+}
+```
+
+`frame.value.current` and `frame.value.previous` are the snapshots; `alpha` is the interpolation fraction; `viewport` carries the resolved scale and offsets. All three are read inside worklets, never in render.
+
+## The rules
+
+- **Fixed topology.** Build the node tree once from stable props. Per-frame data arrives as derived shared values. No `useState` keyed to game values, no rebuilding per commit.
+- **Grouped select().** One derived value per logical group, not one per pixel. The Collision Lab renderer derives one shared value per Skia prop, and the contract test verifies the topology stays fixed.
+- **Worklet purity.** Derived callbacks carry the `'worklet'` directive and call only workletized helpers and Math built-ins.
+- **One transform.** Convert logical to surface coordinates with the viewport shared value (`toSurfaceX/Y/Size`), or let `GameWorld2D` apply it.
+
+## When a picture or atlas renderer is warranted
+
+The renderer guide's rule of thumb: retained `Sprite`s for a modest stable cast, `SpriteBatch` for shared-texture density, and a `Picture`-backed renderer when you need to record and replay a complex scene per frame. Measure before choosing: [Profiling](./profiling) shows draw cost per frame, and [Results](./results) records the thresholds the reference games lock in.
+
+## Contract enforcement
+
+Renderer contracts are enforced with tests, not vibes: the Collision Lab has a source-level contract suite (fixed topology, no shared-value reads in render, no non-worklet calls) and mounted reactivity tests that drive controllable shared values. Copy the pattern when you build your own renderers.

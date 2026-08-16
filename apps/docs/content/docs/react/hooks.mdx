@@ -1,0 +1,45 @@
+---
+title: Hooks
+description: "useGameSession, useGameSessionStatus, and useGameAssets: what each hook owns and what it returns."
+---
+
+The hooks are the React-side handles to the runtime. All three come from `rn-gamekit/react`.
+
+## useGameSession
+
+Owns a session for one game definition. It creates the session on commit, starts it, and disposes it on unmount, so the component never manages the lifecycle by hand.
+
+```tsx
+const session = useGameSession(paddleGame);
+
+if (session === undefined) {
+  return null; // no live session yet (first render or definition swap)
+}
+return <GameView game={session} renderer={PaddleRenderer} />;
+```
+
+Returns `GameSession | undefined`. The hook is Strict Mode safe: every development rehearsal session is disposed exactly once, and a disposed session is never returned. The definition must live at module scope; session identity follows definition identity, so a definition created inside a render would churn sessions. Never call `session.dispose()` on a hook-owned session. For imperative or headless ownership, use `createGameSession` with `try/finally` instead.
+
+## useGameSessionStatus
+
+Subscribes the component to lifecycle transitions. Powered by `useSyncExternalStore`, so it only re-renders when the status actually changes.
+
+```tsx
+const status = useGameSessionStatus(session); // 'idle' | 'running' | 'paused' | 'disposed'
+```
+
+The session argument is required; pass the exact session from `useGameSession` or from the shell. This is the hook behind pause overlays and background handling. See [Lifecycle](../core-concepts/lifecycle) and the [Pause a game](../guides/pause-a-game) guide.
+
+## useGameAssets
+
+Loads and owns assets for a game definition.
+
+```tsx
+const assets = useGameAssets(definition.assets, { groups: ['gameplay'] });
+```
+
+Returns the asset store state for the requested groups. Load only the groups the current screen needs, and pass the result to `GameView` so the renderer can resolve sprites. The asset lease model means unloading is explicit: see [Assets](../engine-systems/assets) and [Load assets](../guides/load-assets).
+
+## Rules that apply to all three
+
+The hooks configure or observe a session; none of them become the per-frame store. If you find yourself copying game values into `useState` inside an effect, stop and re-read [State & re-rendering](./state-and-re-rendering).

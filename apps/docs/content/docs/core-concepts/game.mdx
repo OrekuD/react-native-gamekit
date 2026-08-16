@@ -1,9 +1,7 @@
 ---
-title: Game Definition and Session
-description: Define scenes, run a fixed-step session, and mount the Skia view.
+title: Game
+description: What defineGame owns, how a session comes to life, and where the React mount fits.
 ---
-
-# Game Definition and Session
 
 > **Provisional.** The names and shapes remain provisional until reference
 > games validate them.
@@ -66,7 +64,7 @@ declared scene — all enforced at compile time.
 stops the session and releases the active scene. These operations are
 idempotent in their applicable states. `session.scene` is a live readonly
 getter, and `session.setScene(name)` / `session.restartScene()` drive
-transitions externally. See [Scenes and Transitions](./scenes-and-transitions)
+transitions externally. See [Scene](../core-concepts/scene)
 for the full lifecycle contract.
 
 The simulation uses a fixed 60 Hz step by default. A phone presenting at 60 Hz

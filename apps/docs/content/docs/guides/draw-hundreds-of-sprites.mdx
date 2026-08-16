@@ -1,0 +1,51 @@
+---
+title: Draw hundreds of sprites
+description: "Put repeated sprites in a SpriteBatch: one decoded sheet, one Atlas draw, fixed-capacity buffers."
+---
+
+When a game fills the screen with coins, enemies, or particles that share one sheet, individual sprite nodes get expensive. `SpriteBatch` draws them all in one `Atlas` call. This guide covers when to switch and how to set it up; the Sprite Field example in the playground (`src/screens/sprite-field`) is the live version.
+
+## When to switch
+
+- Fewer than a few dozen individually authored sprites: keep `Sprite` nodes. They're easier to read and fine for a stable cast.
+- Many instances of one shared sheet (pickups, projectiles, tile details): use `SpriteBatch`.
+
+The boundary is shared texture plus count. If the sprites share one sheet and the count grows with the scene, batch.
+
+## 1. Decode the sheet once
+
+Load the sheet through the asset store and hand it to the batch:
+
+```tsx
+const assets = useGameAssets(definition.assets, { groups: ['gameplay'] });
+// ...
+<SpriteBatch
+  source={assets.get(definition.assets.gameplay.coins)}
+  count={64}
+  // ...
+/>
+```
+
+## 2. Write instances per frame
+
+The batch takes a fixed-capacity buffer. A `useFrameCallback` fills it from the snapshot on the UI thread:
+
+```tsx
+const write = useFrameCallback((frameInfo) => {
+  'worklet';
+  const snapshot = frame.value.current;
+  for (let i = 0; i < snapshot.coins.length; i += 1) {
+    buffer.set(i, { rect, anchor, transform, color });
+  }
+}, false);
+```
+
+The buffer is UI-owned and fixed-capacity: no per-frame allocations, no React involvement. The scene owns the coin positions; the batch only presents them.
+
+## 3. Keep the topology fixed
+
+The batch node itself is stable; only the buffer contents change. That's the same rule as the rest of the renderer: build the tree once, update shared values. [Rendering](../engine-systems/rendering) covers the pattern, and [Sprite batching](../engine-systems/sprite-batching) has the full API contract including the transform elements (`computeSpriteRsxform`, `spriteAnchorWorld`, `spriteGroupCorrection`).
+
+## Measuring
+
+Whether batching helped is a measurement question, not a vibe. The [profiling harness](../advanced/profiling) shows draw cost per frame; compare before and after the switch.

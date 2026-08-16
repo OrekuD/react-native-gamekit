@@ -1,0 +1,23 @@
+---
+title: Sprite Field
+description: "The playground example that puts the sprite pipeline together: one retained player sprite, one SpriteBatch of enemies, headless animation, and a deterministic score."
+---
+
+Sprite Field is the playground game (`apps/playground/src/screens/sprite-field`) that exercises the whole sprite pipeline: a retained `GameSprite` player, an atlas-backed `SpriteBatch` of wandering enemies, animation driven by fixed-step time, and a distance score. It is the reference for [Sprites](../engine-systems/sprites), [Sprite batching](../engine-systems/sprite-batching), and [Animate a sprite](../guides/animate-a-sprite) working in one scene.
+
+## The split
+
+- The **scene** owns positions, the animation states, the enemy field, and the score. Movement is pointer-following with clamping; enemy drift is a sine of simulation time; the score counts distance walked. No wall-clock reads anywhere.
+- The **renderer** presents: one `GameSprite` for the player with a `select` worklet that picks the clip and position from the snapshot, plus one `SpriteBatch` filled from a `useFrameCallback` on the UI thread.
+- The **screen** gates on `useGameAssets` before mounting the renderer, so gameplay never races the decoder.
+
+## Why it exists
+
+The first runtime slice proves the loop, input, and viewport with a bouncing circle. Sprite Field proves the asset path: manifest validation, decoding, leasing, animation, and batching in a game you can actually play. If you're building a game with lots of moving sprites, read the renderer first and then the guides above.
+
+## What to look for
+
+- `advanceSpriteAnimation` called in `update` with `deltaSeconds`, never in render.
+- The batch's fixed-capacity buffer written by a worklet, not by React.
+- The deterministic score: same input schedule, same score, verifiable headlessly.
+- The headless rules tests beside the game (`spriteFieldGame.test.ts`) driving ticks and asserting state without a simulator.

@@ -1,0 +1,60 @@
+---
+title: Test your game headlessly
+description: "Drive the real session from Node with a manual frame driver: deterministic ticks, exact schedules, no simulator."
+---
+
+Because the simulation is headless, your game logic runs in Node exactly as it runs on device. The `rn-gamekit/testing` entry provides a manual frame driver so tests own time: same definition, same driver schedule, same state, every run.
+
+## 1. The harness
+
+```ts
+import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
+
+function harness() {
+  const driver = new ManualFrameDriver();
+  const session = createGameSessionWithDriver(definition, { frameDriver: driver });
+  let timeline = 0;
+  const tick = (frames: number) => {
+    for (let i = 0; i < frames; i += 1) {
+      timeline += 1000 / 60;
+      driver.fireNext(timeline);
+    }
+  };
+  session.start();
+  driver.fireNext(0);
+  return { session, tick, snap: () => session.getRenderFrame().current };
+}
+```
+
+`fireNext(timestampMs)` advances the loop exactly one frame at the timestamp you chose. `getRenderFrame().current` is the immutable snapshot the renderer would draw.
+
+## 2. Drive input semantically
+
+The session's input controller is the same one the app uses:
+
+```ts
+session.input.press('steer');
+session.input.release('steer');
+tick(1);
+assert.equal(snap().paddleX, 160);
+```
+
+Press, release, tick, assert. Edge semantics (one-tick `pressed`, `released`, `cancelled`) behave identically in Node, so you can test the exact frames your game depends on.
+
+## 3. Test the boundaries that matter
+
+The Collision Lab test suite is the template. It drives 260 frames and asserts the wrap frame publishes no sweep, the contact interval is contiguous and bounded, and the entry fact survives unrelated actions. Headless tests are also how the runtime itself is validated: the package test suite runs entirely in Node against `createGameSessionWithDriver`.
+
+## 4. What stays device-gated
+
+Input adapters, Skia rendering, and frame pacing need a real device or simulator. Everything in `update`, `snapshot`, and transitions is fair game in Node. The playground's headless suites (`*.test.ts` under `src/`) show the split: rules in Node, mounted interaction in React test renderer, physical-device rows in the plan matrices.
+
+## 5. Asset-backed scenes in Node
+
+Scenes whose definitions `require(...)` an image file need a module stub in Node tests:
+
+```ts
+(globalThis as { require?: (id: string) => number }).require = () => 42;
+```
+
+Set it before the definition module loads, and the manifest validates without decoding pixels.

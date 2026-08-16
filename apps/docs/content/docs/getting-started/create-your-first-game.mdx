@@ -9,7 +9,7 @@ By the end you'll have something playable on your device, not just a screen with
 
 ## 1. Set up your project
 
-If you haven't already, follow [Installation](./installation) to create an Expo project with a dev build and `rn-gamekit` installed. This tutorial assumes you're there.
+If you haven't already, follow [Installation](installation) to create an Expo project with a dev build and `rn-gamekit` installed. This tutorial assumes you're there.
 
 ## 2. Define the game
 
@@ -225,7 +225,7 @@ The hook owns creation and terminal disposal, and it's safe under Strict Mode: e
 
 `GameView` borrows the session: it starts it while mounted, pauses it when the app backgrounds, and never terminally disposes it. Because the hook owns disposal, don't call `session.dispose()` on a hook-owned session. For headless tests and non-React owners, `createGameSession()` with an explicit `try/finally` dispose remains the imperative path.
 
-Once it's playable, freeze it: the [Pause and resume](../guides/pause-and-resume) guide shows a pause overlay built from `useGameSessionStatus` — one press pauses, one resumes, and the last frame stays visible.
+Once it's playable, freeze it: the [Pause and resume](../guides/pause-a-game) guide shows a pause overlay built from `useGameSessionStatus` — one press pauses, one resumes, and the last frame stays visible.
 
 ## 7. Run it
 
@@ -241,7 +241,7 @@ Notice what never happened: no `useState` for the paddle, no re-renders per fram
 
 ## What's next
 
-- [Game definition and session](../concepts/game-definition) — what `defineGame` and `createGameSession` really own
-- [Scenes and transitions](../concepts/scenes-and-transitions) — more than one scene, and how to move between them
-- [Viewport and coordinate spaces](../concepts/viewport) — the three modes and the shared math behind drawing and input
-- [Pointer input](../concepts/pointer-input) — actions, ownership, and the edges you can read
+- [Game definition and session](../core-concepts/game) — what `defineGame` and `createGameSession` really own
+- [Scenes and transitions](../core-concepts/scene) — more than one scene, and how to move between them
+- [Viewport and coordinate spaces](../core-concepts/viewport) — the three modes and the shared math behind drawing and input
+- [Pointer input](../engine-systems/input) — actions, ownership, and the edges you can read

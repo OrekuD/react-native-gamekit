@@ -1,0 +1,44 @@
+---
+title: Game loop & time
+description: A fixed-step simulation running headless, with deterministic time. No delta-time accumulation, no wall clocks in game logic.
+---
+
+Gamekit runs a fixed-step loop, and that choice is the reason the same game behaves identically on a 120 Hz phone and a 60 Hz tablet.
+
+## The fixed step
+
+The simulation advances in constant increments of `deltaSeconds` (1/60 of a second). One increment is one tick. A scene's `update` receives:
+
+```ts
+update: ({ state, input, deltaSeconds, tick, sceneTick, elapsedSeconds, sceneElapsedSeconds }) => {
+  // deltaSeconds       constant: 1/60
+  // tick               global, one-based: 1, 2, 3...
+  // sceneTick          per scene instance: 1, 2, 3...
+  // elapsedSeconds     global time since session start
+  // sceneElapsedSeconds time since this scene instance began
+}
+```
+
+Physics-style code uses `deltaSeconds` explicitly: `x += vx * deltaSeconds`. Wall-clock time never enters the simulation, so a pause that lasts ten minutes does not produce a ten-minute jump on resume. Pausing discards suspended wall time.
+
+## Frames versus ticks
+
+A tick is a simulation step; a display frame is a presentation opportunity. On a 60 Hz screen they usually line up one to one, but a 120 Hz screen presents two frames per tick and a slow frame presents none. Renderers interpolate between the previous and current snapshot with the `alpha` fraction from the UI clock, so smooth motion survives the mismatch. The [Renderer guide](../engine-systems/rendering) covers interpolation in practice.
+
+## Determinism and the frame driver
+
+The loop is headless: it asks a frame driver for timestamps and advances ticks from them. In the app, a `useFrameCallback` drives the session. In Node, the same session runs against a manual driver:
+
+```ts
+import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
+
+const driver = new ManualFrameDriver();
+const session = createGameSessionWithDriver(definition, { frameDriver: driver });
+driver.fireNext(16.7); // exactly one tick, at a timestamp you chose
+```
+
+Same definition, same driver schedule, same state. That is what makes [headless tests](../guides/test-your-game-headlessly) deterministic: the test owns time.
+
+## Time that never drifts
+
+Animation state, collision sweeps, and HUD timers all read simulation time, never the display clock. The same input and elapsed game time select the same sprite frame at any refresh rate. See [Sprite animation](../engine-systems/animation) for how that plays out.

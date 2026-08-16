@@ -10,7 +10,7 @@ const sections = [
   {
     title: 'Concepts',
     description: 'The game definition contract and the headless-first model.',
-    href: '/docs/concepts/game-definition',
+    href: '/docs/core-concepts/game',
   },
   {
     title: 'Compatibility',
@@ -43,7 +43,7 @@ export default function HomePage() {
           </Link>
           <Link
             className="rounded-full border border-fd-border px-5 py-2.5 text-sm font-medium"
-            href="/docs/concepts/game-definition"
+            href="/docs/core-concepts/game"
           >
             Read the definition contract
           </Link>

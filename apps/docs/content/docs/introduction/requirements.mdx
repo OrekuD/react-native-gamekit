@@ -1,0 +1,36 @@
+---
+title: Requirements
+description: "What you need to build with React Native Gamekit: Node, an Expo development build, and the native peer libraries."
+---
+
+Gamekit is a small dependency layer on top of an Expo project. The requirements below are what the playground validates against; newer minor versions of the same major lines usually work, and [Supported platforms](./supported-platforms) shows the exact matrix.
+
+## Toolchain
+
+- **Node.js 22 or newer.** The workspace and the package tests run on Node 22.
+- **A package manager.** pnpm, npm, yarn, or bun all work. The repository itself uses pnpm workspaces with a single lockfile.
+- **Expo SDK 57** with a native development build. Gamekit's renderer and input adapters are native modules, so the app must run through `expo prebuild` plus `expo run:ios` or `expo run:android`. [Expo Go is not a supported requirement](../introduction/supported-platforms), because the native peers change faster than Expo Go ships them.
+
+## Native peers
+
+Gamekit renders with Skia and drives input through Gesture Handler. Your app installs these as regular dependencies; Gamekit declares them as peers:
+
+| Package | Version line | Why it's there |
+| --- | --- | --- |
+| `@shopify/react-native-skia` | 2.11 | Canvas rendering: sprites, batches, paths, shaders |
+| `react-native-reanimated` | 4.x | Shared values, derived worklets, the alpha clock |
+| `react-native-worklets` | 0.10 | The worklet runtime the renderers run on |
+| `react-native-gesture-handler` | 3.x | Pointer and gesture adapters |
+| `react-native-safe-area-context` | latest | Safe-area insets for HUDs and headers |
+
+Keep exactly one copy of each in the app's `dependencies`. The native singleton rule is the one rule that breaks builds silently: two copies of Skia or Reanimated in the tree and the app links whichever one it finds first.
+
+## Platform
+
+- **iOS 15 or newer**, including iPadOS. Tablets are first-class: both orientations, split view, and resizable windows are supported.
+- **Android 8 (API 26) or newer.**
+- **No web target in this version.** The docs site is Next.js, but the runtime itself is native-only for now.
+
+## Not required
+
+You do not need a physics engine, a state management library, or a game framework alongside Gamekit. The headless session replaces per-frame React state, and Collision2D covers detection when you need it. See [What is react native gamekit](./what-is-react-native-gamekit) for the boundary.

@@ -191,4 +191,4 @@ try {
 - Bad frame rectangle: `ASSET_INVALID_FRAME_RECT` or
   `ASSET_FRAME_OUT_OF_BOUNDS`; fix the rectangle or the image.
 - Disposed lease: `ASSET_STORE_DISPOSED`; never reuse a disposed owner.
-- Full error table: `apps/docs/content/docs/reference/asset-errors.mdx`.
+- Full error table: `apps/docs/content/docs/api/asset-errors.mdx`.

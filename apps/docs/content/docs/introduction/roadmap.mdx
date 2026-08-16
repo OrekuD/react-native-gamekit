@@ -1,0 +1,29 @@
+---
+title: Roadmap
+description: "What is planned for React Native Gamekit, and in what order. No dates, no promises: the reference games decide what ships."
+---
+
+This is the direction of travel, not a schedule. Every system below lands only when a reference game needs it and the headless-first boundary survives the addition. The [Changelog](../changelog) is the source of truth for what actually shipped.
+
+## Next up
+
+- **Scene transition payloads.** Scenes can already switch (`transition.setScene`), but they can't pass results. Brick Breaker works around this by keeping the win state inside the play scene; payloads would let a results screen read the score directly.
+- **Keyboard and gamepad input.** One primary pointer exists today. Keyboard and controller support would open up desktop-style games on iPad and Android tablets.
+- **Camera.** A viewport transform that moves independently of the game world, for scrolling levels.
+
+## Further out
+
+- **Audio.** A headless audio event queue that survives pauses, played through a native adapter.
+- **Particles.** A retained, headless particle field with a Skia renderer, in the same style as the sprite batch.
+- **Tilemaps.** Authored tile data with an atlas-backed renderer; the broad phase and the batch already assume the shapes this would need.
+- **Storage.** A small, headless save/load API for high scores and settings, kept out of the simulation loop.
+- **Physics.** A real solver on top of Collision2D's geometry. Detection stays yours until this exists.
+
+## Infrastructure
+
+- **TypeDoc pipeline.** The manual [API Reference](../api/components) pages move to generated documentation once the public surface stabilizes.
+- **Web renderer.** Not planned for the runtime; the docs site is the only web surface.
+
+## What will not change
+
+The headless-first boundary is the design, not a phase. Game state advances through the session, never through React re-renders, and every future system keeps its simulation headless with a renderer adapter on top. Proposals that break that boundary are rejected before they reach the plan.

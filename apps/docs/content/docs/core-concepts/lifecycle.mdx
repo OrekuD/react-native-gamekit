@@ -1,0 +1,45 @@
+---
+title: Lifecycle
+description: The four session states, who starts and pauses what, and how ownership decides who disposes.
+---
+
+A session has four states: `idle`, `running`, `paused`, and `disposed`. Transitions between them are the lifecycle, and three different owners interact with it.
+
+## The states
+
+```ts
+session.status; // 'idle' | 'running' | 'paused' | 'disposed'
+```
+
+- **idle** — created, not started. No simulation runs.
+- **running** — the loop advances ticks and commits snapshots.
+- **paused** — simulation frozen, suspended wall time discarded, input cancelled.
+- **disposed** — terminal. The scene's `dispose` ran, listeners are released, and any live request throws `GameSessionDisposedError`.
+
+`start()` moves `idle → running` and `paused → running` (it is also the resume command; there is no separate `resume` method). `pause()` moves `running → paused`. `dispose()` is terminal from any state.
+
+## Observing the lifecycle
+
+`addStatusListener` reports each actual transition, once it is authoritative:
+
+```ts
+const subscription = session.addStatusListener((status) => {
+  console.log('status:', status); // 'running', 'paused', 'disposed'
+});
+```
+
+Idempotent commands emit nothing, no initial value is emitted on subscribe, and `disposed` is delivered exactly once before listeners are released. Status notifications are not render commits: the HUD reads `useGameSessionStatus` for React, and the renderer keeps reading snapshots.
+
+## Three owners, three responsibilities
+
+| Owner | Starts | Pauses | Disposes |
+| --- | --- | --- | --- |
+| `useGameSession` hook | yes | no | yes, on unmount |
+| `GameView` (mounted) | yes, while mounted | on app background | never |
+| `bindAppLifecycle` | guarded | yes | no |
+
+The hook owns creation and terminal disposal. `GameView` borrows the session: it starts it on mount and pauses it when the app backgrounds, but never disposes it. For imperative and headless code, `createGameSession()` with an explicit `try/finally` dispose is the direct path. Never call `dispose()` on a hook-owned session; ownership is single.
+
+## Lifecycle versus game flow
+
+Session lifecycle (running, paused) is not the same as game flow (menu, play, game over). Flow lives in scenes and `transition.setScene`; lifecycle is the process question of whether the loop runs at all. The [Pause a game](../guides/pause-a-game) guide shows the two interacting, and the [Scene](../core-concepts/scene) concept covers flow.

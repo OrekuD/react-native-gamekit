@@ -1,0 +1,19 @@
+---
+title: Changelog
+description: What shipped in each release of rn-gamekit, and where the unreleased work stands.
+---
+
+The changelog lives with the package: [`packages/gamekit/CHANGELOG.md`](https://github.com/OrekuD/react-native-gamekit/blob/main/packages/gamekit/CHANGELOG.md). This page is the short version.
+
+## Unreleased (current main)
+
+- `useGameSession(definition)` from `rn-gamekit/react`: React-owned session creation and terminal disposal, Strict Mode safe, with exact scene/input type inference.
+- Observable pause/resume lifecycle: `GameSession.addStatusListener()` and `useGameSessionStatus()`.
+- Paused-input policy: gameplay input is cancelled on pause and rejected while paused.
+- Collision2D: geometry primitives, contacts, exact Minkowski sweeps, colliders, filters, broad phase, and headless debug projection.
+
+## 0.1.0
+
+The first published release: the headless session runtime, fixed-step loop, pointer and button input, viewport math, sprites and sprite batches, asset manifests, the React adapter (`GameView`, hooks), and the Brick Breaker reference game.
+
+The full, dated record with every entry is the [package changelog](https://github.com/OrekuD/react-native-gamekit/blob/main/packages/gamekit/CHANGELOG.md).

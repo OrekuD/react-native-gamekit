@@ -1,0 +1,28 @@
+---
+title: Hooks (API)
+description: The three hooks exported from rn-gamekit/react and what each one returns.
+---
+
+All hooks come from the `rn-gamekit/react` entry. The [Hooks](../react/hooks) concept covers usage; this page is the reference.
+
+| Hook | Returns | Notes |
+| --- | --- | --- |
+| `useGameSession(definition)` | `GameSession \| undefined` | Owns creation and terminal disposal; Strict Mode safe; `undefined` until the session commits. Never dispose the result yourself. |
+| `useGameSessionStatus(session)` | `GameSessionStatus` | `'idle' \| 'running' \| 'paused' \| 'disposed'`; powered by `useSyncExternalStore`, re-renders only on actual transitions. |
+| `useGameAssets(manifest, options)` | `GameAssetsState` | Discriminated state: `loading` (progress, retry), `error` (error, retry), or `ready` (assets store). |
+| `stableGroupsKey(groups)` | `string` | Deduplicated, sorted key for asset groups; the hook's identity for acquisition. |
+
+## GameAssetsState
+
+```ts
+type GameAssetsState<TManifest> =
+  | { status: 'loading'; progress: number; retry: () => void; requestKey: string }
+  | { status: 'error'; error: GameAssetError; retry: () => void; requestKey: string }
+  | { status: 'ready'; assets: LoadedAssets<TManifest>; requestKey: string };
+```
+
+`requestKey` matches the state to the render that requested it, so a stale lease can never surface. The same `retry` identity is exposed in loading and error states, and one user action starts exactly one new attempt.
+
+Related types: `GameAssetsState`, `SpriteAnimatable`, `SpriteAnimatableBoolean`, `SpriteProps`, `GameSpriteProps`, `GameSpriteSelectContext`, `GameSpriteSelection`, `SpriteBatchProps`, `SpriteBatchWrite`, `SpriteRsxform`, `SpriteTransformInput`, `SkiaTransformElement`.
+
+See [Load assets](../guides/load-assets) for the boot-to-gameplay flow and [Pause a game](../guides/pause-a-game) for status-driven overlays.

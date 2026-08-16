@@ -21,74 +21,74 @@ Docs
 ├── Introduction
 │   ├── What is react native gamekit?   ✅
 │   ├── Why react native gamekit?       ✅
-│   ├── Requirements                    🆕  (pending)
+│   ├── Requirements                    ✅
 │   ├── Supported platforms             ✅  ← compatibility.mdx
-│   └── Roadmap                         🆕  (physics, camera, audio, particles,
+│   └── Roadmap                         ✅  (physics, camera, audio, particles,
 │                                            storage, ECS, keyboard/gamepad,
 │                                            tilemaps, TypeDoc pipeline)
 │
 ├── Getting Started
 │   ├── Installation                    ✅ rewritten (persistent PM tabs)
 │   ├── Create your first game          ✅ rewritten (game-oriented tutorial)
-│   ├── Project structure               🆕  consumer-facing
-│   └── Next steps                      🆕
+│   ├── Project structure               ✅
+│   └── Next steps                      ✅
 │
 ├── Core Concepts                       ← mental model (what/when/why)
-│   ├── Game                            📦 game-definition.mdx
-│   ├── Scene                           📦 scenes-and-transitions.mdx
-│   ├── Scene state                     🆕  honest stand-in for "entities":
+│   ├── Game                            ✅  (was game-definition.mdx)
+│   ├── Scene                           ✅  (was scenes-and-transitions.mdx)
+│   ├── Scene state                     ✅  honest stand-in for "entities":
 │   │                                       no ECS — state lives in scenes
-│   ├── Game loop & time                🆕  fixed step, no delta time
-│   ├── Coordinates & viewport          📦 viewport.mdx
-│   └── Lifecycle                       🆕  session lifecycle
+│   ├── Game loop & time                ✅  fixed step, no delta time
+│   ├── Coordinates & viewport         ✅  (was viewport.mdx)
+│   └── Lifecycle                       ✅  session lifecycle
 │
 ├── Engine Systems                      ← "what can Gamekit do"
-│   ├── Rendering                       📦 renderer-guide.mdx
-│   ├── Sprites                         📦 sprites.mdx + sprite-batching.mdx
-│   ├── Animation                       📦 sprite-animation.mdx
-│   ├── Input                           📦 pointer-input.mdx + input-guide.mdx
-│   ├── Assets                          📦 assets.mdx
+│   ├── Rendering                       ✅  (was renderer-guide.mdx)
+│   ├── Sprites                         ✅  sprites.mdx + sprite-batching.mdx
+│   ├── Animation                       ✅  (was sprite-animation.mdx)
+│   ├── Input                           ✅  pointer-input + input-guide merged
+│   ├── Assets                          ✅  (was assets.mdx)
 │   └── Collision                        ✅ (Collision2D)
 │
 ├── React                               ← the differentiator; explicit boundary
-│   ├── How Gamekit uses React          🆕  (does the loop re-render React? no)
-│   ├── Components                      🆕  GameView, GamePointerInput, Sprite…
-│   ├── Hooks                           🆕  useGameAssets
-│   ├── State & re-rendering            🆕  where state lives, HUD selectors
-│   └── Performance                     🆕  interpolation, batching, threads
+│   ├── How Gamekit uses React          ✅  (does the loop re-render React? no)
+│   ├── Components                      ✅  GameView, GamePointerInput, Sprite…
+│   ├── Hooks                           ✅  useGameSession, useGameSessionStatus, useGameAssets
+│   ├── State & re-rendering            ✅  where state lives, HUD selectors
+│   └── Performance                     ✅  interpolation, batching, threads
 │
 ├── Guides                              ← problems, not APIs
-│   ├── Move a paddle with touch        🆕
+│   ├── Move a paddle with touch        ✅
 │   ├── Detect collisions (no physics)  ✅
-│   ├── Animate a sprite                🆕
+│   ├── Animate a sprite                ✅
 │   ├── Pause a game                    ✅
-│   ├── Transition between scenes       🆕
-│   ├── Build a HUD that doesn't re-render  🆕
-│   ├── Draw hundreds of sprites        🆕
-│   ├── Load assets (boot → gameplay)   🆕
-│   └── Test your game headlessly       🆕
+│   ├── Transition between scenes       ✅
+│   ├── Build a HUD that doesn't re-render  ✅
+│   ├── Draw hundreds of sprites        ✅
+│   ├── Load assets (boot → gameplay)   ✅
+│   └── Test your game headlessly       ✅
 │
 ├── Examples                            ← playable, source-linked
-│   ├── Brick Breaker                   📦 reference/brick-breaker.mdx
-│   ├── Sprite Field                    🆕
+│   ├── Brick Breaker                   ✅  (was reference/brick-breaker.mdx)
+│   ├── Sprite Field                    ✅
 │   └── First runtime slice             🆕
 │
 ├── API Reference                       ← boring, predictable, template-consistent
-│   ├── Components / Hooks / Functions / Types   🆕 manual now, TypeDoc later
-│   └── Asset errors                    📦 reference/asset-errors.mdx
+│   ├── Components / Hooks / Functions / Types   ✅ manual now, TypeDoc later
+│   └── Asset errors                    ✅  (was reference/asset-errors.mdx)
 │
 ├── Advanced
-│   ├── Engine architecture             🆕
-│   ├── Performance model               📦 concepts/performance-model.mdx
-│   ├── Profiling                       📦 profiling.mdx + results.mdx
-│   ├── Custom renderers                🆕
-│   └── Contributing                    📦 getting-started/repository.mdx
+│   ├── Engine architecture             ✅
+│   ├── Performance model               ✅  (was concepts/performance-model.mdx)
+│   ├── Profiling                       ✅  profiling.mdx + results.mdx
+│   ├── Custom renderers                ✅
+│   └── Contributing                    ✅  (was getting-started/repository.mdx)
 │
-├── Troubleshooting                     🆕
-└── Changelog                           🆕  links to packages/gamekit/CHANGELOG.md
+├── Troubleshooting                     ✅
+└── Changelog                           ✅  links to packages/gamekit/CHANGELOG.md
 ```
 
-Legend: ✅ rewritten · 📦 exists, to be rewritten in place · 🆕 new page.
+Legend: ✅ done · 🆕 new page. The tree under `apps/docs/content/docs` now matches the target structure; the mapping table below records where each former page moved.
 No roadmap stubs in the nav — the Roadmap page carries the future.
 
 ## Current → new mapping
@@ -146,13 +146,13 @@ deleted.
 ## Build order
 
 1. Getting Started: Installation ✅ → Create your first game ✅ → Project
-   structure → Next steps
-2. Introduction (What / Why / Requirements / Platforms / Roadmap)
-3. Core Concepts
-4. React
-5. Engine Systems
-6. Guides
-7. Examples
-8. API Reference
-9. Advanced
-10. Troubleshooting + Changelog
+   structure ✅ → Next steps ✅
+2. Introduction (What / Why / Requirements / Platforms / Roadmap) ✅
+3. Core Concepts ✅
+4. React ✅
+5. Engine Systems ✅
+6. Guides ✅
+7. Examples ✅
+8. API Reference ✅
+9. Advanced ✅
+10. Troubleshooting + Changelog ✅

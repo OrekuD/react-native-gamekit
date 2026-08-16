@@ -1,0 +1,65 @@
+---
+title: Load assets (boot to gameplay)
+description: Declare assets in the definition, acquire the groups you need with useGameAssets, and gate gameplay on the ready state.
+---
+
+Assets are local static module handles declared next to the game definition. Loading is explicit and grouped, so a boot screen can load gameplay assets while the menu is already interactive. The Sprite Field screen in the playground shows the full pattern.
+
+## 1. Declare the manifest
+
+```ts
+const assets = defineAssets({
+  gameplay: {
+    player: spriteSheet(require('./player.png'), { frames: {...}, animations: {...} }),
+    coins: spriteSheet(require('./coins.png'), { frames: {...}, animations: {...} }),
+  },
+});
+```
+
+The definition references the manifest:
+
+```ts
+const game = defineGame({
+  assets,
+  // ...
+});
+```
+
+Descriptors are validated before decoding: a missing frame, a bad rect, or a clip that doesn't exist fails at definition time with a structured `GameAssetError`. See [Asset errors](../api/asset-errors) for the codes.
+
+## 2. Acquire the groups you need
+
+```tsx
+const state = useGameAssets(game.assets, { groups: ['gameplay'] });
+
+if (state.status === 'loading') {
+  return <Loading progress={state.progress} />;
+}
+if (state.status === 'error') {
+  return <ErrorView error={state.error} retry={state.retry} />;
+}
+// state.status === 'ready'
+const assets = state.assets;
+```
+
+The state machine is explicit: `loading` (with progress and `retry`), `error` (with the structured error and `retry`), or `ready` with the loaded store. Groups are deduplicated and sorted into a stable key, so reordered group arrays don't reload. One user action starts exactly one new attempt; the same `retry` identity is exposed in loading and error states.
+
+## 3. Hand the store to GameView
+
+```tsx
+<GameView game={session} renderer={SpriteFieldRenderer} assets={assets}>
+  <GamePointerInput game={session} action="steer" />
+</GameView>
+```
+
+The renderer receives the store and resolves sprites through it:
+
+```tsx
+source={assets.get(game.definition.assets.gameplay.player)}
+```
+
+`SpriteBatch` and `GameSprite` both take the resolved handle. The renderer draws nothing before `ready`, so gameplay never races the decoder.
+
+## 4. Load per screen, own per lease
+
+Only load the groups the current screen needs; the lease model makes unloading explicit when the screen leaves. The [Assets](../engine-systems/assets) concept has the ownership details, and [Asset errors](../api/asset-errors) lists every failure mode with its fix.

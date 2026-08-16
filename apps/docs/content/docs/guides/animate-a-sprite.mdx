@@ -1,0 +1,68 @@
+---
+title: Animate a sprite
+description: "Play a sprite-sheet clip from fixed-step game time: animation state lives in the scene, and the renderer only presents it."
+---
+
+Animation time comes from the simulation, never the wall clock. This guide plays a running clip while the player moves, exactly like the Sprite Field example in the playground (`src/screens/sprite-field`).
+
+## 1. Author the sheet
+
+```ts
+const assets = defineAssets({
+  gameplay: {
+    player: spriteSheet(require('./player.png'), {
+      frames: {
+        idle: { x: 0, y: 196, width: 66, height: 92 },
+        run: { x: 0, y: 0, width: 72, height: 97 },
+      },
+      animations: {
+        idle: { frames: ['idle'], mode: 'once', frameDurationMs: 100 },
+        run: { frames: ['run'], mode: 'once', frameDurationMs: 100 },
+      },
+    }),
+  },
+});
+```
+
+## 2. Keep animation state in the scene
+
+Animation state is plain serializable data: clip name, elapsed time, paused flag, speed, completion. Store it in scene state and advance it in `update` with the fixed step:
+
+```ts
+update: ({ state, input, deltaSeconds }) => {
+  const moving = /* ... from input ... */;
+  const animation = advanceSpriteAnimation(
+    assets.gameplay.player,
+    moving ? 'run' : 'idle',
+    deltaSeconds,
+  );
+  return { ...state, animation };
+},
+```
+
+`advanceSpriteAnimation(descriptor, clip, deltaSeconds)` returns the next `SpriteAnimationState`. Because the input and elapsed game time select the frame, the same game produces the same frames at 30, 60, 90, or 120 Hz. The other operations are `playSpriteAnimation`, `pauseSpriteAnimation`, `resumeSpriteAnimation`, `setSpriteAnimationSpeed`, `resetSpriteAnimation`, and `startSpriteAnimation`.
+
+## 3. Let the renderer present it
+
+`GameSprite` picks the clip from the snapshot through a `select` worklet:
+
+```tsx
+<GameSprite
+  scene="play"
+  commit={frame}
+  alpha={alpha}
+  source={assets.get(definition.assets.gameplay.player)}
+  anchor={{ x: 0.5, y: 1 }}
+  select={({ current }) => ({
+    x: current.playerX,
+    y: current.playerY,
+    clip: current.animation.clip,
+  })}
+/>
+```
+
+The renderer never touches animation state; it reads the snapshot's clip name and draws that frame. Switching clips in the scene is enough to switch visuals, and the colliders attached to the sprite stay put. The [Collision Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/collision-lab) demonstrates exactly that: toggling Anim changes the frame, and the projected colliders don't move.
+
+## Facing and pacing
+
+Direction and speed are gameplay decisions. The Sprite Field game picks the clip from movement (`selectPlayerClip`), flips facing from pointer position, and speeds animations with `setSpriteAnimationSpeed` when you want a slow-motion feel. The rule stays the same: decide in `update`, present in the renderer.
