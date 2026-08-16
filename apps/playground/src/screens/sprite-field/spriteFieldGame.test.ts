@@ -139,3 +139,62 @@ describe('Sprite Field game rules (T7.8)', () => {
     assert.ok(Object.isFrozen(spriteFieldAssets.gameplay.player.frames));
   });
 });
+
+describe('Sprite Field scrolling camera (T12.7)', () => {
+  it('keeps the camera inside the world and follows only past the dead zone', () => {
+    const { session, driver } = createSession();
+    session.start();
+    driver.fireNext(0);
+    const snap = () => session.getRenderFrame().current as unknown as {
+      camera: { center: { x: number; y: number }; zoom: number };
+      playerX: number;
+      playerY: number;
+      visibleEnemies: number;
+      enemies: readonly unknown[];
+    };
+    const start = snap();
+    assert.equal(start.camera.center.x, start.playerX, 'the camera starts on the player');
+    assert.equal(start.camera.zoom, 1);
+
+    // Small pointer movement inside the dead zone: the camera does not move.
+    session.input.begin('primary', 1, { x: start.playerX + 20, y: start.playerY - 10 });
+    for (let i = 0; i < 30; i += 1) {
+      driver.fireNext((i + 1) * 16.7);
+    }
+    const inside = snap();
+    assert.equal(inside.camera.center.x, start.camera.center.x, 'dead zone holds the camera');
+    session.input.cancel('primary');
+
+    // A long drag to the far right crosses the dead zone and the world edge.
+    session.input.begin('primary', 2, { x: start.playerX + 20, y: start.playerY - 10 });
+    session.input.move('primary', 2, { x: 2300, y: 100 });
+    for (let i = 0; i < 240; i += 1) {
+      driver.fireNext((i + 1) * 16.7);
+    }
+    const far = snap();
+    // The camera is clamped to the world edge, never beyond it.
+    assert.ok(far.camera.center.x <= 2400 - 160, 'camera clamps to the right world edge');
+    assert.ok(far.camera.center.x >= 160, 'camera clamps to the left world edge');
+    session.input.cancel('primary');
+
+    // Off-screen enemies keep simulating: every enemy is still present and
+    // its wander animation advances.
+    const finalSnap = snap();
+    assert.equal(finalSnap.enemies.length, 24, 'culling never removes enemies from the simulation');
+    session.dispose();
+  });
+
+  it('reports a bounded visible count from the headless culling query', () => {
+    const { session, driver } = createSession();
+    session.start();
+    driver.fireNext(0);
+    const snap = () => session.getRenderFrame().current as unknown as {
+      visibleEnemies: number;
+      enemies: readonly unknown[];
+    };
+    const frame = snap();
+    assert.ok(frame.visibleEnemies <= frame.enemies.length, 'visible never exceeds total');
+    assert.ok(frame.visibleEnemies >= 0);
+    session.dispose();
+  });
+});

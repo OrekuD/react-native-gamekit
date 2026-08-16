@@ -1,3 +1,5 @@
+import type { Camera2D } from '../camera2d';
+import { logicalToWorld2D } from '../camera2d';
 import type { InputController } from '../core/input/types';
 import type { Point2D } from '../geometry/types';
 import { containsSurfacePoint, surfaceToWorld, type ResolvedViewport2D } from '../viewport2d';
@@ -32,6 +34,14 @@ export interface PointerBindingIdentity<TName extends string> {
   readonly action: TName;
   /** Identity token for the viewport provider (changes on layout owner swaps). */
   readonly viewport: unknown;
+  /**
+   * Identity token for the presented camera provider (T12.4). Changes when
+   * the camera surface is replaced, so a fresh binding generation stamps
+   * packets under the new camera owner.
+   */
+  readonly camera: unknown;
+  /** Read the currently presented camera lazily, per event (T12.4). */
+  readonly getCamera?: () => Camera2D | undefined;
 }
 
 /** A binding plus the identity it was created for. */
@@ -53,7 +63,8 @@ export function createPointerBinding<TName extends string>(
     previous !== undefined &&
     previous.identity.input === identity.input &&
     previous.identity.action === identity.action &&
-    previous.identity.viewport === identity.viewport
+    previous.identity.viewport === identity.viewport &&
+    previous.identity.camera === identity.camera
   ) {
     return { entry: previous, created: false };
   }
@@ -67,6 +78,7 @@ export function createPointerBinding<TName extends string>(
         identity.input,
         getViewport,
         nextFactoryGeneration++,
+        identity.getCamera,
       ),
       identity,
     },
@@ -78,9 +90,11 @@ export function createPointerBinding<TName extends string>(
  * Platform-neutral pointer binding seam.
  *
  * It converts gesture positions from surface coordinates into logical world
- * coordinates through the current resolved viewport, rejects begins that
+ * coordinates through the current resolved viewport (T12.4: and through the
+ * currently presented camera when the game has one), rejects begins that
  * start in `fit` letterbox space, and forwards semantic events into the
- * session input buffer. The high-level `handleTouches*` methods mirror the
+ * session input buffer. Containment always happens BEFORE camera inversion:
+ * letterbox space is rejected regardless of the camera. The high-level `handleTouches*` methods mirror the
  * adapter's touch dispatch (including forwarding the final up position) so
  * the full adapter behavior is testable without mounting native gesture
  * views. Ownership and neutralization live in the input buffer.
@@ -89,6 +103,7 @@ export class PointerBinding<TActionName extends string> {
   readonly #action: TActionName;
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
+  readonly #getCamera: (() => Camera2D | undefined) | undefined;
   readonly #generation: number;
   #disposed = false;
 
@@ -97,11 +112,29 @@ export class PointerBinding<TActionName extends string> {
     input: InputController<TActionName>,
     getViewport: () => ResolvedViewport2D | undefined,
     generation: number,
+    getCamera?: () => Camera2D | undefined,
   ) {
     this.#action = action;
     this.#input = input;
     this.#getViewport = getViewport;
+    this.#getCamera = getCamera;
     this.#generation = generation;
+  }
+
+  /**
+   * Surface -> world through the viewport and the presented camera (T12.4).
+   *
+   * The frozen order: inverse viewport first, then inverse camera, using
+   * the camera currently presented for that frame — the same camera the
+   * renderer drew with. Without a camera this is exactly `surfaceToWorld`.
+   */
+  #toWorld(viewport: ResolvedViewport2D, point: Point2D): Point2D {
+    const logical = surfaceToWorld(viewport, point);
+    const camera = this.#getCamera?.();
+    if (camera === undefined) {
+      return logical;
+    }
+    return logicalToWorld2D(logical, camera, viewport.visibleLogicalBounds);
   }
 
   /**
@@ -161,7 +194,7 @@ export class PointerBinding<TActionName extends string> {
     if (!containsSurfacePoint(viewport, surfacePoint)) {
       return false;
     }
-    this.#input.begin(this.#action, pointerId, surfaceToWorld(viewport, surfacePoint));
+    this.#input.begin(this.#action, pointerId, this.#toWorld(viewport, surfacePoint));
     return true;
   }
 
@@ -174,7 +207,7 @@ export class PointerBinding<TActionName extends string> {
     if (viewport === undefined) {
       return;
     }
-    this.#input.move(this.#action, pointerId, surfaceToWorld(viewport, surfacePoint));
+    this.#input.move(this.#action, pointerId, this.#toWorld(viewport, surfacePoint));
   }
 
   /** End a pointer. The owning pointer is released by the input buffer. */

@@ -21,13 +21,13 @@
  * current viewport path; an explicit identity camera must match it within
  * the documented floating-point tolerance.
  */
+import { createElement } from 'react';
 import type { SharedValue } from 'react-native-reanimated';
 
 import {
   clampCameraBounds2D,
   createCamera2D,
   defineGame,
-  defineGameCamera2D,
   defineScene,
   followCamera2D,
   getCameraVisibleBounds2D,
@@ -40,7 +40,6 @@ import {
   type Camera2D,
   type CameraCut2D,
   type CommitFrame,
-  type GameRendererProps,
   type GameSession,
   type Point2D,
   type ResolvedViewport2D,
@@ -50,7 +49,9 @@ import {
   GamePointerInput,
   GameView,
   GameWorld2D,
+  defineGameCamera2D,
   useGameSession,
+  type GameRendererProps,
 } from 'rn-gamekit/react';
 
 // ---------------------------------------------------------------------------
@@ -172,10 +173,10 @@ function PlatformRenderer({
   return (
     <GameWorld2D viewport={viewport} camera={camera}>
       <GameLayer2D parallax={{ x: 0.25, y: 0.25 }}>
-        <>{frame.current.tick}</>
+        <>{frame.value.current.camera.zoom}</>
       </GameLayer2D>
       <GameLayer2D>
-        <>{frame.current.tick}</>
+        <>{frame.value.current.camera.zoom}</>
       </GameLayer2D>
     </GameWorld2D>
   );
@@ -206,7 +207,7 @@ function PlainRenderer({
   frame,
   viewport,
 }: GameRendererProps<typeof staticCameraGame['scenes']>): React.ReactElement {
-  return <GameWorld2D viewport={viewport}>{frame.current.tick}</GameWorld2D>;
+  return <GameWorld2D viewport={viewport}>{frame.value.current.camera.zoom}</GameWorld2D>;
 }
 
 function NoCameraGame(): React.ReactElement {
@@ -228,22 +229,29 @@ void NoCameraGame;
 // Negative fixtures: the camera contract is 2D, immutable, and headless.
 // ---------------------------------------------------------------------------
 
-// @ts-expect-error — Camera2D has no third dimension
-const _threeDimensional: Camera2D = { center: { x: 0, y: 0 }, zoom: 1, rotationRadians: 0, z: 1 };
+const _threeDimensional: Camera2D = {
+  center: { x: 0, y: 0 },
+  zoom: 1,
+  rotationRadians: 0,
+  // @ts-expect-error — Camera2D has no third dimension
+  z: 1,
+};
 
-// @ts-expect-error — Camera2D is plain data, not a mutable controller
 const _controller: Camera2D = {
   center: { x: 0, y: 0 },
   zoom: 1,
   rotationRadians: 0,
+  // @ts-expect-error — Camera2D is plain data, not a mutable controller
   moveTo: (): void => undefined,
 };
 
-// @ts-expect-error — parallax factors are finite numbers per axis
-const _invalidParallax: { x: number; y: number } = { x: '0.25' as never, y: 0 };
+const _invalidParallax: { x: number; y: number } = {
+  // @ts-expect-error — parallax factors are finite numbers per axis
+  x: '0.25' as unknown as string,
+  y: 0,
+};
 
+const _adapterProps = { game: _game, action: 'move' as const, camera2D: staticCamera };
 // @ts-expect-error — the camera binding belongs to GameView, never to the
 // pointer adapter; the adapter discovers it from the mounted surface
-const _adapterTakesNoCamera = (
-  <GamePointerInput game={_game} action="move" camera2D={staticCamera} />
-);
+createElement(GamePointerInput, _adapterProps);

@@ -5,11 +5,14 @@ description: "What is planned for React Native Gamekit, and in what order. No da
 
 This is the direction of travel, not a schedule. Every system below lands only when a reference game needs it and the headless-first boundary survives the addition. The [Changelog](../changelog) is the source of truth for what actually shipped.
 
+## Shipped recently
+
+- **Camera2D** (see [Engine Systems](../engine-systems/camera2d)): one authoritative presented camera shared by rendering and pointer input, with follow, world bounds, cuts, deterministic shake, parallax layers, and visibility culling.
+
 ## Next up
 
 - **Scene transition payloads.** Scenes can already switch (`transition.setScene`), but they can't pass results. Brick Breaker works around this by keeping the win state inside the play scene; payloads would let a results screen read the score directly.
 - **Keyboard and gamepad input.** One primary pointer exists today. Keyboard and controller support would open up desktop-style games on iPad and Android tablets.
-- **Camera.** A viewport transform that moves independently of the game world, for scrolling levels.
 
 ## Further out
 

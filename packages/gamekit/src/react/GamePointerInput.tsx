@@ -11,7 +11,7 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import type { InputMap, PointerInputAction, SceneMap } from '../definition/types';
 import type { GameSession } from '../core/session/types';
-import { GameViewportContext } from './GameView';
+import { GameCameraContext, GameViewportContext } from './GameView';
 import {
   canBeginPrimaryPointer,
   cancelOnActiveFinalize,
@@ -150,6 +150,11 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   if (viewportContext === null) {
     throw new Error('GamePointerInput must be rendered inside a GameView');
   }
+  // T12.4: the adapter discovers the presented camera from the mounted
+  // surface (never a repeated prop), so renderer and input share the same
+  // generation. Games without a camera get the exact current viewport path.
+  const cameraContext = useContext(GameCameraContext);
+  const presentedCamera = cameraContext?.presented;
   const viewportShared = viewportContext.viewport;
   const maxMoveIntervalMs = game.getRenderFrame().stepMs;
   const coalescerState = useSharedValue<PointerCoalescerState>(() =>
@@ -180,8 +185,15 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // stamp packets with that same generation, so the packet producer and
   // consumer agree by construction — no post-commit synchronization.
   const binding = useMemo(
-    () => new PointerBinding(action, game.input, () => viewportBinding.resolved, nextBindingGeneration++),
-    [action, game, viewportBinding],
+    () =>
+      new PointerBinding(
+        action,
+        game.input,
+        () => viewportBinding.resolved,
+        nextBindingGeneration++,
+        presentedCamera === undefined ? undefined : () => presentedCamera.value?.camera,
+      ),
+    [action, game, presentedCamera, viewportBinding],
   );
   const generation = binding.generation;
   // F6/F3: the layout epoch is adapter-owned (ref + UI mirror), bumped only

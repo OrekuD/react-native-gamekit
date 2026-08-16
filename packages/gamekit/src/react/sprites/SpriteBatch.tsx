@@ -20,7 +20,10 @@ import { Atlas, type SkImage } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 
+import type { CameraCut2D } from '../../camera2d';
+import type { Aabb2D } from '../../geometry/types';
 import type { CommitFrame } from '../../core/session/types';
+import type { ResolvedViewport2D } from '../../viewport2d/types';
 import type { SceneSnapshot } from '../../scene/types';
 import type { SceneMap } from '../../definition/types';
 import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
@@ -70,6 +73,20 @@ export interface SpriteBatchProps<
   readonly write: (write: SpriteBatchWrite, item: TItem, index: number) => void;
   /** Uniform anchor in [0, 1] relative to the selected frame. */
   readonly anchor?: { readonly x: number; readonly y: number };
+  /**
+   * Optional camera culling (T12.6): items whose authored world bounds fall
+   * outside the conservative visible region are hidden (zero-size slots)
+   * instead of drawn. Slot identity and capacity are unchanged; the
+   * simulation never knows culling happened. `bounds` maps an item to its
+   * world AABB and runs as a worklet on the UI runtime.
+   */
+  readonly cull?: {
+    readonly camera: SharedValue<CameraCut2D | undefined>;
+    readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
+    readonly bounds: (item: TItem) => Aabb2D;
+    /** Optional world-space padding around the visible region. */
+    readonly padding?: number;
+  };
 }
 
 function frameRectOf(
@@ -82,6 +99,48 @@ function frameRectOf(
     return { x: 0, y: 0, width: image.width, height: image.height };
   }
   return (source as LoadedSpriteSheet).frames[frame];
+}
+
+/**
+ * Conservative visible bounds for batch culling (T12.6).
+ *
+ * Worklet-safe inline version of the headless `paddedCameraBounds2D` —
+ * the presented camera is already validated at the public boundary, so the
+ * per-frame path allocates nothing and validates nothing.
+ */
+export function batchVisibleBounds2D(
+  camera: CameraCut2D | undefined,
+  viewport: ResolvedViewport2D | undefined,
+  padding: number,
+): Aabb2D | undefined {
+  'worklet';
+  if (camera === undefined || viewport === undefined) {
+    return undefined;
+  }
+  const view = viewport.visibleLogicalBounds;
+  const halfWidth = view.width / 2 / camera.camera.zoom;
+  const halfHeight = view.height / 2 / camera.camera.zoom;
+  const cos = Math.abs(Math.cos(camera.camera.rotationRadians));
+  const sin = Math.abs(Math.sin(camera.camera.rotationRadians));
+  const extentX = halfWidth * cos + halfHeight * sin + padding;
+  const extentY = halfWidth * sin + halfHeight * cos + padding;
+  return {
+    x: camera.camera.center.x - extentX,
+    y: camera.camera.center.y - extentY,
+    width: extentX * 2,
+    height: extentY * 2,
+  };
+}
+
+/** Axis-aligned intersection test, worklet-safe (no validation). */
+export function intersectsBounds2D(first: Aabb2D, second: Aabb2D): boolean {
+  'worklet';
+  return (
+    first.x < second.x + second.width &&
+    first.x + first.width > second.x &&
+    first.y < second.y + second.height &&
+    first.y + first.height > second.y
+  );
 }
 
 export function SpriteBatch<
@@ -97,6 +156,7 @@ export function SpriteBatch<
   select,
   write,
   anchor = { x: 0, y: 0 },
+  cull,
 }: SpriteBatchProps<TScenes, TSceneName, TItem>) {
   const image = source.image as SkImage;
   if (!Number.isInteger(capacity) || capacity <= 0) {
@@ -193,11 +253,28 @@ export function SpriteBatch<
       }
     }
     const count = policy.activeCount;
+    // T12.6: culling hides off-screen slots in place. The visible bounds
+    // are computed once per commit from the PRESENTED camera; hidden slots
+    // are cleared directly (zero size) without touching the author's write
+    // or reallocating buffers, so slot identity is stable across camera
+    // moves.
+    const visible =
+      cull === undefined
+        ? undefined
+        : batchVisibleBounds2D(cull.camera.value, cull.viewport.value, cull.padding ?? 0);
     for (let index = 0; index < items.length; index += 1) {
       const item = items[index];
-      if (item !== undefined) {
-        write(writeApi, item, index);
+      if (item === undefined) {
+        continue;
       }
+      if (visible !== undefined && !intersectsBounds2D(cull!.bounds(item), visible)) {
+        const slot = rects.value[index];
+        if (slot !== undefined) {
+          slot.setXYWH(0, 0, 0, 0);
+        }
+        continue;
+      }
+      write(writeApi, item, index);
     }
     // Hide every inactive slot.
     for (let index = count; index < capacity; index += 1) {
@@ -207,7 +284,7 @@ export function SpriteBatch<
       }
     }
     return count;
-  }, [commit, alpha, scene, select, write, writeApi]);
+  }, [commit, alpha, scene, select, write, writeApi, cull]);
 
   void activeCount;
 

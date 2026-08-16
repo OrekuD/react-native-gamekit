@@ -1,0 +1,88 @@
+---
+title: Add a camera to a game
+description: Follow a player with a dead zone, clamp to the world, teleport with cuts, and shake deterministically. The Sprite Field pattern.
+---
+
+This guide turns a fixed-screen game into a scrolling one: authored camera in scene state, follow with a dead zone, world clamping, explicit teleport cuts, and deterministic shake. The full, runnable version is the [Sprite Field](../examples/sprite-field) playground game.
+
+## 1. Put the camera in scene state
+
+The authored camera is game data. `create` seeds it, `update` advances it, and `snapshot` publishes it:
+
+```ts
+import { createCamera2D, followCamera2D, clampCameraBounds2D } from 'rn-gamekit';
+
+const LOGICAL_VIEW = { x: 0, y: 0, width: 320, height: 480 };
+const WORLD = { x: 0, y: 0, width: 2400, height: 1600 };
+
+create: () => ({
+  camera: createCamera2D({ center: { x: 160, y: 420 } }),
+  // ...
+}),
+```
+
+## 2. Follow the player each tick
+
+```ts
+update: ({ state, deltaSeconds }) => {
+  const followed = followCamera2D(state.camera, { x: state.playerX, y: state.playerY }, {
+    deadZone: { x: -60, y: -80, width: 120, height: 160 },
+  });
+  const camera = clampCameraBounds2D(followed, WORLD, LOGICAL_VIEW);
+  return { ...state, camera };
+},
+```
+
+The dead zone is centered on the camera: the camera holds still while the player is inside it, then moves just enough to bring the player back to the edge. `clampCameraBounds2D` keeps the visible region inside the world, centering an axis when the world is smaller than the view. Both helpers are pure, so the same schedule produces the same camera in Node tests.
+
+## 3. Bind the camera to GameView
+
+```tsx
+// camera.ts
+import { defineGameCamera2D } from 'rn-gamekit/react';
+
+export const camera = defineGameCamera2D({
+  select: (frame) => frame.current.camera,
+});
+```
+
+```tsx
+<GameView game={game} renderer={Renderer} camera2D={camera}>
+  <GamePointerInput game={game} action="move" />
+</GameView>
+```
+
+The renderer receives the presented camera as a prop; the pointer adapter discovers it from the mounted surface, so touches land on the world coordinates under your finger. The [Sprite Field renderer](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/sprite-field) shows the pattern, including the parallax layers and the culled enemy batch.
+
+## 4. Teleport with a cut
+
+Teleporting the player would make the camera fly across the world. Signal a snap instead:
+
+```tsx
+export const camera = defineGameCamera2D({
+  select: (frame) => frame.current.camera,
+  cut: (frame) => frame.current.teleported, // a boolean you set that tick
+});
+```
+
+A cut snaps presentation for one boundary — scene transitions and session replacement cut automatically, and the explicit predicate is for teleports and respawns.
+
+## 5. Shake deterministically
+
+```ts
+import { sampleCameraShake2D } from 'rn-gamekit';
+
+// In update, once a shake is active:
+const shaken = sampleCameraShake2D(baseCamera, {
+  seed: 42,                    // same seed, same shake
+  elapsedSeconds: shakeTime,   // simulation time since the shake began
+  durationSeconds: 0.3,
+  amplitude: 4,
+});
+```
+
+Two rules keep shake honest: the offset always applies to a stable base camera (never to the previous shake output, or the offsets accumulate), and the sampler returns the unmodified base exactly at the duration. Because the shake lives in the presented camera, what you see is what the pointer hits.
+
+## What runs where
+
+The follow, clamp, and shake helpers run in the scene update on the JS runtime, headless. The binding's interpolation runs on the UI runtime per display frame. React never sees camera values; the HUD reads quantized diagnostics through a commit listener (the [Camera Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/camera-lab) content shows the pattern).

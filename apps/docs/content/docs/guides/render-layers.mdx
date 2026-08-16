@@ -1,0 +1,75 @@
+---
+title: Render layers and culling
+description: Ordered parallax layers with GameLayer2D, the frozen zoom/rotation policy, and presentation-only visibility culling for SpriteBatch.
+---
+
+Layers and culling make large worlds cheap to draw without changing the simulation. This page covers the policy and the pattern; the [Sprite Field](../examples/sprite-field) renderer is the live version.
+
+## Ordered layers
+
+`GameLayer2D` sits inside `GameWorld2D` and draws its children with a per-axis parallax factor. JSX order is render order:
+
+```tsx
+<GameWorld2D viewport={viewport} camera={camera}>
+  <GameLayer2D parallax={{ x: 0.25, y: 0.25 }}>
+    <Background />
+  </GameLayer2D>
+  <GameLayer2D parallax={{ x: 0.5, y: 0.5 }}>
+    <Hills />
+  </GameLayer2D>
+  <GameLayer2D>
+    <World />
+  </GameLayer2D>
+</GameWorld2D>
+```
+
+The default factor is `{ x: 1, y: 1 }` — the primary layer. Factor 0 is camera-fixed on that axis; 0.5 moves at half the camera's speed. Parallax scales only the camera's center contribution: zoom and rotation apply fully at every factor, so the layer correction is a pure translation. There is no second z-index scheduler; if you need one, it's game logic.
+
+## What stays outside
+
+Screen-space chrome — scores, pause overlays, back buttons — is a React Native sibling outside `GameWorld2D`, never a layer. Camera transforms must not make app chrome drift or intercept gameplay input; the boundary is structural, not stylistic.
+
+## Visibility culling
+
+Culling is presentation-only. Off-screen entities keep simulating, colliding, and re-entering view.
+
+```ts
+import { getCameraVisibleBounds2D, intersectsCameraView2D, filterCameraVisible2D } from 'rn-gamekit';
+
+const visible = getCameraVisibleBounds2D(camera, LOGICAL_VIEW); // conservative world AABB
+const onScreen = intersectsCameraView2D(shape, camera, LOGICAL_VIEW, padding);
+const ids = filterCameraVisible2D(items, camera, LOGICAL_VIEW, 24); // stable order
+```
+
+The visible region is a conservative AABB — exact for unrotated cameras, a superset for rotated ones. False positives are acceptable; false negatives (a visible object popping out) are not.
+
+## SpriteBatch integration
+
+The batch hides off-screen slots in place — capacity and slot identity stay fixed, buffers are never reallocated:
+
+```tsx
+<SpriteBatch
+  scene="play"
+  commit={frame}
+  alpha={alpha}
+  source={sheet}
+  capacity={64}
+  select={({ current }) => current.enemies}
+  write={(write, enemy, index) => {
+    'worklet';
+    write.set(index, enemy.frame, enemy.x, enemy.y, enemy.rotation, enemy.scale, enemy.visible);
+  }}
+  cull={{
+    camera,
+    viewport,
+    padding: 32,
+    bounds: (enemy) => ({ x: enemy.x - 10, y: enemy.y - 10, width: 20, height: 20 }),
+  }}
+/>
+```
+
+The `bounds` mapper is a worklet that runs on the UI runtime once per commit; hidden slots become zero-size without touching the author's write path. Without a camera binding the batch draws everything, exactly as before.
+
+## Measuring
+
+Whether culling pays for your population is a measurement question: the [profiling harness](../advanced/profiling) compares sparse and dense fields with the camera still and moving, and the Camera Lab HUD reports visible-versus-total counts live.

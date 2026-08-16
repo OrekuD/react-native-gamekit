@@ -5,8 +5,9 @@ import Animated, { useReducedMotion, useSharedValue, withTiming } from 'react-na
 import {
   GamePointerInput,
   GameView,
-  type GameRendererProps,
   type GameAssetsState,
+  type GameCamera2DDefinition,
+  type GameRendererProps,
 } from 'rn-gamekit/react';
 import type {
   GameSession,
@@ -20,6 +21,11 @@ import { createGameSession } from 'rn-gamekit';
 import { paddleGame } from '../docs-examples/paddle-tutorial/game';
 import { PaddleRenderer } from '../docs-examples/paddle-tutorial/Renderer';
 import { collisionLabDefinition } from '../screens/collision-lab/collisionLabGame';
+import { spriteFieldCamera } from '../screens/sprite-field/spriteFieldCamera';
+import { cameraLabCamera } from '../screens/camera-lab/cameraLabCamera';
+import CameraLabContent from '../screens/camera-lab/CameraLabContent';
+import { CameraLabRenderer } from '../screens/camera-lab/CameraLabRenderer';
+import { createCameraLabSession } from '../screens/camera-lab/cameraLabGame';
 import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRenderer';
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
 import { createLabSession } from '../screens/lab/labSession';
@@ -366,6 +372,7 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     createSession: () => createSpriteFieldSession() as unknown as GameSession,
     pointer: true,
     assetBacked: true,
+    camera2D: spriteFieldCamera as unknown as GameCamera2DDefinition<never>,
   },
   'paddle': {
     renderer: PaddleRenderer as unknown as ComponentType<GameRendererProps<never>>,
@@ -380,6 +387,13 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     createSession: () => createGameSession(collisionLabDefinition) as unknown as GameSession,
     pointer: true,
     assetBacked: true,
+  },
+  'camera-lab': {
+    renderer: CameraLabRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: CameraLabContent,
+    createSession: () => createCameraLabSession() as unknown as GameSession,
+    pointer: true,
+    camera2D: cameraLabCamera as unknown as GameCamera2DDefinition<never>,
   },
 };
 

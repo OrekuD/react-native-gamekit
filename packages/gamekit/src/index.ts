@@ -1,3 +1,24 @@
+export {
+  clampCameraBounds2D,
+  createCamera2D,
+  filterCameraVisible2D,
+  followCamera2D,
+  getCameraVisibleBounds2D,
+  interpolateCamera2D,
+  intersectsCameraView2D,
+  logicalToWorld2D,
+  sampleCameraShake2D,
+  surfaceToWorld2D,
+  worldToLogical2D,
+  worldToSurface2D,
+} from './camera2d';
+export type {
+  Camera2D,
+  CameraCut2D,
+  CameraShakeOptions2D,
+  CameraViewShape2D,
+  FollowCamera2DOptions2D,
+} from './camera2d';
 export { createGameSession } from './core/session/createGameSession';
 export { GameSessionDisposedError, GameSessionLifecycleError } from './core/session/types';
 export type {

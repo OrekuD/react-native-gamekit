@@ -44,6 +44,12 @@ export const PLAYGROUND_GAMES = [
     label: 'Play',
   },
   {
+    id: 'camera-lab',
+    title: 'Camera Lab',
+    description: 'Follow, zoom, rotation, cuts, shake, world bounds, and culling on one screen.',
+    label: 'Run',
+  },
+  {
     id: 'sprite-field',
     title: 'Sprite Field',
     description: 'A retained animated character over an Atlas batch field.',

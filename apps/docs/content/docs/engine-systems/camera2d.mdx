@@ -1,0 +1,76 @@
+---
+title: Camera2D
+description: "An opt-in 2D camera shared by rendering and pointer input: world, logical view, and surface spaces, cuts, and interpolation."
+---
+
+Camera2D is the opt-in camera system: a world larger than the screen, a view that follows a player, zoom and rotation, and touches that stay aligned with what you see. When no camera is configured, Gamekit behaves exactly as it always did — the camera composes before the existing viewport, never instead of it.
+
+## The three spaces
+
+The camera sits between authored positions and the screen:
+
+```text
+world point -> camera transform -> logical view point -> viewport -> surface
+```
+
+- **World space** holds authored positions, collision geometry, and camera targets.
+- **Logical view space** is the region of the world the camera shows, an `Aabb2D` (for a 320 x 480 game, `{ x: 0, y: 0, width: 320, height: 480 }`).
+- **Surface space** is React Native layout and native touch coordinates.
+
+The forward transform is `logical = L + rotate(P - C, -R) * Z`, where `C` is the camera center, `Z` the zoom, `R` the rotation, and `L` the logical view center. The inverse reverses the same operations in reverse order, and the same pure functions back rendering and pointer input, so they cannot drift apart.
+
+```ts
+import { createCamera2D, worldToLogical2D, logicalToWorld2D } from 'rn-gamekit';
+
+const camera = createCamera2D({ center: { x: 100, y: 200 }, zoom: 2 });
+const logical = worldToLogical2D({ x: 105, y: 195 }, camera, LOGICAL_VIEW);
+const world = logicalToWorld2D(logical, camera, LOGICAL_VIEW); // round trip
+```
+
+Rotation is in radians, positive per the Skia convention. Zoom is a finite number greater than zero. Camera values are immutable plain data: no Skia matrices, no shared values, no mutable controllers. `createCamera2D()` fills missing fields from the identity camera.
+
+## Identity and the no-camera path
+
+With no `camera2D` prop, `GameView`, `GameWorld2D`, and `GamePointerInput` keep the exact pre-camera path. The identity camera — the camera that reproduces that path — is the camera whose center equals the logical view center with zoom 1 and no rotation. Games that never opt in pay nothing, and the no-camera fast path is retained.
+
+## One authoritative binding
+
+The camera definition is static and lives on `GameView` only:
+
+```tsx
+import { defineGameCamera2D } from 'rn-gamekit/react';
+
+const camera = defineGameCamera2D({
+  select: (frame) => frame.current.camera,
+});
+
+<GameView game={game} renderer={PlatformRenderer} camera2D={camera}>
+  <GamePointerInput game={game} action="move" />
+</GameView>
+```
+
+`GameView` evaluates the selector against committed frames, interpolates the presented camera with the same alpha clock the renderer uses, and publishes one read-only value to both the renderer and the pointer adapter. The pointer adapter never repeats the binding: it discovers the presented camera from the mounted surface. React never re-renders for camera movement.
+
+## Cuts and interpolation
+
+Center and zoom interpolate linearly; rotation takes the shortest arc. The presented `CameraCut2D` carries a monotonic `cutId`, and a new id snaps instead of interpolating. Cuts happen automatically on scene transitions, session replacement, and binding changes, and explicitly through the optional `cut` predicate for teleports and respawns. Pausing freezes the presented camera; resuming never interpolates through background time.
+
+## Behavior helpers
+
+The follow, bounds, and shake helpers are pure and headless — games call them inside the scene update and store the returned camera in scene state:
+
+```ts
+import { clampCameraBounds2D, followCamera2D, sampleCameraShake2D } from 'rn-gamekit';
+
+const followed = followCamera2D(camera, player, { deadZone: { x: -60, y: -80, width: 120, height: 160 } });
+const clamped = clampCameraBounds2D(followed, WORLD_BOUNDS, LOGICAL_VIEW);
+const shaken = sampleCameraShake2D(clamped, { seed: 7, elapsedSeconds: t, durationSeconds: 0.3, amplitude: 4 });
+```
+
+`followCamera2D` supports direct follow, an axis-aligned dead zone, per-axis follow, and a damping half-life. `clampCameraBounds2D` keeps the visible region inside a world bound (conservative for rotated views, centering axes where the world is smaller than the view). `sampleCameraShake2D` is deterministic from its seed and returns the unmodified base camera at its duration — and because the shake lives in the presented camera, pointer inversion stays aligned with what the player sees.
+
+## Layers, parallax, and culling
+
+`GameLayer2D` renders ordered layers with per-axis parallax; the [Render layers](../guides/render-layers) guide covers the policy. Visibility is presentation-only: `getCameraVisibleBounds2D`, `intersectsCameraView2D`, and `filterCameraVisible2D` compute what the camera sees, and `SpriteBatch` can hide off-screen slots without touching the simulation. Off-screen entities keep moving, colliding, and re-entering view.
+
+See [Add a camera to a game](../guides/add-a-camera) for the hands-on path, and the [Camera Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/camera-lab) for follow, zoom, rotation, cuts, shake, bounds, and culling on one screen.

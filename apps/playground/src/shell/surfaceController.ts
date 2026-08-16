@@ -26,6 +26,8 @@ import {
   type SurfaceSlot,
 } from './surfaceSlot.ts';
 
+import type { GameCamera2DDefinition } from 'rn-gamekit/react';
+
 /** One catalogued game: how the controller opens, renders, and binds it. */
 export interface SurfaceGameEntry {
   readonly renderer: ComponentType<GameRendererProps<never>>;
@@ -41,6 +43,12 @@ export interface SurfaceGameEntry {
   readonly pointerAction?: string;
   /** Asset-backed games publish a loading slot and wait for asset-ready. */
   readonly assetBacked?: boolean;
+  /**
+   * Optional camera binding (T12.7): supplied to the shell's GameView when
+   * this game is active. The renderer receives the presented camera and
+   * the pointer adapter discovers it from the mounted surface.
+   */
+  readonly camera2D?: GameCamera2DDefinition<never>;
 }
 
 export interface SurfaceControllerOptions {

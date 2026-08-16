@@ -33,6 +33,17 @@ export default function SpriteFieldContent({
     clip: string;
     animationMode: PlaySnapshot['animationMode'];
   } | null>(null);
+  // T12.7 diagnostics: an opt-in readout of camera + culling state. The
+  // values are QUANTIZED (whole units) so the dedupe gate publishes only
+  // when something meaningful changes; nothing re-renders per frame.
+  const [diagnostics, setDiagnostics] = useState<boolean>(false);
+  const [diag, setDiag] = useState<{
+    total: number;
+    visible: number;
+    cx: number;
+    cy: number;
+    zoom: number;
+  } | null>(null);
 
   // Render-phase: initialize the HUD from the real session exactly when it
   // becomes available (the sanctioned adjust-during-render pattern).
@@ -43,6 +54,9 @@ export default function SpriteFieldContent({
       clip: play.animation.clip,
       animationMode: play.animationMode,
     });
+    if (diagnostics) {
+      setDiag(quantizeDiagnostics(play));
+    }
   }
 
   // Low-frequency overlay: subscribed only to the real session's commits.
@@ -64,8 +78,14 @@ export default function SpriteFieldContent({
               animationMode: snapshot.animationMode,
             },
       );
+      // Quantized diagnostics: publishes only when the rounded values
+      // change, so a moving camera never drives React per frame.
+      setDiag((previous) => {
+        const next = quantizeDiagnostics(snapshot);
+        return previous !== null && sameDiagnostics(previous, next) ? previous : next;
+      });
     }).remove;
-  }, [session]);
+  }, [session, diagnostics]);
 
   return (
     <SafeAreaView pointerEvents="box-none" edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>
@@ -89,9 +109,29 @@ export default function SpriteFieldContent({
                 ? 'ready'
                 : `score ${hud.score} · ${hud.clip}`}
         </Text>
+        {diagnostics && diag !== null ? (
+          <Text style={styles.diagnosticsLine}>
+            cam ({diag.cx}, {diag.cy}) ×{diag.zoom.toFixed(1)} · {diag.visible}/{diag.total} enemies
+          </Text>
+        ) : null}
       </View>
 
       <View pointerEvents="box-none" style={styles.animationControls}>
+        <Pressable
+          accessibilityLabel="Toggle camera diagnostics"
+          accessibilityRole="button"
+          disabled={session === null}
+          onPress={() => {
+            setDiagnostics((current) => !current);
+          }}
+          style={({ pressed }) => [
+            styles.animationButton,
+            pressed && styles.animationButtonPressed,
+            diagnostics && styles.diagnosticsButtonOn,
+          ]}
+        >
+          <Text style={styles.buttonLabel}>Diag</Text>
+        </Pressable>
         <Pressable
           accessibilityLabel={`Change player animation. Current mode: ${hud?.animationMode ?? 'auto'}`}
           accessibilityRole="button"
@@ -136,6 +176,37 @@ export default function SpriteFieldContent({
   );
 }
 
+/** Quantize the diagnostics to whole units (T12.7): per-frame changes below
+ * one world unit never republish. */
+function quantizeDiagnostics(play: PlaySnapshot): {
+  total: number;
+  visible: number;
+  cx: number;
+  cy: number;
+  zoom: number;
+} {
+  return {
+    total: play.enemies.length,
+    visible: play.visibleEnemies,
+    cx: Math.round(play.camera.center.x),
+    cy: Math.round(play.camera.center.y),
+    zoom: Math.round(play.camera.zoom * 10) / 10,
+  };
+}
+
+function sameDiagnostics(
+  first: { cx: number; cy: number; zoom: number; total: number; visible: number },
+  second: { cx: number; cy: number; zoom: number; total: number; visible: number },
+): boolean {
+  return (
+    first.cx === second.cx &&
+    first.cy === second.cy &&
+    first.zoom === second.zoom &&
+    first.total === second.total &&
+    first.visible === second.visible
+  );
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -175,6 +246,19 @@ const styles = StyleSheet.create({
     left: 0,
     position: 'absolute',
     right: 0,
+  },
+  buttonLabel: {
+    color: '#e2e8f0',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  diagnosticsButtonOn: {
+    backgroundColor: 'rgba(34, 197, 94, 0.35)',
+  },
+  diagnosticsLine: {
+    color: '#4ade80',
+    fontVariant: ['tabular-nums'],
+    fontSize: 12,
   },
   animationButton: {
     alignItems: 'center',

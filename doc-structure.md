@@ -48,7 +48,8 @@ Docs
 │   ├── Animation                       ✅  (was sprite-animation.mdx)
 │   ├── Input                           ✅  pointer-input + input-guide merged
 │   ├── Assets                          ✅  (was assets.mdx)
-│   └── Collision                        ✅ (Collision2D)
+│   ├── Collision                        ✅  (Collision2D)
+│   └── Camera                           ✅  (Camera2D, T12.9)
 │
 ├── React                               ← the differentiator; explicit boundary
 │   ├── How Gamekit uses React          ✅  (does the loop re-render React? no)
@@ -66,7 +67,10 @@ Docs
 │   ├── Build a HUD that doesn't re-render  ✅
 │   ├── Draw hundreds of sprites        ✅
 │   ├── Load assets (boot → gameplay)   ✅
-│   └── Test your game headlessly       ✅
+│   ├── Test your game headlessly       ✅
+│   ├── Add a camera to a game          ✅  (T12.9)
+│   ├── Camera coordinates              ✅  (T12.9)
+│   └── Render layers and culling       ✅  (T12.9)
 │
 ├── Examples                            ← playable, source-linked
 │   ├── Brick Breaker                   ✅  (was reference/brick-breaker.mdx)

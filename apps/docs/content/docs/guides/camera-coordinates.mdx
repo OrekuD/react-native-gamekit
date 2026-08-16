@@ -1,0 +1,44 @@
+---
+title: Camera coordinates
+description: Convert between world, logical, and surface coordinates with the same pure functions the runtime uses — and keep pointer input aligned.
+---
+
+Camera math is one set of pure functions. The runtime, your game code, and your tests all call the same helpers, so a conversion written in a scene update can never drift from what the renderer draws.
+
+## The three conversions
+
+```ts
+import { worldToLogical2D, logicalToWorld2D, worldToSurface2D, surfaceToWorld2D } from 'rn-gamekit';
+
+// World -> logical view (through the camera):
+const logical = worldToLogical2D(worldPoint, camera, LOGICAL_VIEW);
+
+// Logical view -> world (the inverse):
+const back = logicalToWorld2D(logical, camera, LOGICAL_VIEW);
+
+// World -> surface, composed with the resolved viewport:
+const surface = worldToSurface2D(worldPoint, viewport, camera);
+
+// Surface -> world (what pointer inversion does):
+const world = surfaceToWorld2D(surface, viewport, camera);
+```
+
+`worldToSurface2D` and `surfaceToWorld2D` derive the camera's logical view from the resolved viewport's visible bounds, so they compose exactly the transform the renderer draws with. The round trip `surfaceToWorld2D(worldToSurface2D(p))` holds within the documented tolerance.
+
+## The identity camera
+
+The camera that reproduces the no-camera path is the camera whose center equals the logical view center, with zoom 1 and no rotation:
+
+```ts
+const identity = createCamera2D({
+  center: { x: 160, y: 240 }, // the 320 x 480 logical view center
+});
+```
+
+Games without a camera never touch this path at all; an explicit identity camera matches it exactly.
+
+## Pointer alignment
+
+`GamePointerInput` applies containment first (a `fit` letterbox begin is rejected before any conversion), then inverse-maps through the currently presented camera — the same generation the renderer drew that frame. Every move re-reads the presented camera, so a follow camera moving mid-drag keeps the world coordinate under your finger. Camera motion never cancels pointer ownership, and a hard cut never synthesizes touches.
+
+The [Camera Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/camera-lab) shows the crosshair: the world point from the pointer action renders exactly where you touched, through zoom, rotation, shake, and cuts.

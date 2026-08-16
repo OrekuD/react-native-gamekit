@@ -32,7 +32,16 @@ pnpm check          # lint -> typecheck -> test -> build, in that order
 5. **Expo Go is not a supported requirement.** The playground uses local native development builds via `expo prebuild` and `expo run:ios`/`expo run:android`.
 6. **One lockfile.** `apps/*` and `packages/*` share the root pnpm workspace with a single lockfile. Never initialize a nested package manager.
 7. **Framework-owned TypeScript configs.** Expo and Next.js extend their framework-owned base configs. The root `tsconfig.base.json` applies only to non-framework packages.
-8. **Documented provisional API only.** The `defineGame`, `defineScene`, `createGameSession`, and `GameView` shapes remain provisional until reference games validate them. Document only implemented runtime methods; scene transitions, `setScene`, `restart`, and a separate `resume` method do not exist yet.
+8. **Documented provisional API only.** The `defineGame`, `defineScene`,
+   `createGameSession`, and `GameView` shapes remain provisional until
+   reference games validate them. Document only implemented runtime methods.
+9. **Camera2D ownership rules (T12).** One `GameView`-owned presented
+   camera drives rendering AND pointer input through the same generation;
+   never compute a second input transform in a game screen. Camera state
+   lives in scene state, never in React render loops. Worklet-callable
+   camera helpers carry the `'worklet'` directive. Culling is
+   presentation-only and never changes simulation. The no-camera path stays
+   byte-for-byte; names stay explicitly 2D.
 
 ## Repository layout
 

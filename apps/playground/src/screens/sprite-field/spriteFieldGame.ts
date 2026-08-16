@@ -9,6 +9,9 @@
  */
 import {
   advanceSpriteAnimation,
+  clampCameraBounds2D,
+  filterCameraVisible2D,
+  followCamera2D,
   createGameSession,
   defineAssets,
   defineGame,
@@ -88,10 +91,33 @@ export const spriteFieldAssets = defineAssets({
 export const SPRITE_FIELD_CONFIG = {
   logicalWidth: 320,
   logicalHeight: 480,
-  playerSpeed: 90, // logical units per second
+  worldWidth: 2400,
+  worldHeight: 1600,
+  playerSpeed: 110, // logical units per second
   enemyCount: 24,
   enemyDrift: 14, // logical units per second
-  enemySpacing: 56,
+  enemySpacing: 120,
+  cameraDeadZone: { x: -70, y: -90, width: 140, height: 180 },
+} as const;
+
+/**
+ * The authored camera window (T12.7): the 320 x 480 region of the large
+ * world the camera shows at zoom 1. Matches the viewport's visible logical
+ * bounds, so scene-side camera math and the surface-side convenience
+ * conversions agree.
+ */
+export const SPRITE_FIELD_CAMERA_VIEW = {
+  x: 0,
+  y: 0,
+  width: SPRITE_FIELD_CONFIG.logicalWidth,
+  height: SPRITE_FIELD_CONFIG.logicalHeight,
+} as const;
+
+export const SPRITE_FIELD_WORLD_BOUNDS = {
+  x: 0,
+  y: 0,
+  width: SPRITE_FIELD_CONFIG.worldWidth,
+  height: SPRITE_FIELD_CONFIG.worldHeight,
 } as const;
 
 export interface EnemySnapshot {
@@ -130,6 +156,14 @@ export interface PlaySnapshot {
   readonly enemies: readonly EnemySnapshot[];
   readonly score: number;
   readonly elapsed: number;
+  /** The authored camera (T12.7): follows the player, clamped to the world. */
+  readonly camera: {
+    readonly center: { readonly x: number; readonly y: number };
+    readonly zoom: number;
+    readonly rotationRadians: number;
+  };
+  /** Diagnostics (T12.7): how many enemies the camera actually sees. */
+  readonly visibleEnemies: number;
 }
 
 export interface PlayState {
@@ -141,12 +175,13 @@ export interface PlayState {
   readonly enemies: readonly EnemySnapshot[];
   readonly score: number;
   readonly elapsed: number;
+  readonly camera: PlaySnapshot['camera'];
 }
 
-const WORLD_TOP = 24;
-const WORLD_BOTTOM = 456;
-const WORLD_LEFT = 16;
-const WORLD_RIGHT = 304;
+const WORLD_TOP = 40;
+const WORLD_BOTTOM = SPRITE_FIELD_CONFIG.worldHeight - 40;
+const WORLD_LEFT = 40;
+const WORLD_RIGHT = SPRITE_FIELD_CONFIG.worldWidth - 40;
 
 function initialEnemies(): readonly EnemySnapshot[] {
   const enemies: EnemySnapshot[] = [];
@@ -205,6 +240,7 @@ export const spriteFieldDefinition = defineGame({
         enemies: initialEnemies(),
         score: 0,
         elapsed: 0,
+        camera: { center: { x: 160, y: 420 }, zoom: 1, rotationRadians: 0 },
       }),
       update: ({ state, input, deltaSeconds }): PlayState => {
         const pointer = input.pointer('primary');
@@ -232,6 +268,12 @@ export const spriteFieldDefinition = defineGame({
           selectPlayerClip(moving, animationMode, state.animation),
           deltaSeconds,
         ) as SpriteAnimationState<PlayerAnimationClip>;
+        // T12.7: the camera follows with a dead zone and stays inside the
+        // world. Pure headless helpers; no React, no wall clock.
+        const followed = followCamera2D(state.camera, { x: playerX, y: playerY }, {
+          deadZone: SPRITE_FIELD_CONFIG.cameraDeadZone,
+        });
+        const camera = clampCameraBounds2D(followed, SPRITE_FIELD_WORLD_BOUNDS, SPRITE_FIELD_CAMERA_VIEW);
         const facing: 'left' | 'right' =
           pointer.position !== undefined && pointer.position.x < state.playerX - 2
             ? 'left'
@@ -260,6 +302,7 @@ export const spriteFieldDefinition = defineGame({
           enemies,
           score,
           elapsed: state.elapsed + deltaSeconds,
+          camera,
         };
       },
       snapshot: (context): PlaySnapshot => ({
@@ -271,6 +314,17 @@ export const spriteFieldDefinition = defineGame({
         enemies: context.state.enemies.map((enemy) => ({ ...enemy, animation: { ...enemy.animation } })),
         score: context.state.score,
         elapsed: context.state.elapsed,
+        camera: context.state.camera,
+        // Headless culling count (T12.7): the same conservative test the
+        // batch renderer applies per frame, computed once per commit here.
+        visibleEnemies: filterCameraVisible2D(
+          context.state.enemies.map((enemy, index) => ({
+            id: String(index),
+            bounds: { x: enemy.x - 10, y: enemy.y - 10, width: 20, height: 20 },
+          })),
+          context.state.camera,
+          SPRITE_FIELD_CAMERA_VIEW,
+        ).length,
       }),
     }),
   },

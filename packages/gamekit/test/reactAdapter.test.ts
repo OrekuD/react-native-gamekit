@@ -512,13 +512,13 @@ describe('PointerBinding adapter dispatch (feedback)', () => {
     const input = new RecordingInputController();
     const viewportToken = {};
     const first = createPointerBinding(
-      { input, action: 'primary', viewport: viewportToken },
+      { input, action: 'primary', viewport: viewportToken, camera: undefined },
       () => resolvedFor(390, 844),
       undefined,
     );
     assert.equal(first.created, true);
     const second = createPointerBinding(
-      { input, action: 'primary', viewport: viewportToken },
+      { input, action: 'primary', viewport: viewportToken, camera: undefined },
       () => resolvedFor(390, 844),
       first.entry,
     );
@@ -530,13 +530,13 @@ describe('PointerBinding adapter dispatch (feedback)', () => {
     const input = new RecordingInputController();
     const viewportToken = {};
     const first = createPointerBinding(
-      { input, action: 'primary', viewport: viewportToken },
+      { input, action: 'primary', viewport: viewportToken, camera: undefined },
       () => resolvedFor(390, 844),
       undefined,
     );
     const otherInput = new RecordingInputController();
     const second = createPointerBinding(
-      { input: otherInput, action: 'primary', viewport: viewportToken },
+      { input: otherInput, action: 'primary', viewport: viewportToken, camera: undefined },
       () => resolvedFor(390, 844),
       first.entry,
     );
@@ -550,12 +550,12 @@ describe('PointerBinding adapter dispatch (feedback)', () => {
   it('recreates when the viewport provider identity changes', () => {
     const input = new RecordingInputController();
     const first = createPointerBinding(
-      { input, action: 'primary', viewport: {} },
+      { input, action: 'primary', viewport: {}, camera: undefined },
       () => resolvedFor(390, 844),
       undefined,
     );
     const second = createPointerBinding(
-      { input, action: 'primary', viewport: {} },
+      { input, action: 'primary', viewport: {}, camera: undefined },
       () => resolvedFor(390, 844),
       first.entry,
     );
@@ -566,12 +566,12 @@ describe('PointerBinding adapter dispatch (feedback)', () => {
     const input = new RecordingInputController();
     const viewportToken = {};
     const first = createPointerBinding(
-      { input, action: 'primary', viewport: viewportToken },
+      { input, action: 'primary', viewport: viewportToken, camera: undefined },
       () => resolvedFor(390, 844),
       undefined,
     );
     const second = createPointerBinding(
-      { input, action: 'secondary', viewport: viewportToken },
+      { input, action: 'secondary', viewport: viewportToken, camera: undefined },
       () => resolvedFor(390, 844),
       first.entry,
     );

@@ -18,11 +18,14 @@ import {
 import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import type { CameraCut2D } from '../camera2d';
 import type { InputMap, SceneMap } from '../definition/types';
 import type { AssetGroupMap, LoadedAssets } from '../assets/types';
 import type { CommitFrame, GameSession } from '../core/session/types';
 import type { ResolvedViewport2D } from '../viewport2d';
 import { advanceAlpha } from './alphaClock';
+import type { GameCamera2DDefinition } from './camera2d/defineGameCamera2D';
+import { usePresentedCameraBinding } from './camera2d/usePresentedCameraBinding';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
 import type { GameViewInstrumentation } from './instrumentation';
@@ -42,6 +45,12 @@ export interface GameRendererProps<
   readonly alpha: SharedValue<number>;
   /** Latest resolved viewport shared with the input adapter. */
   readonly viewport: SharedValue<ResolvedViewport2D | undefined>;
+  /**
+   * The presented camera cut (T12.3), present only when the game opts in
+   * via `camera2D`. Undefined until the first committed camera; camera
+   * movement never re-renders React.
+   */
+  readonly camera?: SharedValue<CameraCut2D | undefined>;
   /** The stable loaded asset lease (T7.5); shape-only renderers omit it. */
   readonly assets?: LoadedAssets<TAssets>;
 }
@@ -63,6 +72,13 @@ export interface GameViewProps<
   readonly presentationKey?: string | number;
   /** The stable loaded asset lease; shape-only games omit it. */
   readonly assets?: LoadedAssets<TAssets>;
+  /**
+   * Optional static camera binding (T12.3). When absent, the exact current
+   * viewport path is preserved. GameView owns the presented camera; the
+   * renderer receives it as a prop and the pointer adapter discovers it
+   * from the mounted surface.
+   */
+  readonly camera2D?: GameCamera2DDefinition<CommitFrame<TScenes>>;
   /** Stable Skia renderer component for the session's scene snapshots. */
   readonly renderer: ComponentType<GameRendererProps<TScenes, TAssets>>;
   /** Optional measurement callbacks for the Performance Lab (F1). */
@@ -88,6 +104,19 @@ export interface GameViewport {
 }
 
 export const GameViewportContext = createContext<GameViewport | null>(null);
+
+/**
+ * Context supplying the presented camera to pointer input children.
+ *
+ * The shared value is owned by `GameView` (fed by the per-session
+ * presentation), so renderer and pointer adapter observe the same camera
+ * generation. `undefined` when the game has no camera.
+ */
+export interface GameCameraSurface {
+  readonly presented: SharedValue<CameraCut2D | undefined> | undefined;
+}
+
+export const GameCameraContext = createContext<GameCameraSurface | null>(null);
 
 /**
  * Mount a headless GameSession into a Skia canvas.
@@ -120,16 +149,21 @@ function GamePresentation<
   renderer,
   viewportValue,
   instrumentationRef,
+  cameraDefinition,
+  presentedCamera,
 }: {
   readonly game: GameSession<TScenes, TInput>;
   readonly assets: LoadedAssets<TAssets> | undefined;
   readonly renderer: ComponentType<GameRendererProps<TScenes, TAssets>>;
   readonly viewportValue: SharedValue<ResolvedViewport2D | undefined>;
   readonly instrumentationRef: { readonly current: GameViewInstrumentation | undefined };
+  readonly cameraDefinition: GameCamera2DDefinition<CommitFrame<TScenes>> | undefined;
+  readonly presentedCamera: SharedValue<CameraCut2D | undefined>;
 }) {
   const Renderer = renderer;
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
+  const cameraBinding = usePresentedCameraBinding(cameraDefinition, presentedCamera);
   // T10.6: the presentation gate mirrors CORE status, not callback-local
   // state — a direct session.pause() freezes presentation too. Idle holds
   // until the binding starts the session.
@@ -158,6 +192,7 @@ function GamePresentation<
     });
     const cleanupBinding = bindGameSession(game, (nextFrame) => {
       frame.value = nextFrame;
+      cameraBinding.commit(nextFrame);
       instrumentationRef.current?.onPresentCommit?.(nextFrame.revision, Date.now());
     });
     const cleanupLifecycle = bindAppLifecycle(AppState, {
@@ -178,8 +213,9 @@ function GamePresentation<
       cleanupLifecycle();
       cleanupBinding();
       statusSubscription.remove();
+      cameraBinding.dispose();
     };
-  }, [epoch, frame, game, running]);
+  }, [cameraBinding, epoch, frame, game, running]);
 
   // F1: the first UI frame that sees a new commit revision is reported back
   // to the RN runtime through scheduleOnRN — never by calling the JS hook
@@ -219,6 +255,7 @@ function GamePresentation<
     clockEpoch.value = nextState.epoch;
     clockRevision.value = nextState.revision;
     alpha.value = nextState.alpha;
+    cameraBinding.present(alpha.value);
   });
 
   return (
@@ -226,6 +263,7 @@ function GamePresentation<
       frame={frame}
       alpha={alpha}
       viewport={viewportValue}
+      {...(cameraDefinition === undefined ? {} : { camera: presentedCamera })}
       {...(assets === undefined ? {} : { assets })}
     />
   );
@@ -259,8 +297,13 @@ export function GameView<
   children,
   style,
   instrumentation,
+  camera2D,
 }: GameViewProps<TScenes, TInput, TAssets>) {
   const instrumentationRef = useRef(instrumentation);
+  // T12.3: GameView owns the presented camera shared value so renderer and
+  // pointer adapter observe the same generation. Camera movement writes
+  // only shared values; React never re-renders for it.
+  const presentedCamera = useSharedValue<CameraCut2D | undefined>(undefined);
 
   const bindingRef = useRef<ViewportBinding | null>(null);
   bindingRef.current = bindingForViewport(game.viewport, bindingRef.current);
@@ -269,6 +312,10 @@ export function GameView<
   const viewportContext = useMemo<GameViewport>(
     () => ({ binding, viewport: viewportValue }),
     [binding, viewportValue],
+  );
+  const cameraContext = useMemo<GameCameraSurface>(
+    () => ({ presented: camera2D === undefined ? undefined : presentedCamera }),
+    [camera2D, presentedCamera],
   );
 
   useEffect(() => {
@@ -288,34 +335,38 @@ export function GameView<
 
   return (
     <GameViewportContext.Provider value={viewportContext}>
-      <View
-        style={[styles.surface, style]}
-        onLayout={(event) => {
-          const { width, height } = event.nativeEvent.layout;
-          binding.setSurfaceSize({ width, height });
-          viewportValue.value = binding.resolved;
-        }}
-      >
-        <Canvas style={StyleSheet.absoluteFill}>
-          {/* RF6/T8.6: the per-session presentation is keyed by an explicit
-              presentation key when provided, otherwise by a stable
-              per-session identity — never object stringification — so the
-              frame/alpha/epoch initialize before the renderer can run. */}
-          <GamePresentation
-            key={presentationKey ?? sessionPresentationId(game)}
-            game={game}
-            assets={assets}
-            renderer={Renderer}
-            viewportValue={viewportValue}
-            instrumentationRef={instrumentationRef}
-          />
-        </Canvas>
-        {children === undefined ? null : (
-          <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-            {children}
-          </View>
-        )}
-      </View>
+      <GameCameraContext.Provider value={cameraContext}>
+        <View
+          style={[styles.surface, style]}
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            binding.setSurfaceSize({ width, height });
+            viewportValue.value = binding.resolved;
+          }}
+        >
+          <Canvas style={StyleSheet.absoluteFill}>
+            {/* RF6/T8.6: the per-session presentation is keyed by an explicit
+                presentation key when provided, otherwise by a stable
+                per-session identity — never object stringification — so the
+                frame/alpha/epoch initialize before the renderer can run. */}
+            <GamePresentation
+              key={presentationKey ?? sessionPresentationId(game)}
+              game={game}
+              assets={assets}
+              renderer={Renderer}
+              viewportValue={viewportValue}
+              instrumentationRef={instrumentationRef}
+              cameraDefinition={camera2D}
+              presentedCamera={presentedCamera}
+            />
+          </Canvas>
+          {children === undefined ? null : (
+            <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+              {children}
+            </View>
+          )}
+        </View>
+      </GameCameraContext.Provider>
     </GameViewportContext.Provider>
   );
 }
