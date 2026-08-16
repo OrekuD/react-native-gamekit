@@ -28,6 +28,7 @@ interface LabHudRecord {
   readonly total: number;
   readonly rawTouches: number;
   readonly forwarded: number;
+  readonly committed: number;
   readonly accepted: number;
   readonly rejectedLayoutEpoch: number;
   readonly rejectedBinding: number;
@@ -36,7 +37,7 @@ interface LabHudRecord {
   readonly roundTripError: number;
 }
 
-function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudRecord {
+function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters, committed: number): LabHudRecord {
   return {
     follow: snap.follow,
     rotating: snap.rotating,
@@ -51,12 +52,13 @@ function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudR
     total: snap.markers.length,
     rawTouches: counters.rawTouches,
     forwarded: counters.forwarded,
+    committed,
     accepted: counters.accepted,
     rejectedLayoutEpoch: counters.rejectedLayoutEpoch,
     rejectedBinding: counters.rejectedBinding,
     presentedCommits: counters.presentedCommits,
     uiObserved: counters.uiObserved,
-    roundTripError: snap.roundTripError,
+    roundTripError: counters.roundTripError,
   };
 }
 
@@ -75,6 +77,7 @@ function hudEqual(first: LabHudRecord, second: LabHudRecord): boolean {
     first.total === second.total &&
     first.rawTouches === second.rawTouches &&
     first.forwarded === second.forwarded &&
+    first.committed === second.committed &&
     first.accepted === second.accepted &&
     first.rejectedLayoutEpoch === second.rejectedLayoutEpoch &&
     first.rejectedBinding === second.rejectedBinding &&
@@ -119,6 +122,7 @@ export default function CameraLabContent({
   });
   useEffect(() => {
     const current = instrumentationRef.current;
+    current.setActive(true);
     onRunSurfaceEventRef.current?.({
       kind: 'instrumentation-attached',
       session,
@@ -128,6 +132,7 @@ export default function CameraLabContent({
       },
     });
     return () => {
+      current.setActive(false);
       if (game.status !== 'disposed') {
         onRunSurfaceEventRef.current?.({ kind: 'instrumentation-detached', session });
       }
@@ -160,7 +165,7 @@ export default function CameraLabContent({
         uiObserved: 0,
         roundTripError: 0,
       };
-      const next = recordOf(snap, counters);
+      const next = recordOf(snap, counters, (session.input as { sampledCount?: number }).sampledCount ?? 0);
       const last = lastPublishedRef.current;
       if (last !== undefined && hudEqual(last, next)) {
         return;
@@ -244,7 +249,7 @@ export default function CameraLabContent({
             {display.visible}/{display.total} markers · follow {display.follow ? 'on' : 'off'} · rotate {display.rotating ? 'on' : 'off'} · shake {display.shaking ? 'on' : 'off'} · cull {display.culling ? 'on' : 'off'} · bounds {display.debug ? 'on' : 'off'}
           </Text>
           <Text style={styles.hudLine}>
-            raw {display.rawTouches} · fwd {display.forwarded} · committed {display.accepted} · stale-layout {display.rejectedLayoutEpoch} · stale-binding {display.rejectedBinding} · commits {display.presentedCommits} · ui {display.uiObserved} · rt {display.roundTripError.toExponential(1)} · bump {rerenderBump}
+            raw {display.rawTouches} · fwd {display.forwarded} · accepted {display.accepted} · committed {display.committed} · stale-layout {display.rejectedLayoutEpoch} · stale-binding {display.rejectedBinding} · commits {display.presentedCommits} · ui {display.uiObserved} · rt {display.roundTripError.toExponential(1)} · bump {rerenderBump}
           </Text>
         </View>
       )}

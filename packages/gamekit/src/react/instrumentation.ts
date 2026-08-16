@@ -17,6 +17,8 @@
  */
 
 import type { CoalescedPointerEvent } from './pointerCoalescer';
+import type { CameraCut2D } from '../camera2d';
+import type { ResolvedViewport2D } from '../viewport2d';
 
 /** Raw touch kinds as observed by the manual gesture callbacks. */
 export type PointerStageKind = 'down' | 'move' | 'up' | 'cancel';
@@ -47,6 +49,19 @@ export interface GamePointerInstrumentation {
     seq: number,
     atMs: number,
   ) => void;
+  /**
+   * RN runtime: one ACCEPTED surface -> world conversion (T12-TF3), with
+   * the exact inputs and output of the authoritative binding — surface
+   * point, resolved mounted viewport, event-time presented camera cut, and
+   * the delivered world coordinate. Lab-only diagnostics; never a second
+   * gameplay transform.
+   */
+  readonly onPointerSample?: (sample: {
+    readonly surface: { readonly x: number; readonly y: number };
+    readonly viewport: ResolvedViewport2D;
+    readonly camera: CameraCut2D | undefined;
+    readonly world: { readonly x: number; readonly y: number };
+  }) => void;
   /** The trailing-flush sampler mounted (true) or unmounted (false). */
   readonly onSamplerChanged?: (mounted: boolean) => void;
 }

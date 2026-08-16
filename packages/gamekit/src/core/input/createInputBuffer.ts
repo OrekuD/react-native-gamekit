@@ -64,6 +64,7 @@ export function createInputBuffer<TInput extends InputMap>(
   // F1: monotonic count of accepted input events. The lab associates a commit
   // with the inputs its sampled step actually consumed via this counter.
   let acceptedCount = 0;
+  let sampledCount = 0;
 
   for (const [action, actionConfig] of Object.entries(input) as Array<[ActionName, { readonly type: InputActionKind }]>) {
     if (actionConfig.type === 'pointer') {
@@ -117,6 +118,9 @@ export function createInputBuffer<TInput extends InputMap>(
   const controller: InputController<ActionName> = Object.freeze({
     get acceptedCount() {
       return acceptedCount;
+    },
+    get sampledCount() {
+      return sampledCount;
     },
     press(action: ActionName) {
       assertLive();
@@ -262,6 +266,7 @@ export function createInputBuffer<TInput extends InputMap>(
   return {
     controller,
     sample() {
+      sampledCount += 1;
       const sampled = new Map<ActionName, { readonly kind: InputActionKind; readonly state: ButtonState | PointerState }>();
       for (const [action, state] of states) {
         if (state.kind === 'pointer') {

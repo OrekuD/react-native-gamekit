@@ -30,6 +30,7 @@ import {
   type PointerCoalescerInput,
   type PointerCoalescerState,
 } from './pointerCoalescer';
+import { packetCameraFor, type PointerCameraCapture2D } from './pointerCamera';
 import { PointerBinding, type PointerPacket } from './pointerBinding';
 
 /** Declared pointer action names of an input map. */
@@ -51,26 +52,6 @@ export interface GamePointerInputProps<TScenes extends SceneMap, TInput extends 
   readonly action: PointerActionName<TInput>;
   /** Optional measurement callbacks for the Performance Lab (F1). */
   readonly instrumentation?: GamePointerInstrumentation;
-}
-
-/**
- * T12-SF1: the event-time camera selector, workletized at MODULE scope so
- * every UI handler's call graph stays on the UI runtime. A move ALWAYS
- * carries its own capture (possibly `undefined` — the surface may not have
- * presented a camera yet); a captured undefined stays undefined and never
- * falls back to a later presentation. Edges without a stamp (begin/end/
- * cancel) use the presented camera sampled at their own event time.
- */
-function packetCameraFor(
-  forwarded: CoalescedPointerEvent,
-  presented: CameraCut2D | undefined,
-): CameraCut2D | undefined {
-  'worklet';
-  if (forwarded.kind === 'move') {
-    const stamp = forwarded.stamp as { readonly captured: true; readonly value: CameraCut2D | undefined } | undefined;
-    return stamp !== undefined ? stamp.value : presented;
-  }
-  return presented;
 }
 
 function advanceSharedCoalescer(
@@ -348,7 +329,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           x: touch.x,
           y: touch.y,
           nowMs: Date.now(),
-          stamp: { captured: true, value: cameraShared?.value },
+          stamp: { captured: true, value: cameraShared?.value } satisfies PointerCameraCapture2D,
         });
         for (const forwarded of batch) {
           instrumentation?.onForwarded?.(

@@ -3,6 +3,14 @@ import { logicalToWorld2D } from '../camera2d';
 import type { InputController } from '../core/input/types';
 import type { Point2D } from '../geometry/types';
 import { containsSurfacePoint, surfaceToWorld, type ResolvedViewport2D } from '../viewport2d';
+/** One accepted surface -> world conversion with its exact inputs (T12-TF3). */
+export interface PointerSample2D {
+  readonly surface: { readonly x: number; readonly y: number };
+  readonly viewport: ResolvedViewport2D;
+  readonly camera: CameraCut2D | undefined;
+  readonly world: { readonly x: number; readonly y: number };
+}
+
 import type { CoalescedPointerEvent } from './pointerCoalescer';
 
 /**
@@ -108,6 +116,7 @@ export class PointerBinding<TActionName extends string> {
   readonly #action: TActionName;
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
+  readonly #onSample: ((sample: PointerSample2D) => void) | undefined;
   readonly #generation: number;
   #disposed = false;
 
@@ -116,10 +125,12 @@ export class PointerBinding<TActionName extends string> {
     input: InputController<TActionName>,
     getViewport: () => ResolvedViewport2D | undefined,
     generation: number,
+    onSample?: (sample: PointerSample2D) => void,
   ) {
     this.#action = action;
     this.#input = input;
     this.#getViewport = getViewport;
+    this.#onSample = onSample;
     this.#generation = generation;
   }
 
@@ -134,10 +145,17 @@ export class PointerBinding<TActionName extends string> {
    */
   #toWorld(viewport: ResolvedViewport2D, point: Point2D, camera: CameraCut2D | undefined): Point2D {
     const logical = surfaceToWorld(viewport, point);
-    if (camera === undefined) {
-      return logical;
-    }
-    return logicalToWorld2D(logical, camera.camera, viewport.visibleLogicalBounds);
+    const world =
+      camera === undefined ? logical : logicalToWorld2D(logical, camera.camera, viewport.visibleLogicalBounds);
+    // T12-TF3: report one accepted conversion with its exact inputs and
+    // output — the lab measures the round trip from the real pipeline.
+    this.#onSample?.({
+      surface: { x: point.x, y: point.y },
+      viewport,
+      camera,
+      world,
+    });
+    return world;
   }
 
   /**

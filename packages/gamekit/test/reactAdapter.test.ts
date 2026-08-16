@@ -17,6 +17,7 @@ function resolvedFor(width: number, height: number): ResolvedViewport2D {
 class RecordingInputController implements InputController<string> {
   readonly events: string[] = [];
   acceptedCount = 0;
+  sampledCount = 0;
 
   press(action: string): void {
     this.events.push(`press:${action}`);

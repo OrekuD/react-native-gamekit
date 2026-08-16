@@ -21,6 +21,7 @@
  * cost is device-measured.
  */
 import { performance } from 'node:perf_hooks';
+import { pathToFileURL } from 'node:url';
 import { batchVisibleBounds2D, intersectsBounds2D } from '../src/react/sprites/batchVisibility.ts';
 import { createCamera2D, filterCameraVisible2D } from '../src/index.ts';
 import type { Aabb2D } from '../src/index.ts';
@@ -81,6 +82,20 @@ export interface ScenarioCounters {
   readonly writes: number;
   readonly visibleCount: number;
   readonly cameraCenterX: number;
+  /** Executable input identity: same field -> same fingerprint (T12-TF4). */
+  readonly fieldFingerprint: number;
+  /** Output checksum over the authored writes (T12-TF4). */
+  readonly outputChecksum: number;
+}
+
+/** A deterministic field fingerprint (length + coordinate sums). */
+export function fieldFingerprint(items: readonly Item[]): number {
+  let sum = items.length * 7919;
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index]!;
+    sum = (sum + item.bounds.x * 31 + item.bounds.y * 17 + item.bounds.width + item.bounds.height) | 0;
+  }
+  return sum;
 }
 
 export type ScenarioMode = 'no-camera' | 'static-camera' | 'moving' | 'moving-cull';
@@ -95,11 +110,20 @@ export function runScenario(
 ): ScenarioCounters {
   if (mode === 'no-camera') {
     let writes = 0;
+    let checksum = 0;
     for (const item of items) {
       writes += 1;
-      void item.bounds.x;
+      checksum = (checksum + item.bounds.x + item.bounds.y) | 0;
     }
-    return { predicateCalls: 0, filterCalls: 0, writes, visibleCount: items.length, cameraCenterX: -1 };
+    return {
+      predicateCalls: 0,
+      filterCalls: 0,
+      writes,
+      visibleCount: items.length,
+      cameraCenterX: -1,
+      fieldFingerprint: fieldFingerprint(items),
+      outputChecksum: checksum,
+    };
   }
 
   const camera = mode === 'moving' || mode === 'moving-cull' ? advanceCamera(STATIC_CAMERA, iteration) : STATIC_CAMERA;
@@ -112,26 +136,45 @@ export function runScenario(
     // The production SpriteBatch path: ONE visible-bounds computation and
     // ONE inline predicate per candidate.
     let predicateCalls = 0;
+    let checksum = 0;
     for (const item of items) {
       predicateCalls += 1;
       if (intersectsBounds2D(item.bounds, visible)) {
         writes += 1;
         visibleCount += 1;
+        checksum = (checksum + item.bounds.x + item.bounds.y) | 0;
       }
     }
-    return { predicateCalls, filterCalls: 0, writes, visibleCount, cameraCenterX: camera.center.x };
+    return {
+      predicateCalls,
+      filterCalls: 0,
+      writes,
+      visibleCount,
+      cameraCenterX: camera.center.x,
+      fieldFingerprint: fieldFingerprint(items),
+      outputChecksum: checksum,
+    };
   }
 
   // static-camera and moving WITHOUT culling: bounds computation (camera
   // work) plus the plain write loop — no predicate, no filter.
   const predicateCalls = 0;
+  let checksum = 0;
   for (const item of items) {
     writes += 1;
     visibleCount += 1;
-    void item.bounds.x;
+    checksum = (checksum + item.bounds.x + item.bounds.y) | 0;
     void visible;
   }
-  return { predicateCalls, filterCalls: 0, writes, visibleCount, cameraCenterX: camera.center.x };
+  return {
+    predicateCalls,
+    filterCalls: 0,
+    writes,
+    visibleCount,
+    cameraCenterX: camera.center.x,
+    fieldFingerprint: fieldFingerprint(items),
+    outputChecksum: checksum,
+  };
 }
 
 /** The allocating public filter, measured separately (headless API only). */
@@ -165,14 +208,32 @@ const dense = makeField(512, 2400, 11);
 const ITERATIONS = 3000;
 const WARMUP = 300;
 
-console.log('Camera2D culling benchmark (Node, headless — UI/GPU cost is device-measured)');
-for (const [label, items] of [['sparse', sparse], ['dense', dense]] as const) {
-  for (const mode of ['no-camera', 'static-camera', 'moving', 'moving-cull'] as const) {
-    bench(`${label} ${mode}`, (iteration) => {
-      runScenario(items, mode, iteration);
+/**
+ * The timed loops run ONLY when this file is executed directly (T12-TF4):
+ * importing the scenario helpers does zero timed work and produces zero
+ * output.
+ */
+function isDirectExecution(): boolean {
+  if (typeof process === 'undefined' || process.argv[1] === undefined) {
+    return false;
+  }
+  try {
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectExecution()) {
+  console.log('Camera2D culling benchmark (Node, headless — UI/GPU cost is device-measured)');
+  for (const [label, items] of [['sparse', sparse], ['dense', dense]] as const) {
+    for (const mode of ['no-camera', 'static-camera', 'moving', 'moving-cull'] as const) {
+      bench(`${label} ${mode}`, (iteration) => {
+        runScenario(items, mode, iteration);
+      }, ITERATIONS, WARMUP);
+    }
+    bench(`${label} filter-api (allocating)`, (iteration) => {
+      runFilterApi(items, advanceCamera(STATIC_CAMERA, iteration));
     }, ITERATIONS, WARMUP);
   }
-  bench(`${label} filter-api (allocating)`, (iteration) => {
-    runFilterApi(items, advanceCamera(STATIC_CAMERA, iteration));
-  }, ITERATIONS, WARMUP);
 }

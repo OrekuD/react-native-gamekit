@@ -64,4 +64,11 @@ export interface InputController<TActionName extends string> {
    * inputs its fixed step actually sampled.
    */
   readonly acceptedCount: number;
+  /**
+   * The number of fixed-step input samples taken by the session (T12-TF3):
+   * the authoritative committed boundary — one increment per tick, whether
+   * or not any pointer or button changed. Distinct from the dispatch-stage
+   * `acceptedCount`.
+   */
+  readonly sampledCount: number;
 }

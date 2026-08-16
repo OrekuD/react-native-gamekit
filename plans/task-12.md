@@ -2,16 +2,14 @@
 
 ## Status
 
-**T12.1-T12.9 implemented; F1-F8, RF1-RF7, and SF1-SF4 review
-findings fixed; automated gate green; device rows open.** The
-pointer worklet call graph is fully workletized with explicit
-event-time camera captures, UI counters transfer to RN instead
-of synchronous cross-runtime reads, validation covers nested
-payloads with a strict full-camera clone, and the benchmark
-scenarios are executable with work counters. `pnpm check` exits
-0; the physical-device matrix remains unchecked.
-create competing `Point2D`, `Vector2D`, or
-`Aabb2D` types.
+**T12.1-T12.9 implemented; F1-F8, RF1-RF7, SF1-SF4, and TF1-TF4
+review findings fixed; automated gate green; device rows open.**
+The pointer worklet graph is recursively verified, UI counters
+transfer at the 8 Hz diagnostics cadence with an active gate,
+committed and round-trip diagnostics come from the real mounted
+pipeline, and the benchmark is import-safe with executable
+operation counters. `pnpm check` exits 0; the physical-device
+matrix remains unchecked.
 
 ## Objective
 
@@ -2071,6 +2069,252 @@ of done has been reopened above for this reason.
 - [x] Reconcile T12.8, the benchmark description, the definition of done,
       and the top-level status with executable evidence.
 - [x] Run the normal gate only after the focused fixes are green.
+- [x] Leave all nine physical-device rows unchecked until run on the named
+      hardware.
+
+## Third follow-up feedback — review of `0c84f16`
+
+This review is limited to the SF1-SF4 fix commit and does not rerun the
+reported workspace gate. The production `packetCameraFor` helper is now at
+module scope with a worklet directive and an explicit captured-undefined
+state, the duplicate coalescer branch is gone, strict selector cloning is in
+place, and the nested validation paths reviewed here are correctly guarded.
+The remaining work is evidence and diagnostics correctness rather than a
+request to replace those fixes.
+
+### T12-TF1 — Make the pointer worklet contract fail on a non-worklet helper and test the real packet selector
+
+**Priority:** Important
+
+The new call-graph test allowlists `packetCameraFor`, but `analyze()` never
+inspects the helper declaration or recursively validates its body. The
+negative test strips the helper's directive and then merely asserts that the
+directive is absent; it never reruns the analyzer or asserts that the
+contract rejects the changed source. It therefore passes precisely when the
+regression it claims to catch is present. `flushBody()` also reads the
+module-level `source` rather than the source text supplied to `analyze()`, so
+mutated fixtures cannot exercise the trailing-flush callback.
+
+The "adapter seam" tests independently reimplement `packetCameraFor` inside
+a local `forward()` function. They prove the test's copy of the rule, not the
+function called by `GamePointerInput`; the two can drift while all tests stay
+green. The current production implementation looks correct, but its claimed
+regression protection is not real.
+
+#### Required approach
+
+- [x] Parse module helpers as part of the same AST call graph. Starting from
+      every RNGH UI handler and the trailing frame callback, recursively
+      inspect each project-owned callee and require a `'worklet'` directive.
+- [x] Classify every call-expression shape. Permit specifically approved
+      runtime APIs and `Math` methods; reject unapproved identifier,
+      property-access, element-access, and computed callees rather than
+      silently ignoring shapes the extractor does not recognize.
+- [x] Make all body extraction consume the `text` argument under analysis;
+      remove the global-source dependency from `flushBody()`.
+- [x] Move the packet-camera rule into a small internal module if necessary
+      so both `GamePointerInput` and the focused test call the same function.
+      It need not be exported from the package's public entry point.
+- [x] Remove the lookalike `forward()` implementation from the test. Exercise
+      the real selector for immediate moves, deferred moves, latest-of-many,
+      captured undefined, and the current-camera end edge.
+
+#### RED-first evidence
+
+- [x] Strip `packetCameraFor`'s directive, run the real analyzer, and assert a
+      specific `handler -> packetCameraFor: missing worklet directive`
+      failure. The test must fail against the stripped fixture.
+- [x] Add independent negative fixtures for an ordinary namespace method,
+      object method, and element-access call inside a handler or reachable
+      helper.
+- [x] Mutate the trailing-flush body through the analyzer's input string and
+      prove the mutation is detected.
+- [x] Introduce a temporary fallback regression in the actual selector
+      (`stamp.value ?? presented`) and prove the captured-undefined test turns
+      red before restoring the implementation.
+
+### T12-TF2 — Throttle the Camera Lab's UI-to-RN transfer and repair the empty contract test
+
+**Priority:** Important
+
+The previous review required transfer at the diagnostic cadence, but
+`useCameraLabInstrumentation()` currently calls `scheduleOnRN()` from an
+always-active `useFrameCallback` on every display frame, even when neither UI
+counter changed. On a 120 Hz device this creates up to 120 cross-runtime
+allocations and RN calls per second for a HUD that publishes at 8 Hz. The lab
+therefore perturbs the UI/RN pipeline it is intended to observe.
+
+The worklet passes `receiveUiSnapshotRef.current` across the runtime boundary
+even though `receiveUiSnapshot` already has stable `useCallback` identity.
+Capturing a React ref in the UI closure adds an unnecessary serialized
+indirection and does not provide live-ref semantics on the UI runtime.
+Finally, the test named `keeps readCounters free of shared-value reads`
+extracts a body into `arrow` and performs no assertion at all.
+
+#### Required approach
+
+- [x] Keep the UI counters in shared values, but add UI-owned last-transfer
+      time and last-sent counters. Schedule a snapshot only when counters
+      changed and the 125 ms diagnostic interval elapsed. If final counts are
+      required, define one explicit terminal flush path.
+- [x] Capture the stable RN receiver directly in the frame worklet; remove
+      `receiveUiSnapshotRef` unless a mounted test demonstrates a real need
+      for it.
+- [x] Keep the transfer disabled when Camera Lab instrumentation is detached
+      or inactive so other games pay no frame callback or bridge cost.
+- [x] Make `readCounters()` remain a pure RN-ref read; it must never touch a
+      UI-owned shared value, schedule work, or allocate a cross-runtime
+      request.
+
+#### RED-first evidence
+
+- [x] Drive a controllable frame callback for one simulated second at 120 Hz
+      with unchanged counters and assert zero repeated transfers after the
+      initial snapshot.
+- [x] Change counters continuously for that second and assert transfers are
+      bounded by the documented 8 Hz cadence, with the latest values retained.
+- [x] Detach/unmount, drive more frames, and assert no receiver is called.
+- [x] Replace the empty `readCounters` test with a real AST assertion that its
+      complete callback body contains no `.value` access; include a mutated
+      negative fixture that must fail.
+
+### T12-TF3 — Source “committed” and round-trip diagnostics from the mounted input/presentation pipeline
+
+**Priority:** Important
+
+The HUD labels `acceptedRef` as `committed`, but that ref increments in
+`onDispatchResult` as soon as `PointerBinding.dispatch()` accepts a packet.
+Acceptance on RN is not consumption by a fixed simulation step, so the
+required raw -> forwarded -> accepted -> committed attribution is still
+missing and the current label is misleading.
+
+`roundTripError` is calculated inside the headless scene snapshot with a
+synthetic 320 x 480 viewport, the authored `state.camera`, and a fixed probe.
+That repeats the pure transform identity already covered by unit tests. It
+does not observe the mounted surface dimensions, interpolated presented
+camera, event-time camera stamp, or world coordinate delivered by the pointer
+binding, so it cannot reveal the split-transform failure the Camera Lab is
+supposed to diagnose.
+
+#### Required approach
+
+- [x] Keep `accepted` as a separately named dispatch-stage counter. Add a
+      committed/sampled counter at the authoritative fixed-step input-sample
+      boundary, with an explicit definition for coalesced movement and edge
+      events. Do not infer it by renaming accepted dispatches.
+- [x] Measure round-trip error from a real accepted pointer sample: preserve
+      its surface coordinate, resolved mounted viewport, event-time presented
+      camera cut, and delivered world coordinate; project that world point
+      back to surface and compare it with the original surface point.
+- [x] Keep this diagnostic path optional and lab-only. Do not expose or
+      duplicate a second gameplay transform, and do not make the simulation
+      depend on presentation diagnostics.
+- [x] If either metric is intentionally deferred with the remount counters
+      and viewport presets, remove it from the current HUD/completion claims
+      instead of displaying a proxy under the promised name.
+
+#### RED-first evidence
+
+- [x] Queue multiple accepted packets between fixed steps and prove accepted
+      advances immediately while committed advances only when the step samples
+      them according to the frozen coalescing rule.
+- [x] Pause before sampling and prove accepted and committed remain visibly
+      distinct; resume without fabricating a commit for discarded input.
+- [x] Mount a non-identity fit viewport with camera interpolation, dispatch a
+      known surface point, and assert the recorded round-trip uses the mounted
+      viewport and event-time presented cut. A synthetic identity viewport
+      must make this test fail.
+
+### T12-TF4 — Separate benchmark runners from the executable and replace no-op evidence
+
+**Priority:** Important
+
+`camera2d.benchmarkContract.test.ts` imports
+`scripts/benchmark-camera2d.ts`, but that module immediately creates both
+fields, runs every 3,300-iteration benchmark, and writes results to the
+console. Unit-test import therefore performs the benchmark as an uncontrolled
+side effect before any assertion runs. This slows and destabilizes the normal
+test gate and makes the runner unsuitable for reuse.
+
+The allocating-filter test ends with
+`assert.ok(!('predicateCalls' in {}), 'no-op')`; it proves nothing about the
+filter path. The identical-population test only checks that four results were
+collected and compares two write counts, while the static/no-camera test uses
+the returned camera sentinel as its evidence rather than counting the actual
+visible-bounds work. The implementation now has better-separated paths, but
+the executable contract still overstates what its tests prove.
+
+#### Required approach
+
+- [x] Move pure field/scenario runners into an import-safe module and keep the
+      timed loops plus console output in a separate CLI entry, or add a robust
+      direct-execution guard. Importing scenario helpers must do no timed work
+      and produce no output.
+- [x] Return explicit counters for visible-bounds calculations, camera
+      advances, predicates, allocating-filter calls, candidate count, writes,
+      and visible output. Counters must be incremented at the operation sites,
+      not inferred from mode names or sentinel return values.
+- [x] Feed each mode the exact same immutable field and record an input
+      identity/fingerprint and output checksum so comparable populations and
+      sinks are executable facts.
+- [x] Keep the public allocating filter as its own named scenario and report
+      its allocation-bearing result separately from SpriteBatch's inline
+      predicate path.
+
+#### RED-first evidence
+
+- [x] Import the scenario module under a console spy and assert zero output
+      and zero automatic benchmark iterations.
+- [x] Assert exact per-mode operation counts, including one bounds calculation
+      per camera iteration, one camera advance per moving iteration, one
+      predicate per culling candidate, and one allocating-filter call only in
+      the filter scenario.
+- [x] Remove every no-op assertion. Mutate each returned counter or population
+      fingerprint in a focused negative fixture and prove the relevant test
+      fails for the claimed reason.
+
+> **T12-TF1..TF4 fix record.** TF1: the packet-camera rule moved to an
+> internal module (`src/react/pointerCamera.ts`) shared by GamePointerInput
+> and the focused tests; the analyzer is RECURSIVE — it follows every
+> project-owned callee across its module sources and requires the worklet
+> directive on each helper body, classifies every call shape (identifier,
+> property, element, computed), consumes the analyzed text for the
+> trailing-flush body, and reports a specific `packetCameraFor: missing
+> worklet directive` failure when the directive is stripped. A temporary
+> `stamp.value ?? presented` fallback in the REAL selector turned the
+> captured-undefined test red before restoring. TF2: the UI -> RN transfer
+> is throttled — UI-owned last-transfer time and last-sent counters gate
+> `scheduleOnRN` to the 125 ms diagnostics cadence, the stable receiver is
+> captured directly (no ref indirection), and an `active` shared value
+> disables the transfer while detached (mounted tests drive a controllable
+> frame callback at 120 Hz: zero transfers with unchanged counters,
+> cadence-bounded with changing counters, none after unmount). TF3:
+> `sampledCount` on the input controller counts the authoritative
+> fixed-step samples (distinct from the dispatch-stage accepted counter —
+> mounted tests prove accepted advances immediately while committed waits
+> for the tick and pause holds it); `onPointerSample` reports each accepted
+> surface -> world conversion with its exact viewport and event-time cut,
+> and the lab's round-trip error is measured by back-projecting the
+> DELIVERED world coordinate (the headless snapshot proxy was removed). A
+> synthetic identity viewport makes the mounted test fail. TF4: the
+> benchmark's timed loops run only under a direct-execution guard (imports
+> do zero work and zero output — console-spy test), the runners return
+> operation counters plus an input fingerprint and output checksum counted
+> at the operation sites, and every no-op assertion was replaced with
+> executable comparisons and negative fixtures.
+>
+
+### Third follow-up completion record
+
+- [x] Resolve T12-TF1 through T12-TF4 with focused RED suites.
+- [x] Keep the current production camera-capture and strict-validation fixes
+      while repairing their regression evidence.
+- [x] Ensure Camera Lab diagnostics are lower-frequency than the pipeline they
+      observe and are named for the lifecycle stage they actually measure.
+- [x] Keep benchmark execution opt-in and its imported scenario helpers pure.
+- [x] Reconcile the top-level status and SF1-SF4 fix record with the resulting
+      evidence.
+- [x] Run the normal gate only after focused fixes are green.
 - [x] Leave all nine physical-device rows unchecked until run on the named
       hardware.
 

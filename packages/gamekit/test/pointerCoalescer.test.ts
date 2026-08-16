@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { packetCameraFor } from '../src/react/pointerCamera.ts';
 import { describe, it } from 'node:test';
 
 import {
@@ -232,14 +233,13 @@ describe('discriminated camera capture through the adapter seam (T12-SF1)', () =
     return { captured: true, value };
   }
 
+    // The REAL packet selector from the internal module — the same function
+  // GamePointerInput calls — so the tests can never drift from production
+  // (T12-TF1).
   function forward(batch: readonly { kind: string; x?: number; y?: number; stamp?: unknown }[], presented: unknown): unknown[] {
-    // The adapter's packet builder: moves use the module helper semantics.
     const packets: unknown[] = [];
     for (const event of batch) {
-      const camera =
-        event.kind === 'move' && event.stamp !== undefined
-          ? (event.stamp as { captured: true; value: unknown }).value
-          : presented;
+      const camera = packetCameraFor(event as never, presented as never);
       packets.push({ kind: event.kind, x: event.x, y: event.y, camera });
     }
     return packets;

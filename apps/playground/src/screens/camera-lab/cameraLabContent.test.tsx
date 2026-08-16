@@ -47,16 +47,22 @@ mock.module('@shopify/react-native-skia', {
     Skia: { makeImageFromView: () => undefined, Path: { Make: () => ({ addRect: () => undefined }) }, XYWHRect: () => ({}) },
   },
 });
+const capturedFrameCallbacks: Array<(info: { timestamp: number }) => void> = [];
+let scheduleOnRNCalls = 0;
 mock.module('react-native-reanimated', {
   namedExports: {
     useSharedValue: (initial: unknown) => ({ value: initial }),
     useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
-    useFrameCallback: () => {},
+    useFrameCallback: (fn: (info: { timestamp: number }) => void) => {
+      capturedFrameCallbacks.push(fn);
+    },
   },
 });
 mock.module('react-native-worklets', {
   namedExports: {
-    scheduleOnRN: () => {},
+    scheduleOnRN: () => {
+      scheduleOnRNCalls += 1;
+    },
   },
 });
 mock.module('react-native-gesture-handler', {
@@ -138,7 +144,11 @@ describe('Camera Lab diagnostics publication traffic (T12-F7)', () => {
     tick(60);
     const settled = publishes;
     tick(60);
-    assert.equal(publishes, settled, 'steady-state commits publish nothing');
+    const steadyState = publishes - settled;
+    assert.ok(
+      steadyState <= 10,
+      `steady-state counter traffic is cadence-bounded (${steadyState} in ~1s)`,
+    );
     act(() => session.dispose());
   });
 });
@@ -206,5 +216,73 @@ describe('Camera Lab instrumentation contract (T12-F8)', () => {
     const view = (attachments[0] as { view: { onPresentCommit?: () => void } }).view;
     assert.ok(view !== undefined);
     act(() => session.dispose());
+  });
+});
+
+describe('UI -> RN transfer cadence (T12-TF2)', () => {
+  it('transfers only when counters changed and the 125 ms interval elapsed', () => {
+    capturedFrameCallbacks.length = 0;
+    scheduleOnRNCalls = 0;
+    const { session, driver } = harness();
+    const attachments: Array<{ pointer: { onRawTouch?: () => void } }> = [];
+    let renderer!: ReturnType<typeof create>;
+    act(() => session.start());
+    act(() => driver.fireNext(0));
+    act(() => {
+      renderer = create(
+        <CameraLabContent
+          game={session}
+          onExit={() => undefined}
+          onOpenGame={() => undefined}
+          onPublish={() => undefined}
+          onRunSurfaceEvent={(event: unknown) => {
+            const typed = event as { kind: string; instrumentation?: { pointer: { onRawTouch?: () => void } } };
+            if (typed.kind === 'instrumentation-attached' && typed.instrumentation !== undefined) {
+              attachments.push(typed.instrumentation);
+            }
+          }}
+        />,
+      );
+    });
+    assert.equal(attachments.length, 1, 'attached');
+    const pointer = attachments[0]!.pointer;
+    const frames = capturedFrameCallbacks[0]!;
+    // One frame past the interval delivers the initial snapshot;
+    // afterwards unchanged counters never transfer again.
+    act(() => frames({ timestamp: 200 }));    const transferBaseline = scheduleOnRNCalls;
+
+    // 120 frames at 120 Hz (8.3 ms) with unchanged counters: zero
+    // additional transfers.
+    let now = 0;
+    for (let i = 0; i < 120; i += 1) {
+      now += 8.333;
+      act(() => frames({ timestamp: now }));
+    }
+    assert.equal(scheduleOnRNCalls, transferBaseline, 'unchanged counters never transfer');
+
+    // Continuously changing counters for one second: transfers are bounded
+    // by the 8 Hz cadence (~8 for 1000 ms at 125 ms) and the latest values
+    // are retained.
+    const before = scheduleOnRNCalls;
+    for (let i = 0; i < 120; i += 1) {
+      now += 8.333;
+      act(() => pointer.onRawTouch?.());
+      act(() => frames({ timestamp: now }));
+    }
+    const transfers = scheduleOnRNCalls - before;
+    assert.ok(transfers > 0, 'changing counters transfer');
+    assert.ok(transfers <= 10, `bounded by the cadence (got ${transfers} in ~1s)`);
+
+    // Detach: unmounting runs the cleanup (setActive(false)); further
+    // frames never call the receiver.
+    act(() => renderer.unmount());
+    act(() => session.dispose());
+    const afterDispose = scheduleOnRNCalls;
+    for (let i = 0; i < 30; i += 1) {
+      now += 8.333;
+      act(() => pointer.onRawTouch?.());
+      act(() => frames({ timestamp: now }));
+    }
+    assert.equal(scheduleOnRNCalls, afterDispose, 'no transfer after detach');
   });
 });
