@@ -49,6 +49,9 @@ export interface SurfaceGameEntry {
    * the pointer adapter discovers it from the mounted surface.
    */
   readonly camera2D?: GameCamera2DDefinition<never>;
+  /** The game may attach instrumentation-only pairs to its ready binding
+   * (T12-RF1); the attach shares the base session and never retires it. */
+  readonly instrumented?: boolean;
 }
 
 export interface SurfaceControllerOptions {
@@ -170,9 +173,34 @@ export class SurfaceController {
     });
   }
 
-  /** Performance Lab attach/detach, valid only for the active lab request. */
+  /**
+   * Lab run/instrumentation events for the active request.
+   *
+   * Performance Lab runs keep the owned-session path (perf-lab only).
+   * Instrumentation-only events (T12-RF1) are gated by the catalog's
+   * `instrumented` capability and validated against the exact active
+   * session inside the reducer — they never retire or dispose it.
+   */
   runEvent(event: RunSurfaceEvent): void {
-    if (this.slot.gameId !== LAB_GAME_ID || this.slot.status !== 'ready') {
+    if (this.slot.status !== 'ready') {
+      return;
+    }
+    if (event.kind === 'instrumentation-attached' || event.kind === 'instrumentation-detached') {
+      const entry = this.options.games[this.slot.gameId ?? ''];
+      if (entry === undefined || entry.instrumented !== true) {
+        return;
+      }
+      const reduction = reduceSurfaceState(this.slot, event as never);
+      if (reduction.slot !== this.slot) {
+        this.slot = reduction.slot;
+        this.options.onSlot(reduction.slot);
+      }
+      for (const session of reduction.disposable) {
+        this.options.disposeSession(session);
+      }
+      return;
+    }
+    if (this.slot.gameId !== LAB_GAME_ID) {
       return;
     }
     if (event.kind === 'attach') {

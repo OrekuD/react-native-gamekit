@@ -42,13 +42,33 @@ export function batchVisibleBounds2D(
  * Inclusive comparisons, matching the public `intersectsAabbAabb2D`
  * contract (T12-F5): exact boundary contact IS an intersection, so a
  * sprite touching the camera edge is never culled.
+ *
+ * T12-RF6 malformed-bounds fail-safe: any non-finite field or negative
+ * size in EITHER rect hides the item (returns false) before the
+ * intersection test — invalid geometry is never drawn. Scalar and
+ * allocation-free; no structured error construction on the UI path.
  */
 export function intersectsBounds2D(first: Aabb2D, second: Aabb2D): boolean {
   'worklet';
+  if (!isFiniteBounds(first) || !isFiniteBounds(second)) {
+    return false;
+  }
   return (
     first.x <= second.x + second.width &&
     first.x + first.width >= second.x &&
     first.y <= second.y + second.height &&
     first.y + first.height >= second.y
+  );
+}
+
+function isFiniteBounds(bounds: Aabb2D): boolean {
+  'worklet';
+  return (
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width >= 0 &&
+    bounds.height >= 0
   );
 }

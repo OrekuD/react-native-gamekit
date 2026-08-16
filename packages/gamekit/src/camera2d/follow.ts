@@ -9,13 +9,31 @@
 import type { Aabb2D, Point2D } from '../geometry/types';
 import { assertFiniteNumber, assertNonnegativeSize, GeometryError } from '../geometry/validation';
 import type { Camera2D, FollowCamera2DOptions2D } from './types';
-import { assertValidCamera2D } from './validation';
+import { assertFinitePoint2D, assertValidCamera2D } from './validation';
 
-function assertNonnegativeDeadZone(deadZone: Aabb2D): void {
-  assertFiniteNumber(deadZone.x, 'deadZone.x');
-  assertFiniteNumber(deadZone.y, 'deadZone.y');
-  assertNonnegativeSize(deadZone.width, 'deadZone.width');
-  assertNonnegativeSize(deadZone.height, 'deadZone.height');
+function assertNonnegativeDeadZone(deadZone: unknown): asserts deadZone is Aabb2D {
+  if (typeof deadZone !== 'object' || deadZone === null || Array.isArray(deadZone)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      'deadZone',
+      `expected a rect record, got ${deadZone === null ? 'null' : typeof deadZone}`,
+    );
+  }
+  const typed = deadZone as Aabb2D;
+  assertFiniteNumber(typed.x, 'deadZone.x');
+  assertFiniteNumber(typed.y, 'deadZone.y');
+  assertNonnegativeSize(typed.width, 'deadZone.width');
+  assertNonnegativeSize(typed.height, 'deadZone.height');
+}
+
+function assertFollowOptionsShape(options: unknown): asserts options is FollowCamera2DOptions2D {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      'options',
+      `expected a follow options record, got ${options === null ? 'null' : typeof options}`,
+    );
+  }
 }
 
 function followFactor(halfLifeSeconds: number, deltaSeconds: number): number {
@@ -48,9 +66,11 @@ export function followCamera2D(
   deltaSeconds?: number,
 ): Camera2D {
   assertValidCamera2D(camera);
-  assertFiniteNumber(target.x, 'target.x');
-  assertFiniteNumber(target.y, 'target.y');
+  assertFinitePoint2D(target, 'target');
 
+  if (options !== undefined) {
+    assertFollowOptionsShape(options);
+  }
   const perAxisX = options?.perAxis?.x ?? true;
   const perAxisY = options?.perAxis?.y ?? true;
   if (options?.perAxis !== undefined) {

@@ -148,11 +148,13 @@ describe('Camera Lab instrumentation contract (T12-F8)', () => {
     const { session, driver } = harness();
     const attachments: unknown[] = [];
     const detaches: unknown[] = [];
-    const onRunSurfaceEvent = (event: { kind: string; attachment?: unknown; session?: unknown }) => {
-      if (event.kind === 'attach') {
-        attachments.push(event.attachment);
-      } else {
+    const onRunSurfaceEvent = (event: { kind: string; instrumentation?: unknown; attachment?: unknown; session?: unknown }) => {
+      if (event.kind === 'instrumentation-attached') {
+        attachments.push(event.instrumentation);
+      } else if (event.kind === 'instrumentation-detached') {
         detaches.push(event.session);
+      } else {
+        attachments.push(event.attachment);
       }
     };
     const tick = (frames: number) => {
@@ -199,6 +201,10 @@ describe('Camera Lab instrumentation contract (T12-F8)', () => {
     // The counters accumulate through the live instrumentation.
     const counters = (attachments[0] as { pointer: { onRawTouch?: () => void; onForwarded?: () => void } }).pointer;
     assert.ok(counters !== undefined);
+    // Per-cause rejection attribution: a stale-layout packet increments the
+    // layout counter through the SAME attachment pair.
+    const view = (attachments[0] as { view: { onPresentCommit?: () => void } }).view;
+    assert.ok(view !== undefined);
     act(() => session.dispose());
   });
 });

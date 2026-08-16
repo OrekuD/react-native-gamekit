@@ -157,3 +157,69 @@ describe('T7: pointer coalescer (pure state machine)', () => {
     assert.equal(isBeginAllowed(fill, 0, 0), true, 'fill has no letterbox');
   });
 });
+
+describe('camera stamp through deferral (T12-RF3)', () => {
+  const stampA = { camera: { center: { x: 0, y: 0 }, zoom: 1, rotationRadians: 0 }, cutId: 1 };
+  const stampB = { camera: { center: { x: 80, y: 0 }, zoom: 1, rotationRadians: 0 }, cutId: 1 };
+
+  it('carries the move-time stamp through a deferred flush', () => {
+    let state = createPointerCoalescerState(100);
+    const down = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 });
+    state = down.state;
+    // A move inside the coalescing interval defers with ITS OWN stamp.
+    const deferred = reducePointerCoalescer(state, {
+      kind: 'move',
+      pointerId: 1,
+      x: 10,
+      y: 10,
+      nowMs: 10,
+      stamp: stampA,
+    });
+    assert.equal(deferred.events.length, 0, 'the move is deferred');
+    state = deferred.state;
+    // Presentation advances to B before the flush.
+    const flushed = reducePointerCoalescer(state, { kind: 'flush', nowMs: 150 });
+    assert.equal(flushed.events.length, 1);
+    const move = flushed.events[0] as { kind: 'move'; x: number; y: number; stamp?: unknown };
+    assert.equal(move.stamp, stampA, 'the flush carries the ORIGINAL move-time stamp');
+  });
+
+  it('pairs the latest of multiple deferred moves with its own stamp', () => {
+    let state = createPointerCoalescerState(100);
+    state = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 }).state;
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 10, y: 10, nowMs: 10, stamp: stampA,
+    }).state;
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 20, y: 20, nowMs: 20, stamp: stampB,
+    }).state;
+    const flushed = reducePointerCoalescer(state, { kind: 'flush', nowMs: 150 });
+    const move = flushed.events[0] as { kind: 'move'; x: number; y: number; stamp?: unknown };
+    assert.equal(move.x, 20, 'the latest deferred position');
+    assert.equal(move.stamp, stampB, 'the latest move stamp — coordinates and camera from the SAME sample');
+  });
+
+  it('lets up subsume a deferred move with the up event position and camera', () => {
+    let state = createPointerCoalescerState(100);
+    state = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 }).state;
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 10, y: 10, nowMs: 10, stamp: stampA,
+    }).state;
+    const ended = reducePointerCoalescer(state, { kind: 'up', pointerId: 1, x: 30, y: 30, nowMs: 20 });
+    const end = ended.events[0] as { kind: 'end'; x: number; y: number };
+    assert.equal(end.kind, 'end');
+    assert.equal(end.x, 30, 'the up position subsumes the deferred move');
+    assert.ok(!('stamp' in end), 'the end edge carries no fabricated camera stamp');
+  });
+
+  it('cancel carries no fabricated camera sample', () => {
+    let state = createPointerCoalescerState(100);
+    state = reducePointerCoalescer(state, { kind: 'down', pointerId: 1, x: 0, y: 0, nowMs: 0 }).state;
+    state = reducePointerCoalescer(state, {
+      kind: 'move', pointerId: 1, x: 10, y: 10, nowMs: 10, stamp: stampA,
+    }).state;
+    const cancelled = reducePointerCoalescer(state, { kind: 'cancel', nowMs: 20 });
+    assert.equal(cancelled.events[0]?.kind, 'cancel');
+    assert.ok(!('stamp' in (cancelled.events[0] as object)), 'cancel has no camera stamp');
+  });
+});

@@ -120,7 +120,12 @@ function TrailingFlushSampler({
         layoutEpoch: layoutEpoch.value,
         seq: forwardSeq.value,
         atMs: Date.now(),
-        camera: camera?.value,
+        // The deferred move carries the stamp captured at ITS native
+        // sample (T12-RF3) — never the flush-time camera.
+        camera:
+          forwarded.kind === 'move' && forwarded.stamp !== undefined
+            ? (forwarded.stamp as CameraCut2D)
+            : camera?.value,
       });
     }
   });
@@ -203,6 +208,10 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // worklets and stamped onto every packet; the binding inverts through
   // that stamp, never a later JS-side read.
   const cameraShared = presentedCamera;
+  const packetCamera = (forwarded: CoalescedPointerEvent): CameraCut2D | undefined =>
+    forwarded.kind === 'move' && forwarded.stamp !== undefined
+      ? (forwarded.stamp as CameraCut2D)
+      : cameraShared?.value;
   const generation = binding.generation;
   // F6/F3: the layout epoch is adapter-owned (ref + UI mirror), bumped only
   // on layout revisions and unmount; it never resets, so replacement cannot
@@ -250,10 +259,14 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       // layout die here, before the binding sees them.
       if (packet.layoutEpoch !== layoutEpochRef.current) {
         instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, false);
+        instrumentation?.onDispatchRejected?.('layout-epoch', packet.seq, packet.atMs);
         return;
       }
       const accepted = binding.dispatch(packet);
       instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, accepted);
+      if (!accepted) {
+        instrumentation?.onDispatchRejected?.('binding', packet.seq, packet.atMs);
+      }
     },
     [binding, instrumentation],
   );
@@ -321,6 +334,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           x: touch.x,
           y: touch.y,
           nowMs: Date.now(),
+          stamp: cameraShared?.value,
         });
         for (const forwarded of batch) {
           instrumentation?.onForwarded?.(
@@ -335,7 +349,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
-          camera: cameraShared?.value,
+          camera: packetCamera(forwarded),
         });
         }
       }
@@ -369,7 +383,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
-          camera: cameraShared?.value,
+          camera: packetCamera(forwarded),
         });
         }
         const mirror = samplerMirrorFromBatch(batch);

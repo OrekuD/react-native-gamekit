@@ -11,7 +11,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GameSession } from 'rn-gamekit';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
-import { createCameraLabInstrumentation, type CameraLabCounters, type CameraLabInstrumentation } from './cameraLabInstrumentation';
+import { useCameraLabInstrumentation, type CameraLabCounters } from './cameraLabInstrumentation';
 import type { CameraLabSnapshot } from './cameraLabGame';
 
 interface LabHudRecord {
@@ -29,8 +29,10 @@ interface LabHudRecord {
   readonly rawTouches: number;
   readonly forwarded: number;
   readonly accepted: number;
-  readonly rejected: number;
+  readonly rejectedLayoutEpoch: number;
+  readonly rejectedBinding: number;
   readonly presentedCommits: number;
+  readonly uiObserved: number;
 }
 
 function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudRecord {
@@ -49,8 +51,10 @@ function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudR
     rawTouches: counters.rawTouches,
     forwarded: counters.forwarded,
     accepted: counters.accepted,
-    rejected: counters.rejected,
+    rejectedLayoutEpoch: counters.rejectedLayoutEpoch,
+    rejectedBinding: counters.rejectedBinding,
     presentedCommits: counters.presentedCommits,
+    uiObserved: counters.uiObserved,
   };
 }
 
@@ -70,8 +74,10 @@ function hudEqual(first: LabHudRecord, second: LabHudRecord): boolean {
     first.rawTouches === second.rawTouches &&
     first.forwarded === second.forwarded &&
     first.accepted === second.accepted &&
-    first.rejected === second.rejected &&
-    first.presentedCommits === second.presentedCommits
+    first.rejectedLayoutEpoch === second.rejectedLayoutEpoch &&
+    first.rejectedBinding === second.rejectedBinding &&
+    first.presentedCommits === second.presentedCommits &&
+    first.uiObserved === second.uiObserved
   );
 }
 
@@ -96,26 +102,31 @@ export default function CameraLabContent({
   // the gesture. Counters are read inside the commit listener (never
   // during render) and published through the HUD record at the cadence.
   const [rerenderBump, setRerenderBump] = useState(0);
-  const instrumentationRef = useRef<CameraLabInstrumentation | undefined>(undefined);
   const onRunSurfaceEventRef = useRef(onRunSurfaceEvent);
   useEffect(() => {
     onRunSurfaceEventRef.current = onRunSurfaceEvent;
   });
+  // T12-RF2: the instrumentation is hook-owned (shared-value counters,
+  // stable workletized callbacks). Attach exactly once per mount; the
+  // forced rerender never replaces it.
+  const instrumentation = useCameraLabInstrumentation();
+  const instrumentationRef = useRef(instrumentation);
   useEffect(() => {
-    const created = createCameraLabInstrumentation();
-    instrumentationRef.current = created;
+    instrumentationRef.current = instrumentation;
+  });
+  useEffect(() => {
+    const current = instrumentationRef.current;
     onRunSurfaceEventRef.current?.({
-      kind: 'attach',
-      attachment: {
-        session,
-        pointer: created.pointer,
-        view: created.view,
+      kind: 'instrumentation-attached',
+      session,
+      instrumentation: {
+        pointer: current.pointer,
+        view: current.view,
       },
     });
     return () => {
-      instrumentationRef.current = undefined;
       if (game.status !== 'disposed') {
-        onRunSurfaceEventRef.current?.({ kind: 'detach', session });
+        onRunSurfaceEventRef.current?.({ kind: 'instrumentation-detached', session });
       }
     };
   }, [game, session]);
@@ -140,8 +151,10 @@ export default function CameraLabContent({
         rawTouches: 0,
         forwarded: 0,
         accepted: 0,
-        rejected: 0,
+        rejectedLayoutEpoch: 0,
+        rejectedBinding: 0,
         presentedCommits: 0,
+        uiObserved: 0,
       };
       const next = recordOf(snap, counters);
       const last = lastPublishedRef.current;
@@ -227,7 +240,7 @@ export default function CameraLabContent({
             {display.visible}/{display.total} markers · follow {display.follow ? 'on' : 'off'} · rotate {display.rotating ? 'on' : 'off'} · shake {display.shaking ? 'on' : 'off'} · cull {display.culling ? 'on' : 'off'} · bounds {display.debug ? 'on' : 'off'}
           </Text>
           <Text style={styles.hudLine}>
-            raw {display.rawTouches} · fwd {display.forwarded} · ok {display.accepted} · stale {display.rejected} · commits {display.presentedCommits} · bump {rerenderBump}
+            raw {display.rawTouches} · fwd {display.forwarded} · ok {display.accepted} · stale-layout {display.rejectedLayoutEpoch} · stale-binding {display.rejectedBinding} · commits {display.presentedCommits} · bump {rerenderBump}
           </Text>
         </View>
       )}

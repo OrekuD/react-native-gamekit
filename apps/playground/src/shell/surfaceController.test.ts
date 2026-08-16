@@ -297,3 +297,129 @@ describe('surface controller (T8.4 single lifecycle owner)', () => {
     assert.equal(paused?.marker, 'pausable', 'the retired game is paused at the close boundary');
   });
 });
+
+describe('camera-lab instrumentation ownership through the controller (T12-RF1)', () => {
+  const POINTER_INSTR = { onRawTouch: () => undefined };
+  const VIEW_INSTR = { onPresentCommit: () => undefined };
+  const instrumentation = { pointer: POINTER_INSTR, view: VIEW_INSTR };
+
+  function labHarness() {
+    const recorded: SessionStub[] = [];
+    const disposeCalls: SessionStub[] = [];
+    let labSessions = 0;
+    let latest: SurfaceSlot | undefined;
+    const neutralSession = session('neutral');
+    const options: SurfaceControllerOptions = {
+      games: {
+        'camera-lab': {
+          renderer: RENDERER,
+          content: CONTENT,
+          createSession: () => {
+            labSessions += 1;
+            const created = session(`lab-${labSessions}`);
+            recorded.push(created);
+            return created as never;
+          },
+          pointer: true,
+          instrumented: true,
+        },
+      },
+      neutral: {
+        session: neutralSession as never,
+        renderer: RENDERER,
+      },
+      createPlaceholder: () => session('placeholder') as never,
+      disposeSession: (s: unknown) => {
+        disposeCalls.push(s as SessionStub);
+      },
+      onSlot: (slot: SurfaceSlot) => {
+        latest = slot;
+      },
+      initialGeneration: 1,
+    };
+    const controller = new SurfaceController(options);
+    return {
+      controller,
+      disposeCalls,
+      neutralSession,
+      latest: () => latest,
+      labSession: () => recorded[0],
+    };
+  }
+
+  it('attaches instrumentation to the ready lab binding and never retires or disposes the base session', () => {
+    const h = labHarness();
+    const { controller } = h;
+    controller.open('camera-lab');
+    const labSession = h.labSession();
+    assert.ok(labSession !== undefined);
+    assert.ok(h.latest()?.status === 'ready');
+    assert.equal(h.latest()?.instrumentation, undefined);
+
+    controller.runEvent({ kind: 'instrumentation-attached', session: labSession as never, instrumentation: instrumentation as never });
+    assert.equal(h.latest()?.instrumentation, instrumentation as never, 'the pair reaches the slot');
+    assert.equal(h.latest()?.camera2D, undefined);
+    // The base session is untouched: nothing retired, nothing disposed.
+    assert.equal(h.disposeCalls.includes(labSession), false, 'attachment never disposes the base session');
+    assert.equal(h.latest()?.retiring.length, 0, 'attachment never retires the base session');
+    assert.equal(h.latest()?.session, labSession as never, 'the same session still owns simulation');
+
+    controller.runEvent({ kind: 'instrumentation-detached', session: labSession as never });
+    assert.equal(h.latest()?.instrumentation, undefined, 'detach clears the pair');
+    assert.equal(h.latest()?.session, labSession as never, 'the base session survives detach');
+    assert.equal(h.disposeCalls.includes(labSession), false);
+  });
+
+  it('rejects stale instrumentation events from superseded sessions', () => {
+    const h = labHarness();
+    const { controller } = h;
+    controller.open('camera-lab');
+    const current = h.labSession();
+    const staleSession = session('stale');
+    controller.runEvent({ kind: 'instrumentation-attached', session: staleSession as never, instrumentation: instrumentation as never });
+    assert.equal(h.latest()?.instrumentation, undefined, 'a stale session cannot attach');
+    controller.runEvent({ kind: 'instrumentation-detached', session: staleSession as never });
+    assert.equal(h.latest()?.instrumentation, undefined);
+
+    // Same-id reopen: the OLD session's attach must not touch the new binding.
+    const oldSession = current;
+    controller.close();
+    controller.open('camera-lab');
+    controller.runEvent({ kind: 'instrumentation-attached', session: oldSession as never, instrumentation: instrumentation as never });
+    assert.equal(h.latest()?.instrumentation, undefined, 'a superseded session cannot attach to the reopened binding');
+  });
+
+  it('rejects instrumentation events for games without the capability', () => {
+    const recorded: SessionStub[] = [];
+    const options: SurfaceControllerOptions = {
+      games: {
+        'brick-breaker': {
+          renderer: RENDERER,
+          content: CONTENT,
+          createSession: () => {
+            const created = session('bb');
+            recorded.push(created);
+            return created as never;
+          },
+          pointer: true,
+        },
+      },
+      neutral: { session: session('neutral') as never, renderer: RENDERER },
+      createPlaceholder: () => session('placeholder') as never,
+      disposeSession: () => undefined,
+      onSlot: () => undefined,
+      initialGeneration: 1,
+    };
+    const controller = new SurfaceController(options);
+    controller.open('brick-breaker');
+    const bbSession = recorded[0];
+    controller.runEvent({ kind: 'instrumentation-attached', session: bbSession as never, instrumentation: instrumentation as never });
+    // The event is dropped at the capability gate; the slot has no pair.
+    let published: SurfaceSlot | undefined;
+    const probeOptions: SurfaceControllerOptions = { ...options, onSlot: (slot) => { published = slot; } };
+    const probe = new SurfaceController(probeOptions);
+    probe.open('brick-breaker');
+    assert.equal(probe['slot'].instrumentation, undefined);
+    void published;
+  });
+});

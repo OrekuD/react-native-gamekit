@@ -24,7 +24,19 @@
 
 export type CoalescedPointerEvent =
   | { readonly kind: 'begin'; readonly pointerId: number; readonly x: number; readonly y: number }
-  | { readonly kind: 'move'; readonly pointerId: number; readonly x: number; readonly y: number }
+  | {
+      readonly kind: 'move';
+      readonly pointerId: number;
+      readonly x: number;
+      readonly y: number;
+      /**
+       * Opaque event-time stamp (T12-RF3): captured with the native sample
+       * that produced this move and carried through deferral, so the
+       * presenter pairs coordinates and presentation state from the SAME
+       * native sample, never from a later flush frame.
+       */
+      readonly stamp?: unknown;
+    }
   | { readonly kind: 'end'; readonly pointerId: number; readonly x: number; readonly y: number }
   | { readonly kind: 'cancel' };
 
@@ -47,7 +59,7 @@ interface ActivePointer {
   readonly pointerId: number;
   readonly lastForwardMs: number;
   readonly pendingMove:
-    | { readonly x: number; readonly y: number }
+    | { readonly x: number; readonly y: number; readonly stamp?: unknown }
     | undefined;
 }
 
@@ -60,11 +72,20 @@ export interface PointerCoalescerState {
 /** One native touch input consumed by the pure coalescer reducer. */
 export type PointerCoalescerInput =
   | {
-      readonly kind: 'down' | 'move' | 'up';
+      readonly kind: 'down' | 'up';
       readonly pointerId: number;
       readonly x: number;
       readonly y: number;
       readonly nowMs: number;
+    }
+  | {
+      readonly kind: 'move';
+      readonly pointerId: number;
+      readonly x: number;
+      readonly y: number;
+      readonly nowMs: number;
+      /** Event-time stamp paired with this native sample (T12-RF3). */
+      readonly stamp?: unknown;
     }
   | { readonly kind: 'cancel'; readonly nowMs: number }
   | { readonly kind: 'flush'; readonly nowMs: number }
@@ -158,6 +179,7 @@ export function reducePointerCoalescer(
           pointerId: active.pointerId,
           x: active.pendingMove.x,
           y: active.pendingMove.y,
+          stamp: active.pendingMove.stamp,
         },
       ],
     };
@@ -182,12 +204,15 @@ export function reducePointerCoalescer(
     };
   }
 
+  // The remaining branch is the move input (down/up/cancel/flush/reset
+  // returned above); its optional stamp rides with the sample.
+  const moveInput = input as Extract<PointerCoalescerInput, { kind: 'move' }>;
   const shouldForward =
-    input.nowMs - active.lastForwardMs >= state.maxMoveIntervalMs;
+    moveInput.nowMs - active.lastForwardMs >= state.maxMoveIntervalMs;
   const nextActive: ActivePointer = {
-    pointerId: input.pointerId,
-    lastForwardMs: shouldForward ? input.nowMs : active.lastForwardMs,
-    pendingMove: shouldForward ? undefined : { x: input.x, y: input.y },
+    pointerId: moveInput.pointerId,
+    lastForwardMs: shouldForward ? moveInput.nowMs : active.lastForwardMs,
+    pendingMove: shouldForward ? undefined : { x: moveInput.x, y: moveInput.y, stamp: moveInput.stamp },
   };
   return {
     state: { ...state, active: nextActive },
@@ -195,9 +220,24 @@ export function reducePointerCoalescer(
       ? [
           {
             kind: 'move',
-            pointerId: input.pointerId,
-            x: input.x,
-            y: input.y,
+            pointerId: moveInput.pointerId,
+            x: moveInput.x,
+            y: moveInput.y,
+            stamp: moveInput.stamp,
+          },
+        ]
+      : [],
+  };
+  return {
+    state: { ...state, active: nextActive },
+    events: shouldForward
+      ? [
+          {
+            kind: 'move',
+            pointerId: moveInput.pointerId,
+            x: moveInput.x,
+            y: moveInput.y,
+            stamp: moveInput.stamp,
           },
         ]
       : [],

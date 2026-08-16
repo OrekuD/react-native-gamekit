@@ -314,7 +314,7 @@ function GameSurface({
         assets={bound.assets as never}
         renderer={Renderer as unknown as ComponentType<GameRendererProps<SceneDefinitionMarkerMap>>}
         camera2D={bound.camera2D as never}
-        instrumentation={slot.run?.view}
+        instrumentation={bound.instrumentation?.view ?? slot.run?.view}
         style={StyleSheet.absoluteFill}
       >
         {bound.pointerEnabled ? (
@@ -329,7 +329,7 @@ function GameSurface({
                 ? (GAME_CONTENTS[slot.gameId]?.pointerAction ?? 'primary')
                 : 'primary'
             }
-            instrumentation={slot.run?.pointer}
+            instrumentation={bound.instrumentation?.pointer ?? slot.run?.pointer}
           />
         ) : null}
         {Content !== undefined ? (
@@ -395,6 +395,7 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     createSession: () => createCameraLabSession() as unknown as GameSession,
     pointer: true,
     camera2D: cameraLabCamera as unknown as GameCamera2DDefinition<never>,
+    instrumented: true,
   },
 };
 

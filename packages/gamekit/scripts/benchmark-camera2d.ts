@@ -1,11 +1,13 @@
 /**
- * T12-F8 benchmark: camera visibility culling scenarios.
+ * T12-F8/T12-RF7 benchmark: camera culling scenarios.
  *
- * Records distributions across identical entity populations: sparse vs
- * dense fields, stationary vs moving cameras, and culling on vs off — in
- * one build mode (Node, headless). The headless filter is the same
- * conservative test the SpriteBatch worklet applies; UI-runtime cost is
- * measured on device, never approximated here.
+ * Records p50/p95/p99 over identical entity populations in four
+ * production-equivalent modes: no camera, static camera, moving camera,
+ * and moving camera with culling. The camera advances every moving
+ * iteration; the cull-off modes perform NO visibility work (the batch's
+ * production path without a cull prop is a pure write loop). Headless
+ * math only — UI-runtime and GPU cost is device-measured, never
+ * approximated here.
  */
 import { performance } from 'node:perf_hooks';
 import { batchVisibleBounds2D, intersectsBounds2D } from '../src/react/sprites/batchVisibility.ts';
@@ -49,55 +51,101 @@ function makeField(count: number, worldSize: number, seed: number): Item[] {
   return items;
 }
 
-function bench(label: string, fn: () => void, iterations: number): void {
-  // Warm the JIT, then measure.
-  fn();
-  const start = performance.now();
-  for (let index = 0; index < iterations; index += 1) {
-    fn();
+/** Moving camera: advances deterministically every iteration. */
+function advanceCamera(camera: ReturnType<typeof createCamera2D>, step: number): ReturnType<typeof createCamera2D> {
+  const x = camera.center.x + step;
+  const y = camera.center.y + step * 0.5;
+  return createCamera2D({
+    center: { x: (x % 2400 + 2400) % 2400, y: (y % 1600 + 1600) % 1600 },
+    zoom: 1 + 0.2 * Math.sin(step),
+    rotationRadians: step * 0.01,
+  });
+}
+
+function percentile(sorted: number[], p: number): number {
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil((p / 100) * sorted.length) - 1));
+  return sorted[index]!;
+}
+
+function bench(
+  label: string,
+  run: (iteration: number) => void,
+  iterations: number,
+  warmup: number,
+): void {
+  for (let index = 0; index < warmup; index += 1) {
+    run(index);
   }
-  const elapsed = performance.now() - start;
+  const samples: number[] = [];
+  for (let index = 0; index < iterations; index += 1) {
+    const start = performance.now();
+    run(index);
+    samples.push(performance.now() - start);
+  }
+  const sorted = [...samples].sort((a, b) => a - b);
   console.log(
-    `${label}: ${iterations} iterations in ${elapsed.toFixed(1)} ms (${(elapsed / iterations).toFixed(3)} ms/op)`,
+    `${label}: p50 ${percentile(sorted, 50).toFixed(4)} ms · p95 ${percentile(sorted, 95).toFixed(4)} ms · p99 ${percentile(sorted, 99).toFixed(4)} ms (n=${iterations})`,
   );
 }
 
-function runScenario(label: string, items: Item[], camera: ReturnType<typeof createCamera2D>, culling: boolean): void {
-  const cut = { camera, cutId: 1 };
-  const visibleBounds = batchVisibleBounds2D(cut, FIT as never, 24);
-  bench(
-    `${label} ${culling ? 'cull-on' : 'cull-off'} (${items.length} items)`,
-    () => {
-      if (culling) {
-        const kept = filterCameraVisible2D(items, camera, LOGICAL_VIEW, 24);
-        // The batch worklet path: per-item inline test.
-        for (const item of items) {
-          intersectsBounds2D(item.bounds, visibleBounds as never);
-        }
-        if (kept.length > items.length) {
-          throw new Error('impossible');
-        }
-      } else {
-        for (const item of items) {
-          intersectsBounds2D(item.bounds, visibleBounds as never);
-        }
+function runScenario(label: string, items: Item[], mode: 'none' | 'static' | 'moving' | 'moving-cull'): void {
+  const stationary = createCamera2D({ center: { x: 1200, y: 800 }, zoom: 1 });
+  const staticCut = { camera: stationary, cutId: 1 };
+  const staticVisible = batchVisibleBounds2D(staticCut, FIT as never, 24) as never;
+  const iterations = 3000;
+  const warmup = 300;
+
+  if (mode === 'none') {
+    // Production no-camera path: the pure write loop, no visibility work.
+    bench(`${label} no-camera`, (_iteration) => {
+      for (const item of items) {
+        void item.bounds.x;
       }
-    },
-    2000,
-  );
+    }, iterations, warmup);
+    return;
+  }
+  if (mode === 'static') {
+    bench(`${label} static-camera`, (_iteration) => {
+      // The batch path WITHOUT culling: writes every item.
+      for (const item of items) {
+        void item.bounds.x;
+      }
+    }, iterations, warmup);
+    return;
+  }
+  bench(`${label} ${mode}`, (iteration) => {
+    const camera = mode === 'moving' || mode === 'moving-cull'
+      ? advanceCamera(stationary, iteration)
+      : stationary;
+    if (mode === 'moving-cull') {
+      const cut = { camera, cutId: 1 };
+      const visible = batchVisibleBounds2D(cut, FIT as never, 24);
+      // One headless filter pass (the committed-visibility path), then the
+      // batch's per-item inline test against the same conservative bounds.
+      const kept = filterCameraVisible2D(items, camera, LOGICAL_VIEW, 24);
+      for (const item of items) {
+        intersectsBounds2D(item.bounds, visible as never);
+      }
+      if (kept.length > items.length) {
+        throw new Error('impossible');
+      }
+    } else {
+      // Moving WITHOUT culling performs no visibility work at all.
+      for (const item of items) {
+        void item.bounds.x;
+      }
+    }
+    void staticVisible;
+  }, iterations, warmup);
 }
 
 const sparse = makeField(64, 2400, 7);
 const dense = makeField(512, 2400, 11);
-const still = createCamera2D({ center: { x: 1200, y: 800 }, zoom: 1 });
-const moving = createCamera2D({ center: { x: 400, y: 300 }, zoom: 1.6, rotationRadians: 0.3 });
 
-console.log('Camera2D culling benchmark (Node, headless — UI-runtime cost is device-measured)');
-runScenario('sparse-still', sparse, still, true);
-runScenario('sparse-still', sparse, still, false);
-runScenario('sparse-moving', sparse, moving, true);
-runScenario('sparse-moving', sparse, moving, false);
-runScenario('dense-still', dense, still, true);
-runScenario('dense-still', dense, still, false);
-runScenario('dense-moving', dense, moving, true);
-runScenario('dense-moving', dense, moving, false);
+console.log('Camera2D culling benchmark (Node, headless — UI/GPU cost is device-measured)');
+for (const [label, items] of [['sparse', sparse], ['dense', dense]] as const) {
+  runScenario(label, items, 'none');
+  runScenario(label, items, 'static');
+  runScenario(label, items, 'moving');
+  runScenario(label, items, 'moving-cull');
+}

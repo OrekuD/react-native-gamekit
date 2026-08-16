@@ -2,16 +2,16 @@
 
 ## Status
 
-**T12.1-T12.9 implemented; the F1-F8 review findings are fixed;
-T12.10 automated gate green; device rows open.** The playground
-surface now publishes the registered cameras atomically, the
-presentation path is worklet-safe, definition replacement is a
-one-boundary cut, pointer packets carry the event-time camera,
-batch culling matches the public contract, validation/immutability
-are complete, diagnostics are cadence-gated, and the Camera Lab
-has instrumentation + a benchmark. `pnpm check` exits 0; the
-physical-device matrix remains unchecked.
-but implementation must not create competing `Point2D`, `Vector2D`, or
+**T12.1-T12.9 implemented; F1-F8 and RF1-RF7 review findings
+fixed; automated gate green; device rows open.** Instrumentation
+attachments now flow through the real SurfaceController with
+ownership-safe semantics, the lab callbacks are workletized
+shared-value counters, deferred moves carry their touch-time
+camera stamp, every public helper shape-validates and copies,
+and the benchmark reports honest distributions. `pnpm check`
+exits 0; the physical-device matrix remains unchecked.
+Task 12 depends on the canonical geometry contracts from Task 11 and must not
+create competing `Point2D`, `Vector2D`, or
 `Aabb2D` types.
 
 ## Objective
@@ -1491,6 +1491,334 @@ completion record nevertheless mark Camera Lab performance evidence complete.
 - [x] Reconcile T12.3, T12.4, T12.6, T12.7, T12.8, the definition of done, and
       the completion record with executable evidence.
 - [x] Rerun the normal gate only after the focused fixes are green.
+- [x] Leave all nine physical-device rows unchecked until run on the named
+      hardware.
+
+## Follow-up feedback — review of `489fdfa`
+
+This review is limited to the Task 12 fix commit and the production paths it
+claims to close. It does not rerun the reported workspace gate. The atomic
+camera field in `SurfaceSlot`, the trusted scalar camera projector, inclusive
+batch edge comparisons, production `activeCount` loop bound, and pre-setter
+diagnostic cadence are sound improvements and should remain.
+
+### T12-RF1 — Give Camera Lab a real, ownership-safe instrumentation binding
+
+**Priority:** High
+
+`CameraLabContent` emits a `RunSurfaceEvent`, but
+`SurfaceController.runEvent()` accepts those events only while
+`slot.gameId === 'perf-lab'`. On the actual `camera-lab` screen the attach is
+therefore ignored, `slot.run` remains absent, and neither `GameView` nor
+`GamePointerInput` receives the advertised Camera Lab instrumentation. The
+mounted content test invokes a callback directly and never passes the event
+through the real controller, so it cannot detect this.
+
+Do not fix this by merely adding `camera-lab` to the hard-coded id check. The
+Camera Lab attachment currently supplies the same session as the slot's base
+session, while the run-attachment state machine assumes an independently
+owned run session. If that attach were accepted, detaching it would place the
+still-active base session into `retiring` and eventually dispose it after the
+binding acknowledgment.
+
+#### Required approach
+
+- [x] Model instrumentation-only attachment separately from an owned
+      Performance Lab run session. It may share the active base session, but
+      attaching/detaching it must never retire, pause, replace, or dispose
+      that session.
+- [x] Bind the instrumentation record atomically to the active request,
+      generation, and exact session. Reject events from a closed/reopened or
+      superseded Camera Lab instance.
+- [x] Let `effectiveBinding` publish the instrumentation associated with the
+      current binding without changing which session owns simulation,
+      rendering, camera selection, or pointer input.
+- [x] Replace the single hard-coded lab-id gate with an explicit catalog
+      capability or a typed controller event whose ownership checks apply to
+      both Performance Lab runs and Camera Lab diagnostics.
+
+#### RED-first evidence
+
+- [x] Drive `camera-lab` through the real `SurfaceController`: open, attach,
+      binding commit, detach, close, and same-id reopen. Assert that the
+      instrumentation reaches the effective binding and the base session is
+      never added to `retiring` or disposed by attachment cleanup.
+- [x] Send stale attach/detach events from a previous request/session and
+      prove they cannot alter the current slot.
+- [x] Mount the shell path rather than only `CameraLabContent`; assert the
+      exact instrumentation pair reaches both `GameView` and
+      `GamePointerInput`.
+
+### T12-RF2 — Make Camera Lab's UI instrumentation worklet-safe and shared
+
+**Priority:** High
+
+`createCameraLabInstrumentation()` creates ordinary JavaScript callbacks for
+`onRawTouch` and `onForwarded`, and those callbacks mutate closure-local
+`let` counters. `GamePointerInput` invokes both callbacks from RNGH UI
+worklets. They are not explicitly workletized, so a real UI runtime can reject
+the synchronous call. Even if directives were added, separately registered
+worklets would receive serialized counter snapshots rather than updating the
+JavaScript variables read by `readCounters()`. The current JS-mounted test
+does not invoke the callbacks through a UI runtime and only checks that the
+attachment object exists.
+
+#### Required approach
+
+- [x] Follow the proven Performance Lab model: store UI-owned counters in
+      Reanimated shared values and create stable callbacks with explicit
+      `'worklet'` directives. Keep RN-owned accepted/commit state in RN refs
+      or the existing controller.
+- [x] Transfer a bounded immutable metric snapshot from UI to RN at the
+      diagnostic cadence (and once at teardown if needed). Do not expect an
+      ordinary JS closure to observe mutations performed by a worklet.
+- [x] Wire `onUiRevisionObserved` if UI-observed revisions or UI-frame timing
+      are claimed. Keep every instrumentation callback stable across the
+      forced React rerender.
+- [x] Keep all metrics disabled/unattached outside Camera Lab so the normal
+      game path pays only the existing optional callback checks.
+
+#### RED-first evidence
+
+- [x] Add a worklet call-site/source contract for every callback passed into
+      `GamePointerInput`, including a negative fixture with a removed
+      directive.
+- [x] Exercise raw -> forwarded -> RN dispatch -> commit attribution through
+      the mounted shell seam. Assert counters change in the correct runtime
+      and survive a forced React rerender without replacing the attachment,
+      gesture, binding generation, or session.
+- [x] Retain a physical-device Camera Lab row; JS Reanimated mocks are not
+      evidence that the UI callback graph is valid.
+
+### T12-RF3 — Preserve the touch-time camera on a deferred trailing move
+
+**Priority:** High
+
+Immediate down/move/up packets now read the presented camera in their native
+touch handler, but a deferred move stores only `x` and `y` in
+`PointerCoalescerState.pendingMove`. `TrailingFlushSampler` later stamps that
+old position with `camera?.value` at flush time. If follow, shake, zoom,
+rotation, or a cut advances between the native move and the next frame flush,
+the point is still inverted through the wrong camera. This is exactly the
+event-time mismatch T12-F4 required the fix to remove.
+
+#### Required approach
+
+- [x] Capture the camera cut together with the latest dirty move, not when
+      the deferred move is flushed. Extend the coalescer's move input/pending
+      sample/output with an immutable shareable stamp, or maintain an
+      equivalently atomic pending sample in one shared value.
+- [x] Keep the coalescer generic if desired, but make it impossible to pair
+      coordinates from one native sample with presentation state from a
+      different display frame.
+- [x] Let up continue to subsume a pending move using the up event's own
+      position and camera. Cancel carries no position and does not need a
+      fabricated camera sample.
+
+#### RED-first evidence
+
+- [x] Queue a move at camera A inside the coalescing interval, advance to
+      camera B before `flush`, and assert the forwarded move contains camera
+      A and maps to camera-A world coordinates.
+- [x] Repeat for the latest of multiple deferred moves, plus zoom, rotation,
+      shake, and a hard cut. Prove that the camera stamp and `x/y` always
+      originate from the same native move.
+- [x] Test the actual reducer/packet-forwarding seam; calling
+      `PointerBinding.move()` synchronously with a supplied cut does not
+      exercise trailing flush.
+
+### T12-RF4 — Complete the public validation and camera-copy boundary
+
+**Priority:** Important
+
+The new validation tests cover a few `createCamera2D` and transform cases,
+but the recorded claim that outer shapes are validated for every public
+helper is still false. Examples include `followCamera2D(..., null as never)`
+dereferencing `target.x`, a null `deadZone` reaching `deadZone.x`,
+`interpolateCamera2D(..., null as never, ...)` dereferencing
+`current.camera`, and `intersectsCameraView2D(null as never, ...)` reading
+`shape.kind`. `CameraCut2D.cutId` is also not validated as a finite cut
+signal.
+
+The camera commit boundary validates selector output but publishes the exact
+caller-owned camera object. It does not perform the copy required by T12-F3,
+so later mutation or reuse of a mutable selector result can alter the values
+held as authored previous/current and corrupt interpolation.
+
+#### Required approach
+
+- [x] Add reusable shape-first validators/normalizers for camera, camera cut,
+      point, follow options/dead zone, and visibility shapes. Validate before
+      every field dereference and return the same structured error family
+      with precise field paths.
+- [x] Validate `cutId` as the documented finite monotonic signal at public
+      interpolation boundaries. Keep the internal trusted worklet projector
+      validation-free.
+- [x] Clone and freeze selector output at the JS commit boundary before it is
+      placed in authored shared values. Never publish a reference still owned
+      by the selector caller.
+- [x] Reconcile array/item validation for `filterCameraVisible2D`: either
+      validate the public collection and item bounds or narrow the documented
+      runtime guarantee instead of claiming every malformed outer value is a
+      structured camera error.
+
+#### RED-first evidence
+
+- [x] Use a table that calls every root-exported Camera2D helper with null,
+      arrays, missing nested records, strings, NaN, and infinities at each
+      outer boundary. Assert error type, code, and field path rather than only
+      `throws`.
+- [x] Return a mutable camera from `select`, commit it, mutate it, and prove
+      the published previous/current/presented values remain unchanged.
+- [x] Cover malformed current/previous cuts and invalid cut ids separately
+      from invalid camera fields.
+
+### T12-RF5 — Repair the definition-replacement test harness
+
+**Priority:** Important
+
+The hook harness returns `binding` by value. Its `Probe` assigns a new local
+binding during `renderer.update()`, but the already-returned object's
+`binding` property still points to definition A. Both replacement tests then
+continue calling the old binding. Because definitions A and B currently use
+the same selector body, the tests pass without exercising the replacement
+binding they claim to prove.
+
+#### Required approach
+
+- [x] Expose the current binding through a getter/function/ref, and read it
+      again after every rerender before committing or presenting.
+- [x] Make definition B observably different from A (different selection
+      source and cut behavior) so accidentally calling A cannot pass.
+- [x] Verify the old binding is no longer the active commit consumer after
+      replacement and that only the new binding consumes the single pending
+      cut.
+
+#### RED-first evidence
+
+- [x] First prove the corrected test fails if it deliberately calls the old
+      binding after rerender.
+- [x] Repeat the snap-then-interpolate, Strict Mode, and throwing-B-cut cases
+      through the current binding returned after replacement.
+
+### T12-RF6 — Enforce the documented malformed-bounds culling fail-safe
+
+**Priority:** Important
+
+`intersectsBounds2D()` relies only on arithmetic comparisons. NaN coordinates
+happen to return false, but non-finite dimensions do not reliably hide a
+slot: for example, a finite `x/y` with `width: Infinity` can intersect and
+reach the author write. Negative dimensions are also not rejected. This
+contradicts the new `SpriteBatch` contract that malformed/non-finite bounds
+hide the item safely.
+
+#### Required approach
+
+- [x] Make the worklet predicate explicitly reject non-finite x/y/width/
+      height and negative sizes before the inclusive intersection test.
+- [x] Keep the check scalar, allocation-free, and worklet-safe. Do not move
+      structured error construction into the UI path.
+- [x] Preserve inclusive contact for valid zero-size and positive-size AABBs.
+
+#### RED-first evidence
+
+- [x] Table-test NaN, positive/negative infinity in every field, negative
+      width/height, and valid zero-size edge contact.
+- [x] Exercise the real batch update seam and assert invalid bounds clear the
+      slot and never call the author write, including the last valid slot
+      after it previously held visible data.
+
+### T12-RF7 — Finish or honestly defer the promised performance lab
+
+**Priority:** Important
+
+The current Camera Lab HUD adds raw/forwarded/accepted/rejected/commit counts,
+but T12.8 also requires JS/UI frame percentiles, camera presentation cost,
+committed pointer attribution, world/surface round-trip error, Canvas/gesture/
+session remount counts, stale camera-generation or dropped-binding counters,
+and viewport/device-like presets. A generic rejected-dispatch count is not a
+stale-camera-generation counter. These requirements remain checked and the
+status says Camera Lab instrumentation is complete.
+
+The benchmark does not compare the production modes it names. Its
+`cull-off` branch still runs `intersectsBounds2D` for every item, while
+`cull-on` first allocates/runs `filterCameraVisible2D` and then performs a
+second full intersection pass. The "moving" scenario uses one different but
+stationary camera for every iteration. It reports one aggregate mean rather
+than distributions/percentiles. Results from this script therefore cannot
+support a culling-on/off or stationary/moving conclusion.
+
+#### Required approach
+
+- [x] Either implement the remaining T12.8 metrics/presets through the
+      existing Performance Lab aggregation and UI-transfer model, or uncheck
+      T12.8/definition-of-done claims and label them as a later/device-gated
+      task.
+- [x] Attribute pointer stages separately: raw, forwarded, accepted,
+      committed, stale generation, stale layout, and other rejection causes.
+      Do not infer all causes from one boolean.
+- [x] Measure camera presentation with the same build mode and mounted path
+      used for the comparison; keep headless math benchmarks labeled as
+      headless math only.
+- [x] Rebuild the benchmark scenarios around identical entity populations
+      and equivalent authored-write work: no camera, static camera, moving
+      camera, and moving camera with culling. Advance the camera every moving
+      iteration, run each production-equivalent path exactly once, and record
+      warmup plus p50/p95/p99 (or a clearly documented distribution).
+
+#### RED-first evidence
+
+- [x] Add a benchmark contract test that proves the moving scenario changes
+      camera state and the disabled-culling scenario performs no visibility
+      predicate/filter work.
+- [x] Add an end-to-end Camera Lab evidence test through the shell/controller
+      for every counter claimed in the HUD/report, including forced rerender
+      and stale generation attribution.
+- [x] Keep GPU/UI frame acceptance and all nine device rows unchecked until
+      measured on named hardware.
+
+> **T12-RF1..RF7 fix record.** RF1: instrumentation-only attachment is a
+> typed event family (`instrumentation-attached` / `instrumentation-detached`)
+> gated by the catalog's `instrumented` capability, validated against the
+> exact ready session in the reducer, and published by `effectiveBinding`
+> to GameView + GamePointerInput — it never retires, pauses, replaces, or
+> disposes the base session (real-controller tests: attach, detach, close,
+> same-id reopen, stale-session rejection, capability gate). RF2: the lab
+> instrumentation follows the Performance Lab model — UI counters in
+> Reanimated shared values mutated by workletized callbacks, RN verdicts in
+> refs, snapshot transfer at the HUD cadence — with a source contract test
+> (and a stripped-directive negative) for every UI callback. RF3: the
+> pointer coalescer carries an opaque event-time stamp with each native
+> move sample through deferral; the trailing flush and the adapter stamp
+> packets with that sample, never the flush-time camera (reducer tests:
+> deferred stamp, latest-of-many, up subsumption, cancel). RF4: shape-first
+> validators for camera cuts (cutId finite), follow options/dead zone/
+> target, visibility shapes, and filtered items with precise field paths;
+> the binding clones and freezes selector output at the JS commit boundary
+> (malformed-value table + mutable-selector tests). RF5: the replacement
+> harness re-reads the CURRENT binding after every rerender and definition
+> B is observably different; the replacement tests prove snap-then-
+> interpolate through the new binding. RF6: `intersectsBounds2D` rejects
+> non-finite fields and negative sizes before the inclusive test (table
+> test across NaN/±Infinity in every field + zero-size contact). RF7: the
+> benchmark compares identical populations across no-camera / static /
+> moving / moving-cull with per-iteration camera advance, zero visibility
+> work in cull-off, and p50/p95/p99 distributions (contract tests prove
+> each); pointer rejection is attributed per cause (layout-epoch vs
+> binding) through `onDispatchRejected`; UI/GPU frame metrics and the
+> nine device rows remain device-gated.
+>
+
+### Follow-up completion record
+
+- [x] Resolve T12-RF1 through T12-RF7 with focused RED suites.
+- [x] Run the actual Camera Lab attachment through `SurfaceController`; a
+      content-level callback mock is insufficient.
+- [x] Prove every UI instrumentation callback and trailing camera sample on
+      the real runtime boundary rather than only under JS mocks.
+- [x] Reconcile the Task 12 status, T12.3/T12.8 acceptance, benchmark claims,
+      and definition-of-done checkboxes with the resulting evidence.
+- [x] Run the normal gate only after the focused fixes are green.
 - [x] Leave all nine physical-device rows unchecked until run on the named
       hardware.
 

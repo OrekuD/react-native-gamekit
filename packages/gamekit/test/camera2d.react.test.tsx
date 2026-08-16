@@ -207,7 +207,9 @@ function harness(definition: unknown, strict = false) {
   });
   return {
     presented: () => presented.value,
-    binding,
+    // T12-RF5: the CURRENT binding, re-read after every rerender — the
+    // replacement binding owns the pending cut, never the stale one.
+    binding: () => binding,
     rerender: (nextDefinition: unknown) => {
       act(() => {
         renderer.update(
@@ -254,13 +256,13 @@ describe('presented camera binding (T12.3)', () => {
     const { presented, binding } = harness(definition);
     const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
     const cameraB = createCamera2D({ center: { x: 100, y: 0 }, zoom: 2 });
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(0));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 0);
-    act(() => binding.commit(frame('play', cameraB)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('play', cameraB)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50);
-    act(() => binding.present(1));
+    act(() => binding().present(1));
     const final = presented() as { camera: { center: { x: number }; zoom: number } };
     assert.equal(final.camera.center.x, 100);
     assert.equal(final.camera.zoom, 2);
@@ -271,70 +273,79 @@ describe('presented camera binding (T12.3)', () => {
     const { presented, binding } = harness(definition);
     const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
     const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(0));
-    act(() => binding.commit(frame('boss', cameraB)));
-    act(() => binding.present(0.25));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0));
+    act(() => binding().commit(frame('boss', cameraB)));
+    act(() => binding().present(0.25));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'explicit cut snaps');
 
     const plain = { select: (f: Frame) => f.current.camera };
     const second = harness(plain);
-    act(() => second.binding.commit(frame('play', cameraA)));
-    act(() => second.binding.present(0));
-    act(() => second.binding.commit(frame('game-over', cameraB)));
-    act(() => second.binding.present(0.25));
+    act(() => second.binding().commit(frame('play', cameraA)));
+    act(() => second.binding().present(0));
+    act(() => second.binding().commit(frame('game-over', cameraB)));
+    act(() => second.binding().present(0.25));
     assert.equal((second.presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'scene change snaps');
 
     const third = harness(plain);
-    act(() => third.binding.commit(frame('play', cameraA)));
-    act(() => third.binding.present(0));
-    act(() => third.binding.commit(frame('play', cameraB, true)));
-    act(() => third.binding.present(0.25));
+    act(() => third.binding().commit(frame('play', cameraA)));
+    act(() => third.binding().present(0));
+    act(() => third.binding().commit(frame('play', cameraB, true)));
+    act(() => third.binding().present(0.25));
     assert.equal((third.presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'hard cut snaps');
   });
 
-  it('treats definition replacement as ONE pending cut and then interpolates (T12-F3)', () => {
+  it('treats definition replacement as ONE pending cut owned by the NEW binding (T12-F3, T12-RF5)', () => {
+    // Definition B is OBSERVABLY different: a different selection source
+    // and cut behavior, so accidentally committing through A cannot pass.
     const definitionA = { select: (f: Frame) => f.current.camera };
-    const definitionB = { select: (f: Frame) => f.current.camera };
+    const definitionB = {
+      select: (f: Frame) => {
+        const camera = f.current.camera as { center: { x: number; y: number }; zoom: number; rotationRadians: number };
+        return { ...camera, center: { x: camera.center.x + 1000, y: camera.center.y } };
+      },
+      cut: (f: Frame) => f.scene === 'boss',
+    };
     const { presented, binding, rerender } = harness(definitionA);
     const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
     const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(1));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(1));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 0);
 
-    // Replacement: the first B commit snaps...
+    // Replacement: the first B commit (through the CURRENT binding) snaps,
+    // and B's selector transform is visible: 100 + 1000.
     rerender(definitionB);
-    act(() => binding.commit(frame('play', cameraB)));
-    act(() => binding.present(0.25));
-    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'first B commit snaps');
+    act(() => binding().commit(frame('play', cameraB)));
+    act(() => binding().present(0.25));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 1100, 'first B commit snaps through the new binding');
 
-    // ...and later B commits interpolate normally.
+    // ...and later B commits interpolate normally between B's own outputs.
     const cameraC = createCamera2D({ center: { x: 200, y: 0 } });
-    act(() => binding.commit(frame('play', cameraC)));
-    act(() => binding.present(0.5));
-    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 150, 'second B commit interpolates');
-    act(() => binding.present(1));
-    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 200, 'third B commit completes');
+    act(() => binding().commit(frame('play', cameraC)));
+    act(() => binding().present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 1150, 'second B commit interpolates');
+    act(() => binding().present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 1200, 'third B commit completes');
   });
 
-  it('produces exactly one cut per replacement under Strict Mode (T12-F3)', () => {
+  it('produces exactly one cut per replacement under Strict Mode (T12-F3, T12-RF5)', () => {
     const definitionA = { select: (f: Frame) => f.current.camera };
     const definitionB = { select: (f: Frame) => f.current.camera };
     const { presented, binding, rerender } = harness(definitionA, true);
     const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
     const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(1));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(1));
 
     rerender(definitionB);
     // One cut: the first B commit snaps, the second interpolates.
-    act(() => binding.commit(frame('play', cameraB)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('play', cameraB)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'the single replacement cut snaps');
     const cameraC = createCamera2D({ center: { x: 200, y: 0 } });
-    act(() => binding.commit(frame('play', cameraC)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('play', cameraC)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 150, 'interpolation resumes after the cut');
   });
 
@@ -357,33 +368,60 @@ describe('presented camera binding (T12.3)', () => {
     };
     const { presented, binding } = harness(definition);
     const cameraA = createCamera2D({ center: { x: 10, y: 0 } });
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(1));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(1));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10);
 
     // Select failure: prior presentation intact.
     failSelect = true;
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'select failure keeps the last valid value');
     failSelect = false;
 
     // Cut failure: prior presentation intact.
     failCut = true;
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'cut failure keeps the last valid value');
     failCut = false;
 
     // Validation failure: an invalid camera is rejected, then recovery.
     const invalid = { center: { x: NaN, y: 0 }, zoom: 1, rotationRadians: 0 };
-    act(() => binding.commit(frame('play', invalid)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('play', invalid)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'invalid camera rejected');
     const cameraB = createCamera2D({ center: { x: 50, y: 0 } });
-    act(() => binding.commit(frame('play', cameraB)));
-    act(() => binding.present(1));
+    act(() => binding().commit(frame('play', cameraB)));
+    act(() => binding().present(1));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50, 'the next valid commit recovers');
+  });
+
+  it('copies and freezes the selector output before publishing (T12-RF4)', () => {
+    // A MUTABLE camera returned by the selector: mutation after commit must
+    // never alter the authored previous/current values.
+    const mutable: { center: { x: number; y: number }; zoom: number; rotationRadians: number } = {
+      center: { x: 0, y: 0 },
+      zoom: 1,
+      rotationRadians: 0,
+    };
+    const definition = { select: (f: Frame) => f.current.camera };
+    const { presented, binding } = harness(definition);
+    act(() => binding().commit(frame('play', mutable)));
+    act(() => binding().present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 0);
+
+    // Mutate the caller-owned object after the commit.
+    mutable.center.x = 999;
+    act(() => binding().present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 0, 'published values are copies');
+
+    // A second commit with the mutated object is a NEW camera, validated
+    // and copied at the boundary.
+    const cameraB = createCamera2D({ center: { x: 50, y: 0 } });
+    act(() => binding().commit(frame('play', cameraB)));
+    act(() => binding().present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50);
   });
 
   it('keeps the previous presented value safe when the selector throws', () => {
@@ -397,11 +435,11 @@ describe('presented camera binding (T12.3)', () => {
     };
     const { presented, binding } = harness(definition);
     const cameraA = createCamera2D({ center: { x: 10, y: 0 } });
-    act(() => binding.commit(frame('play', cameraA)));
-    act(() => binding.present(0));
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10);
-    act(() => binding.commit(frame('broken', cameraA)));
-    act(() => binding.present(0.5));
+    act(() => binding().commit(frame('broken', cameraA)));
+    act(() => binding().present(0.5));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'the last valid value survives');
   });
 });
@@ -657,6 +695,29 @@ describe('world and layer transforms (T12.5)', () => {
         `parity for ${JSON.stringify(bounds)}`,
       );
     }
+  });
+
+  it('hides malformed item bounds before the intersection test (T12-RF6)', () => {
+    const view = { x: 0, y: 0, width: 100, height: 100 };
+    // Valid zero-size contact still intersects (inclusive contract).
+    assert.equal(intersectsBounds2D({ x: 100, y: 0, width: 0, height: 0 }, view), true, 'zero-size edge contact');
+    assert.equal(intersectsBounds2D({ x: 0, y: 0, width: 0, height: 0 }, view), true, 'zero-size inside');
+    // NaN in any field hides the item.
+    assert.equal(intersectsBounds2D({ x: NaN, y: 0, width: 1, height: 1 }, view), false);
+    assert.equal(intersectsBounds2D({ x: 0, y: NaN, width: 1, height: 1 }, view), false);
+    assert.equal(intersectsBounds2D({ x: 0, y: 0, width: NaN, height: 1 }, view), false);
+    assert.equal(intersectsBounds2D({ x: 0, y: 0, width: 1, height: NaN }, view), false);
+    // Positive/negative infinity in every field hides the item.
+    for (const field of ['x', 'y', 'width', 'height'] as const) {
+      const bad = { x: 0, y: 0, width: 1, height: 1 };
+      bad[field] = Infinity;
+      assert.equal(intersectsBounds2D(bad, view), false, field + ' = Infinity hides');
+      bad[field] = -Infinity;
+      assert.equal(intersectsBounds2D(bad, view), false, field + ' = -Infinity hides');
+    }
+    // Negative sizes are rejected even when the arithmetic would "work".
+    assert.equal(intersectsBounds2D({ x: 0, y: 0, width: -5, height: 100 }, view), false);
+    assert.equal(intersectsBounds2D({ x: 0, y: 0, width: 100, height: -5 }, view), false);
   });
 
   it('rejects invalid culling padding at the public boundary (T12-F5)', () => {

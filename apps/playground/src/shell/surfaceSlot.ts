@@ -47,7 +47,21 @@ export interface RunSurfaceAttachment {
 /** An explicit ownership transfer between a lab host and the shell. */
 export type RunSurfaceEvent =
   | { readonly kind: 'attach'; readonly attachment: RunSurfaceAttachment }
-  | { readonly kind: 'detach'; readonly session: GameSession };
+  | { readonly kind: 'detach'; readonly session: GameSession }
+  | {
+      readonly kind: 'instrumentation-attached';
+      readonly session: GameSession;
+      readonly instrumentation: SurfaceInstrumentation;
+    }
+  | { readonly kind: 'instrumentation-detached'; readonly session: GameSession };
+
+/** An instrumentation-only pair bound to a ready gameplay binding (T12-RF1):
+ * it shares the base session and never retires, pauses, replaces, or
+ * disposes it. */
+export interface SurfaceInstrumentation {
+  readonly pointer: import('rn-gamekit/react').GamePointerInstrumentation;
+  readonly view: import('rn-gamekit/react').GameViewInstrumentation;
+}
 
 /** One immutable surface binding (T8.3). */
 export interface SurfaceSlot {
@@ -76,6 +90,8 @@ export interface SurfaceSlot {
   readonly camera2D?: GameCamera2DDefinition<never>;
   /** The lab run attachment currently bound (perf-lab only). */
   readonly run?: RunSurfaceAttachment;
+  /** Instrumentation-only pair for the ready gameplay binding (T12-RF1). */
+  readonly instrumentation?: SurfaceInstrumentation;
   /** Sessions superseded by this or earlier bindings, awaiting the commit. */
   readonly retiring: readonly RetirementRecord[];
 }
@@ -282,6 +298,30 @@ function reduceClose(state: SurfaceSlot, event: Extract<SurfaceEvent, { kind: 'c
   };
 }
 
+function reduceInstrumentationAttached(
+  state: SurfaceSlot,
+  event: Extract<RunSurfaceEvent, { kind: 'instrumentation-attached' }>,
+): SurfaceReduction {
+  // T12-RF1: instrumentation-only attachment shares the base session. It
+  // must match the CURRENT ready binding exactly; a stale instance from a
+  // closed/reopened or superseded Camera Lab is rejected. Nothing here
+  // retires, pauses, replaces, or disposes the session.
+  if (state.status !== 'ready' || state.session !== event.session) {
+    return { slot: state, disposable: [] };
+  }
+  return { slot: { ...state, instrumentation: event.instrumentation }, disposable: [] };
+}
+
+function reduceInstrumentationDetached(
+  state: SurfaceSlot,
+  event: Extract<RunSurfaceEvent, { kind: 'instrumentation-detached' }>,
+): SurfaceReduction {
+  if (state.session !== event.session) {
+    return { slot: state, disposable: [] };
+  }
+  return { slot: { ...state, instrumentation: undefined }, disposable: [] };
+}
+
 function reduceRunAttached(state: SurfaceSlot, event: Extract<SurfaceEvent, { kind: 'run-attached' }>): SurfaceReduction {
   if (state.run?.session === event.attachment.session) {
     return { slot: state, disposable: [] };
@@ -330,7 +370,10 @@ function reduceBindingCommitted(state: SurfaceSlot, event: Extract<SurfaceEvent,
 }
 
 /** Apply one pure transition; the only path a slot may change. */
-export function reduceSurfaceState(state: SurfaceSlot, event: SurfaceEvent): SurfaceReduction {
+export function reduceSurfaceState(
+  state: SurfaceSlot,
+  event: SurfaceEvent | RunSurfaceEvent,
+): SurfaceReduction {
   switch (event.kind) {
     case 'open-ready':
       return reduceOpenReady(state, event);
@@ -344,6 +387,10 @@ export function reduceSurfaceState(state: SurfaceSlot, event: SurfaceEvent): Sur
       return reduceRunAttached(state, event);
     case 'run-detached':
       return reduceRunDetached(state, event);
+    case 'instrumentation-attached':
+      return reduceInstrumentationAttached(state, event);
+    case 'instrumentation-detached':
+      return reduceInstrumentationDetached(state, event);
     case 'binding-committed':
       return reduceBindingCommitted(state, event);
     default:
@@ -364,6 +411,8 @@ export interface SurfaceBinding {
   readonly pointerEnabled: boolean;
   /** The camera definition for the published gameplay binding (T12-F1). */
   readonly camera2D: GameCamera2DDefinition<never> | undefined;
+  /** The instrumentation pair for the published binding (T12-RF1). */
+  readonly instrumentation: SurfaceInstrumentation | undefined;
 }
 
 /**
@@ -390,5 +439,6 @@ export function effectiveBinding(slot: SurfaceSlot): SurfaceBinding {
     pointerGame: game,
     pointerEnabled: slot.pointer && game.status !== 'disposed',
     camera2D: slot.camera2D,
+    instrumentation: slot.instrumentation,
   };
 }

@@ -11,7 +11,32 @@
  */
 import { assertFiniteNumber, GeometryError } from '../geometry/validation';
 import type { Camera2D, CameraCut2D } from './types';
-import { assertValidCamera2D } from './validation';
+import { assertCameraShape } from './validation';
+
+function assertCutShape(cut: unknown, field: string): asserts cut is CameraCut2D {
+  if (typeof cut !== 'object' || cut === null || Array.isArray(cut)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      field,
+      `expected a camera cut record, got ${cut === null ? 'null' : typeof cut}`,
+    );
+  }
+  assertFiniteNumber((cut as CameraCut2D).cutId, `${field}.cutId`);
+  const camera = (cut as CameraCut2D).camera;
+  assertCameraShape(camera, `${field}.camera`);
+  const cameraField = `${field}.camera`;
+  assertFiniteNumber(camera.center.x, `${cameraField}.center.x`);
+  assertFiniteNumber(camera.center.y, `${cameraField}.center.y`);
+  assertFiniteNumber(camera.zoom, `${cameraField}.zoom`);
+  if (!(camera.zoom > 0)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      `${cameraField}.zoom`,
+      `expected a finite zoom greater than zero, got ${String(camera.zoom)}`,
+    );
+  }
+  assertFiniteNumber(camera.rotationRadians, `${cameraField}.rotationRadians`);
+}
 
 /**
  * Trusted scalar projector (worklet-safe): interpolates center and zoom
@@ -67,9 +92,9 @@ export function interpolateCamera2D(
   current: CameraCut2D,
   alpha: number,
 ): Camera2D {
-  assertValidCamera2D(current.camera);
+  assertCutShape(current, 'current');
   if (previous !== undefined) {
-    assertValidCamera2D(previous.camera);
+    assertCutShape(previous, 'previous');
   }
   assertFiniteNumber(alpha, 'alpha');
   if (alpha < 0 || alpha > 1) {

@@ -7,9 +7,11 @@ import { describe, it } from 'node:test';
 import {
   clampCameraBounds2D,
   createCamera2D,
+  filterCameraVisible2D,
   followCamera2D,
   getCameraVisibleBounds2D,
   interpolateCamera2D,
+  intersectsCameraView2D,
   logicalToWorld2D,
   sampleCameraShake2D,
   surfaceToWorld2D,
@@ -284,5 +286,46 @@ describe('camera2d interpolation', () => {
   it('snaps when there is no previous camera', () => {
     const snapped = interpolateCamera2D(undefined, current, 0.1);
     assert.deepEqual(snapped, current.camera);
+  });
+});
+
+describe('malformed outer values across every public helper (T12-RF4)', () => {
+  const CAM = createCamera2D();
+  const VIEW = { x: 0, y: 0, width: 10, height: 10 };
+  const cut = (): { camera: Camera2D; cutId: number } => ({ camera: CAM, cutId: 1 });
+
+  function rejectsWith(fn: () => unknown, field: string): void {
+    assert.throws(fn, (error: unknown) => {
+      assert.ok(error instanceof GeometryError, `structured error, got ${String(error)}`);
+      assert.equal((error as GeometryError).field, field);
+      return true;
+    });
+  }
+
+  it('rejects null, arrays, and missing nested records at every outer boundary', () => {
+    rejectsWith(() => followCamera2D(CAM, null as never), 'target');
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, null as never), 'options');
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, { deadZone: null as never }), 'deadZone');
+    rejectsWith(() => followCamera2D(CAM, { x: 0, y: 0 }, { deadZone: [1, 2, 3, 4] as never }), 'deadZone');
+    rejectsWith(() => interpolateCamera2D(undefined, null as never, 0.5), 'current');
+    rejectsWith(() => interpolateCamera2D(undefined, { camera: CAM, cutId: NaN }, 0.5), 'current.cutId');
+    rejectsWith(() => interpolateCamera2D({ camera: null as never, cutId: 1 }, cut(), 0.5), 'previous.camera');
+    rejectsWith(() => intersectsCameraView2D(null as never, CAM, VIEW), 'shape');
+    rejectsWith(() => intersectsCameraView2D({ kind: 'nope' } as never, CAM, VIEW), 'shape.kind');
+    rejectsWith(() => filterCameraVisible2D(null as never, CAM, VIEW), 'items');
+    rejectsWith(() => filterCameraVisible2D([{ id: 1 } as never], CAM, VIEW), 'items.id');
+    rejectsWith(
+      () => filterCameraVisible2D([{ id: 'a', bounds: { x: NaN, y: 0, width: 1, height: 1 } }], CAM, VIEW),
+      'items.bounds.x',
+    );
+    rejectsWith(
+      () => filterCameraVisible2D([{ id: 'a', bounds: null as never }], CAM, VIEW),
+      'items.bounds',
+    );
+  });
+
+  it('rejects non-finite cut ids and malformed cut cameras', () => {
+    rejectsWith(() => interpolateCamera2D(undefined, { camera: CAM, cutId: Infinity }, 0.5), 'current.cutId');
+    rejectsWith(() => interpolateCamera2D(undefined, { camera: { center: [1, 2], zoom: 1, rotationRadians: 0 } as never, cutId: 1 }, 0.5), 'current.camera.center');
   });
 });

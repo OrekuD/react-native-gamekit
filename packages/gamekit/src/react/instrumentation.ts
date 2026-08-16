@@ -37,6 +37,16 @@ export interface GamePointerInstrumentation {
    * counted but never sampled.
    */
   readonly onDispatchResult?: (seq: number, atMs: number, accepted: boolean) => void;
+  /**
+   * RN runtime: the CAUSE of a rejected packet (T12-RF7) — layout-epoch
+   * staleness (rejected before dispatch) or binding staleness (generation
+   * mismatch or a disposed binding). One boolean cannot attribute causes.
+   */
+  readonly onDispatchRejected?: (
+    cause: 'layout-epoch' | 'binding',
+    seq: number,
+    atMs: number,
+  ) => void;
   /** The trailing-flush sampler mounted (true) or unmounted (false). */
   readonly onSamplerChanged?: (mounted: boolean) => void;
 }
