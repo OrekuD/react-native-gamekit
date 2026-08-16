@@ -2,12 +2,13 @@
 
 ## Status
 
-**Resolved.** All four feedback rounds and the final verification
-findings (T11-F1 through T11-F10, T11-FF1 through T11-FF8,
-T11-SF1 through T11-SF5, T11-TF1 through T11-TF4, T11-VF1 and
-T11-VF2) are addressed, and every feedback checkbox is checked
-against its implementation and focused tests below. The complete
-automated gate is green; physical-device rows remain open.
+**Resolved.** All feedback rounds and final verification findings —
+T11-F1 through T11-F10, T11-FF1 through T11-FF8, T11-SF1 through
+T11-SF5, T11-TF1 through T11-TF4, T11-VF1, T11-VF2, and T11-FVF1 —
+are addressed, and every feedback checkbox is checked against its
+implementation and focused tests below. The complete automated gate
+is green; physical-device rows remain open.
+rows remain open.
 
 This task adds the first public gameplay system beyond the runtime foundations:
 a headless, deterministic Collision2D module for common arcade games. It
@@ -2221,20 +2222,91 @@ every ordinary call remains green.
 > wrap publishes a fresh entry. The between-interval band asserts the fact
 > stays `undefined`, so a retained or reused entry fails the suite (the
 > retention regression was simulated and failed 10/11 before restoring).
-> T11-VF2: `analyzeDerivedCallbacks` classifies every CallExpression shape
-> through the TypeScript AST — allowlisted identifiers, `Math` property
-> accesses only, and rejection of namespace, object-method, and
-> element-access callees — and verifies each derived callback carries the
-> worklet directive. Fixture tests pin each unsafe shape independently
-> (identifier, namespace, method, element access, missing directive) while
-> the real renderer stays accepted. Suites: `collisionLabGame.test.ts`
-> (T11-VF1), `rendererContract.test.ts` (T11-VF2).
->
-
-### Final verification record
+> T11-VF2 (completed in T11-FVF1): `analyzeDerivedCallbacks` classifies every
+> CallExpression shape through the TypeScript AST — allowlisted identifiers,
+> approved `Math` method names only, and rejection of namespace, object-method,
+> and element-access callees — and verifies each derived callback carries the
+> worklet directive. Discovery accepts arrow and function-expression updaters,
+> tolerates the optional dependency argument, and fails CLOSED on unsupported
+> updater shapes; the exact discovered count equals the analyzed body count.
+> Fixture tests pin each unsafe shape independently (identifier, namespace,
+> method, element access, arbitrary Math property, missing or false directive)
+> while the real renderer stays accepted. Suites: `collisionLabGame.test.ts`
+> (T11-VF1), `rendererContract.test.ts` (T11-VF2, T11-FVF1).
 
 - [x] Resolve T11-VF1 and T11-VF2 with their focused RED suites.
 - [x] Check the corresponding evidence only after those suites exist.
 - [x] Restore Task 11 to `Resolved` and record the resolving commit once.
 - [x] Leave the five physical-device rows open until run on the named
       hardware.
+
+## Final verification follow-up — review of `af144ba`
+
+This review is limited to the VF1/VF2 changes in `af144ba`; it does not rerun
+the reported repository gate. T11-VF1 is resolved: the headless test now
+covers entry, latch, separation, the teleport frame, the empty band between
+contacts, and the next interval while retaining the public raw-time behavior.
+The current renderer also passes the strengthened call-shape analyzer.
+
+### T11-FVF1 — Finish discovery and allowlisting in the AST analyzer
+
+**Priority:** Important
+
+`bannedCallsInBody` classifies identifier, property-access, element-access,
+and fallback call expressions once a callback body reaches it. The outer
+`analyzeDerivedCallbacks` discovery still accepts only this exact shape,
+however:
+
+```ts
+useDerivedValue(() => { ... })
+```
+
+It requires exactly one argument and an `ArrowFunction`. A valid function
+expression or a valid call with the optional dependencies argument is skipped
+entirely. The `>= 20` assertion does not close this hole because the renderer
+currently contains 23 derived callbacks, so as many as three could disappear
+from analysis while the test remains green.
+
+The property-access branch also accepts every `Math.*()` name. That is not the
+recorded "Math built-ins only" policy: `Math.notAFunction()` would be accepted
+by the analyzer and then fail on the UI runtime. Finally, worklet detection is
+a text-prefix check rather than an AST directive check, so a non-directive
+expression beginning with the same text can be misclassified.
+
+#### Required approach
+
+- [x] Enumerate every `useDerivedValue` call first. Assert that its updater is
+      either an arrow function or function expression, analyze both forms,
+      and explicitly handle the supported optional dependency argument.
+- [x] Fail closed on an unsupported updater/call shape instead of silently
+      omitting it from `bodies`.
+- [x] Replace the lower-bound callback assertion with an exact comparison:
+      discovered `useDerivedValue` calls must equal analyzed callback bodies.
+- [x] Maintain an explicit set of approved `Math` method names and require the
+      property name to be in that set. Do not approve an arbitrary property
+      merely because its receiver text is `Math`.
+- [x] Inspect the callback block's first AST statement and require an actual
+      string-literal expression directive equal to `worklet`; avoid
+      `startsWith` source-text inference.
+
+#### RED-first evidence
+
+- [x] Add fixtures for an arrow updater, a function-expression updater, and a
+      supported two-argument `useDerivedValue` call; every callback body must
+      be analyzed.
+- [x] Add a fixture with an unsupported updater shape and assert a closed
+      failure rather than a lower body count.
+- [x] Add `Math.abs()` as an accepted fixture and `Math.notAFunction()` as a
+      rejected fixture.
+- [x] Add a false-directive fixture such as `'worklet' + suffix;` and assert
+      it is reported as non-workletized.
+- [x] Assert the exact number of derived calls in the real renderer equals the
+      number of analyzed bodies.
+
+### Final follow-up record
+
+- [x] Resolve T11-FVF1 with the focused renderer-contract suite.
+- [x] Correct the VF2 completion record to describe exact callback discovery
+      and approved Math methods only after the tests exist.
+- [x] Restore Task 11 to `Resolved` and record the resolving commit once.
+- [x] Leave the five physical-device rows open until run on named hardware.

@@ -30,6 +30,31 @@ const ALLOWED_WORKLET_CALLS = new Set([
   'Math',
 ]);
 
+/** Approved `Math` methods (T11-FVF1): only these property names may be
+ * called on `Math` inside a derived worklet. An arbitrary property such as
+ * `Math.notAFunction()` must be rejected rather than approved by receiver
+ * text alone. */
+const APPROVED_MATH_METHODS = new Set([
+  'abs',
+  'atan2',
+  'cbrt',
+  'ceil',
+  'cos',
+  'exp',
+  'floor',
+  'hypot',
+  'log',
+  'max',
+  'min',
+  'pow',
+  'round',
+  'sign',
+  'sin',
+  'sqrt',
+  'tan',
+  'trunc',
+]);
+
 /** Identifier callees inside a callback body, via the AST (for the
  * delegation assertions). */
 function calledNames(body: string): string[] {
@@ -80,7 +105,8 @@ function bannedCallsInBody(body: string, allowed: ReadonlySet<string>): string[]
         }
       } else if (ts.isPropertyAccessExpression(callee)) {
         const object = callee.expression;
-        if (!(ts.isIdentifier(object) && object.text === 'Math')) {
+        const name = callee.name.text;
+        if (!(ts.isIdentifier(object) && object.text === 'Math' && APPROVED_MATH_METHODS.has(name))) {
           banned.push(callee.getText(file));
         }
       } else if (ts.isElementAccessExpression(callee)) {
@@ -96,18 +122,44 @@ function bannedCallsInBody(body: string, allowed: ReadonlySet<string>): string[]
 }
 
 interface DerivedAnalysis {
+  /** Every `useDerivedValue` call found in the source. */
+  readonly discovered: number;
+  /** Updater bodies that were analyzed (arrow or function expression). */
   readonly bodies: readonly string[];
-  /** Bodies whose first statement is not the worklet directive. */
+  /** Updater bodies whose first statement is not the worklet directive. */
   readonly nonWorkletized: readonly string[];
-  /** Banned callee texts across every derived body. */
+  /** Banned callee texts across every analyzed body. */
   readonly banned: readonly string[];
+  /** `useDerivedValue` calls with an unsupported updater shape. */
+  readonly unsupported: readonly string[];
 }
 
 /**
- * Analyze every `useDerivedValue` callback in a source text through the
- * TypeScript AST: enumerate the callback bodies, verify each is
- * workletized, and classify every call-expression shape inside them
- * (T11-VF2). No callback spelling or callee shape can be skipped.
+ * True when the first statement of a callback block is an actual
+ * string-literal expression statement `'worklet'` (T11-FVF1). The check is
+ * structural: an expression that merely BEGINS with the same text, such as
+ * `'worklet' + suffix;`, is not a directive.
+ */
+function hasWorkletDirective(body: ts.Node): boolean {
+  if (!ts.isBlock(body)) {
+    return false;
+  }
+  const first = body.statements[0];
+  return (
+    first !== undefined &&
+    ts.isExpressionStatement(first) &&
+    ts.isStringLiteral(first.expression) &&
+    first.expression.text === 'worklet'
+  );
+}
+
+/**
+ * Analyze every `useDerivedValue` call in a source text through the
+ * TypeScript AST (T11-VF2, T11-FVF1). Discovery accepts an arrow-function
+ * or function-expression updater in argument position zero and tolerates
+ * the supported optional dependency argument; any other updater shape is
+ * recorded in `unsupported` (fail closed) instead of silently disappearing
+ * from the analysis.
  */
 function analyzeDerivedCallbacks(sourceText: string, allowed: ReadonlySet<string>): DerivedAnalysis {
   const file = ts.createSourceFile(
@@ -120,28 +172,32 @@ function analyzeDerivedCallbacks(sourceText: string, allowed: ReadonlySet<string
   const bodies: string[] = [];
   const nonWorkletized: string[] = [];
   const banned: string[] = [];
+  const unsupported: string[] = [];
   const walk = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === 'useDerivedValue' &&
-      node.arguments.length === 1 &&
-      ts.isArrowFunction(node.arguments[0])
-    ) {
-      const body = node.arguments[0].body.getText(file);
-      bodies.push(body);
-      // The directive is the first statement INSIDE the block braces.
-      const trimmed = body.trim();
-      const inner = trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed.slice(1, -1) : trimmed;
-      if (!inner.trim().startsWith("'worklet'")) {
-        nonWorkletized.push(inner.trim().slice(0, 60));
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'useDerivedValue') {
+      if (node.arguments.length === 0) {
+        unsupported.push('useDerivedValue() with no updater');
+        ts.forEachChild(node, walk);
+        return;
       }
-      banned.push(...bannedCallsInBody(body, allowed));
+      const updater = node.arguments[0];
+      if (ts.isArrowFunction(updater) || ts.isFunctionExpression(updater)) {
+        const body = updater.body.getText(file);
+        bodies.push(body);
+        if (!hasWorkletDirective(updater.body)) {
+          nonWorkletized.push(body.trim().slice(0, 60));
+        }
+        banned.push(...bannedCallsInBody(body, allowed));
+      } else {
+        unsupported.push(updater.getText(file).trim().slice(0, 60));
+      }
+      // Additional arguments are the supported optional dependency list;
+      // they are not updaters and need no analysis.
     }
     ts.forEachChild(node, walk);
   };
   walk(file);
-  return { bodies, nonWorkletized, banned };
+  return { discovered: bodies.length + unsupported.length, bodies, nonWorkletized, banned, unsupported };
 }
 
 describe('Collision Lab renderer UI-runtime contract', () => {
@@ -156,6 +212,12 @@ describe('Collision Lab renderer UI-runtime contract', () => {
     // skipped, and namespace, method, and element-access callees are
     // rejected rather than ignored.
     const analysis = analyzeDerivedCallbacks(source, ALLOWED_WORKLET_CALLS);
+    assert.deepEqual(analysis.unsupported, [], 'every derived call has a supported updater');
+    assert.equal(
+      analysis.discovered,
+      analysis.bodies.length,
+      'the exact number of discovered derived calls equals the analyzed bodies',
+    );
     assert.ok(analysis.bodies.length >= 20, `found ${analysis.bodies.length} derived worklets`);
     assert.deepEqual(analysis.nonWorkletized, [], 'every derived callback is workletized');
     assert.deepEqual(analysis.banned, [], 'no non-worklet call of any shape inside derived worklets');
@@ -220,8 +282,65 @@ const v = useDerivedValue(() => {
     );
     assert.equal(plain.nonWorkletized.length, 1, 'a callback without the directive is flagged');
 
-    // The real renderer remains accepted.
+    // FVF1: a function-expression updater is discovered and analyzed.
+    const functionExpression = analyzeDerivedCallbacks(
+      "const v = useDerivedValue(function () { 'worklet'; return localHelper(); });",
+      fixtureAllowed,
+    );
+    assert.equal(functionExpression.discovered, 1, 'the function-expression updater is discovered');
+    assert.equal(functionExpression.bodies.length, 1, 'its body is analyzed');
+    assert.deepEqual(functionExpression.banned, [], 'its calls are classified');
+    assert.deepEqual(functionExpression.nonWorkletized, [], 'its directive is recognized');
+
+    // FVF1: the supported optional dependency argument is tolerated.
+    const twoArgument = analyzeDerivedCallbacks(
+      "const v = useDerivedValue(() => { 'worklet'; return localHelper(); }, [dep]);",
+      fixtureAllowed,
+    );
+    assert.equal(twoArgument.discovered, 1, 'a two-argument call is discovered');
+    assert.equal(twoArgument.bodies.length, 1, 'its updater is analyzed');
+
+    // FVF1: an unsupported updater shape fails CLOSED instead of lowering
+    // the body count.
+    const unsupportedUpdater = analyzeDerivedCallbacks(
+      'const v = useDerivedValue(someUpdater);',
+      fixtureAllowed,
+    );
+    assert.equal(unsupportedUpdater.bodies.length, 0, 'nothing is silently analyzed');
+    assert.deepEqual(
+      unsupportedUpdater.unsupported,
+      ['someUpdater'],
+      'the unsupported updater is reported, not omitted',
+    );
+
+    // FVF1: approved Math methods pass, arbitrary Math properties fail.
+    assert.deepEqual(
+      analyze("return Math.abs(-1) + Math.sqrt(4);").banned,
+      [],
+      'approved Math methods pass',
+    );
+    assert.deepEqual(
+      analyze('return Math.notAFunction();').banned,
+      ['Math.notAFunction'],
+      'an arbitrary Math property is rejected',
+    );
+
+    // FVF1: a false directive — an expression that merely BEGINS with the
+    // worklet text — is reported as non-workletized by the structural check.
+    const falseDirective = analyzeDerivedCallbacks(
+      "const v = useDerivedValue(() => { 'worklet' + suffix; return localHelper(); });",
+      fixtureAllowed,
+    );
+    assert.equal(
+      falseDirective.nonWorkletized.length,
+      1,
+      "an expression beginning with 'worklet' is not a directive",
+    );
+
+    // The real renderer remains accepted, with every call discovered.
     const renderer = analyzeDerivedCallbacks(source, ALLOWED_WORKLET_CALLS);
+    assert.deepEqual(renderer.unsupported, [], 'the renderer has no unsupported updater');
+    assert.equal(renderer.discovered, renderer.bodies.length, 'renderer callbacks are all analyzed');
     assert.deepEqual(renderer.banned, [], 'the renderer stays accepted');
   });
 
