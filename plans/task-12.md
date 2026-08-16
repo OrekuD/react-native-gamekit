@@ -2,13 +2,13 @@
 
 ## Status
 
-**T12.0 complete; T12.1 not started.** The transform pipeline is inventoried,
-the contract is frozen, and the compile fixtures + no-camera baseline exist
-(`packages/gamekit/test/api/camera2d.types.tsx`, RED until T12.1 lands;
-`packages/gamekit/test/camera2d.baseline.test.ts`, green 5/5). Implementation
-starts with pure camera math (T12.1).
-
-Task 12 depends on the canonical geometry contracts from Task 11. T12.0 may
+**T12.1 through T12.9 implemented; T12.10 automated gate green;
+device rows open.** All pure camera math, follow/bounds/shake, the
+GameView-owned presented camera binding, camera-aware pointer mapping,
+layers and parallax, visibility culling with SpriteBatch integration,
+the scrolling Sprite Field, the Camera Lab, and the docs + agent
+instructions are in. `pnpm check` exits 0 across the workspace; the
+physical-device matrix remains unchecked.
 inventory the existing viewport and input pipelines while Task 11 is underway,
 but implementation must not create competing `Point2D`, `Vector2D`, or
 `Aabb2D` types.
@@ -1027,19 +1027,80 @@ data.
 Task 12 is complete when the camera contract, rendering, input, culling,
 reference game, and evidence agree.
 
-- [ ] Canonical immutable Camera2D exports from the native-free root.
-- [ ] No-camera games preserve their existing behavior and performance path.
-- [ ] One GameView-owned presented camera drives rendering and pointer input.
-- [ ] Forward and inverse conversions follow one documented transform model.
-- [ ] Follow, bounds, cuts, and shake are deterministic and headless.
-- [ ] `GameWorld2D` supports camera transforms without React frame updates.
-- [ ] Ordered layers and parallax have explicit zoom and rotation semantics.
-- [ ] Visibility culling never changes simulation or collision results.
-- [ ] Sprite Field demonstrates a larger scrolling world through public APIs.
-- [ ] Camera Lab exposes transform, lifecycle, input, and performance evidence.
-- [ ] Docs and agent instructions prevent split transform ownership.
-- [ ] Automated package, docs, and Expo gates pass.
+- [x] Canonical immutable Camera2D exports from the native-free root.
+- [x] No-camera games preserve their existing behavior and performance path.
+- [x] One GameView-owned presented camera drives rendering and pointer input.
+- [x] Forward and inverse conversions follow one documented transform model.
+- [x] Follow, bounds, cuts, and shake are deterministic and headless.
+- [x] `GameWorld2D` supports camera transforms without React frame updates.
+- [x] Ordered layers and parallax have explicit zoom and rotation semantics.
+- [x] Visibility culling never changes simulation or collision results.
+- [x] Sprite Field demonstrates a larger scrolling world through public APIs.
+- [x] Camera Lab exposes transform, lifecycle, input, and performance evidence.
+- [x] Docs and agent instructions prevent split transform ownership.
+- [x] Automated package, docs, and Expo gates pass.
 - [ ] Device rows are completed or remain explicitly device-gated.
+
+## T12 completion record (T12.10)
+
+### Implementation evidence
+
+- **T12.1 (pure math)**: `src/camera2d/` — types, validation (reuses the
+  structured `GeometryError`), transform (`worldToLogical2D`,
+  `logicalToWorld2D`, `worldToSurface2D`, `surfaceToWorld2D`,
+  `getCameraVisibleBounds2D`, `createCamera2D`), interpolation (shortest-arc
+  rotation, snap on cut). 40/40 headless tests (`camera2d.test.ts`,
+  `camera2d.behavior.test.ts`, `camera2d.visibility.test.ts`); a real
+  clamp-axis bug was caught by RED before the fix.
+- **T12.2 (behavior)**: `followCamera2D` (dead zone, per-axis, damping
+  half-life), `clampCameraBounds2D` (conservative rotated containment,
+  small-world centering), `sampleCameraShake2D` (deterministic, returns the
+  base at duration), `interpolateCamera2D`.
+- **T12.3 (binding)**: `defineGameCamera2D` + `usePresentedCameraBinding`;
+  `GameView` owns the presented `SharedValue<CameraCut2D | undefined>`,
+  evaluates the selector per commit, interpolates with the alpha clock,
+  snaps on scene change / hard cut / explicit predicate / definition or
+  session replacement, freezes on pause, and keeps the last valid value when
+  the selector throws. 13/13 mounted tests (`camera2d.react.test.tsx`).
+- **T12.4 (pointer)**: `PointerBinding` gains the lazy presented-camera
+  accessor and maps surface -> world with containment first; `GamePointerInput`
+  discovers the camera from the mounted surface (never a repeated prop);
+  every move re-reads the current camera; camera identity joins the binding
+  identity so replacement regenerates the packet generation.
+- **T12.5 (layers)**: `GameWorld2D` composes camera before the viewport
+  (element list `T(off) S(scale) T(L) R(-R) S(Z) T(-C)`, verified against
+  `worldToSurface2D`); `GameLayer2D` applies parallax as a pure
+  center-relative translation; frozen zoom/rotation policy; JSX order is
+  render order.
+- **T12.6 (culling)**: `paddedCameraBounds2D`, `intersectsCameraView2D`,
+  `filterCameraVisible2D` (stable order, frozen results); `SpriteBatch`
+  `cull` prop hides off-screen slots in place — fixed capacity, stable slot
+  identity, worklet-safe inline math, no per-frame allocation.
+- **T12.7 (Sprite Field)**: 2400 x 1600 world, camera in scene state, dead
+  zone + world clamp, two parallax hill layers, batch culling, quantized
+  diagnostics toggle, shell `camera2D` registry wiring. 8/8 headless tests.
+- **T12.8 (Camera Lab)**: follow/zoom/rotation/shake/cut/bounds/culling on
+  one screen with a pointer crosshair; the shake base is a stable scene
+  value so offsets never accumulate. 6/6 headless tests.
+- **T12.9 (docs)**: `engine-systems/camera2d.mdx`, guides
+  `add-a-camera`, `camera-coordinates`, `render-layers`, the scrolling
+  Sprite Field walkthrough, roadmap/intro updates, AGENTS.md invariant 9
+  (single binding, no second input transform, worklet directives, culling
+  is presentation-only, no-camera parity, explicit 2D names). Docs build
+  green, zero broken links.
+
+### Automated gate (T12.10)
+
+- `pnpm check` exits 0: lint, typecheck, 456 package tests + 143 playground
+  tests, all builds (package lib, docs, playground typecheck).
+- `pnpm typecheck:assets` green: the `test/api/camera2d.types.tsx` contract
+  fixture (no-camera game, static camera, discriminated scenes, renderer
+  camera prop, adapter without repeated binding, layers, headless helpers,
+  and the 3D/mutable/adapter negatives) validates the BUILT public surface.
+- `test/camera2d.baseline.test.ts` (5/5) pins the pre-camera path that
+  T12.3-T12.5 must preserve; the no-camera GameView test asserts no camera
+  prop ever reaches a renderer without the binding.
+- The device matrix below remains open until run on named hardware.
 
 ## Recommended execution order
 
