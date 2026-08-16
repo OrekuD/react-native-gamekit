@@ -21,7 +21,7 @@
  */
 import type { ComponentType } from 'react';
 import type { GameSession } from 'rn-gamekit';
-import type { GameRendererProps } from 'rn-gamekit/react';
+import type { GameCamera2DDefinition, GameRendererProps } from 'rn-gamekit/react';
 
 export type SurfaceStatus = 'neutral' | 'loading' | 'ready';
 
@@ -68,6 +68,12 @@ export interface SurfaceSlot {
   readonly assets?: SlotAssets;
   /** Pointer active only when a real session is published. */
   readonly pointer: boolean;
+  /**
+   * The catalogued camera definition (T12-F1), present only for ready
+   * gameplay bindings whose frames carry the authored camera. Neutral and
+   * placeholder/loading slots never carry one.
+   */
+  readonly camera2D?: GameCamera2DDefinition<never>;
   /** The lab run attachment currently bound (perf-lab only). */
   readonly run?: RunSurfaceAttachment;
   /** Sessions superseded by this or earlier bindings, awaiting the commit. */
@@ -84,6 +90,7 @@ export type SurfaceEvent =
       readonly renderer: ComponentType<GameRendererProps<never>>;
       readonly content?: ComponentType<{ readonly game: GameSession }>;
       readonly pointer: boolean;
+      readonly camera2D?: GameCamera2DDefinition<never>;
     }
   | {
       readonly kind: 'open-loading';
@@ -100,6 +107,7 @@ export type SurfaceEvent =
       readonly generation: number;
       readonly session: GameSession;
       readonly assets: SlotAssets;
+      readonly camera2D?: GameCamera2DDefinition<never>;
     }
   | {
       readonly kind: 'close';
@@ -204,6 +212,7 @@ function reduceOpenReady(state: SurfaceSlot, event: Extract<SurfaceEvent, { kind
       content: event.content,
       assets: undefined,
       pointer: event.pointer,
+      camera2D: event.camera2D,
       run: undefined,
       retiring: retireReplaced(state, event.generation),
     },
@@ -244,6 +253,7 @@ function reduceAssetReady(state: SurfaceSlot, event: Extract<SurfaceEvent, { kin
       session: event.session,
       assets: event.assets,
       pointer: true,
+      camera2D: event.camera2D,
       retiring: retireReplaced(state, event.generation),
     },
     disposable: [],
@@ -352,6 +362,8 @@ export interface SurfaceBinding {
   readonly assets: SlotAssets | undefined;
   readonly pointerGame: GameSession;
   readonly pointerEnabled: boolean;
+  /** The camera definition for the published gameplay binding (T12-F1). */
+  readonly camera2D: GameCamera2DDefinition<never> | undefined;
 }
 
 /**
@@ -377,5 +389,6 @@ export function effectiveBinding(slot: SurfaceSlot): SurfaceBinding {
     assets: slot.assets,
     pointerGame: game,
     pointerEnabled: slot.pointer && game.status !== 'disposed',
+    camera2D: slot.camera2D,
   };
 }

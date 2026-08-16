@@ -313,6 +313,7 @@ function GameSurface({
         presentationKey={slot.generation}
         assets={bound.assets as never}
         renderer={Renderer as unknown as ComponentType<GameRendererProps<SceneDefinitionMarkerMap>>}
+        camera2D={bound.camera2D as never}
         instrumentation={slot.run?.view}
         style={StyleSheet.absoluteFill}
       >

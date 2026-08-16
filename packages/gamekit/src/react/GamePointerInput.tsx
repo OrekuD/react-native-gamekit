@@ -9,6 +9,7 @@ import {
 import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
+import type { CameraCut2D } from '../camera2d';
 import type { InputMap, PointerInputAction, SceneMap } from '../definition/types';
 import type { GameSession } from '../core/session/types';
 import { GameCameraContext, GameViewportContext } from './GameView';
@@ -78,6 +79,7 @@ function TrailingFlushSampler({
   layoutEpoch,
   forwardSeq,
   generation,
+  camera,
 }: {
   readonly coalescerState: SharedValue<PointerCoalescerState>;
   readonly forwardEventOnJS: (packet: PointerPacket) => void;
@@ -85,6 +87,8 @@ function TrailingFlushSampler({
   readonly layoutEpoch: SharedValue<number>;
   readonly forwardSeq: SharedValue<number>;
   readonly generation: number;
+  /** The presented camera shared value, sampled at flush time (T12-F4). */
+  readonly camera: SharedValue<CameraCut2D | undefined> | undefined;
 }) {
   // F2 acceptance: report the sampler's mounted lifecycle so the lab can
   // prove no idle frame callback survives pointer exit, replacement, or
@@ -116,6 +120,7 @@ function TrailingFlushSampler({
         layoutEpoch: layoutEpoch.value,
         seq: forwardSeq.value,
         atMs: Date.now(),
+        camera: camera?.value,
       });
     }
   });
@@ -191,10 +196,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         game.input,
         () => viewportBinding.resolved,
         nextBindingGeneration++,
-        presentedCamera === undefined ? undefined : () => presentedCamera.value?.camera,
       ),
-    [action, game, presentedCamera, viewportBinding],
+    [action, game, viewportBinding],
   );
+  // T12-F4: the presented camera is sampled at EVENT TIME inside the touch
+  // worklets and stamped onto every packet; the binding inverts through
+  // that stamp, never a later JS-side read.
+  const cameraShared = presentedCamera;
   const generation = binding.generation;
   // F6/F3: the layout epoch is adapter-owned (ref + UI mirror), bumped only
   // on layout revisions and unmount; it never resets, so replacement cannot
@@ -290,6 +298,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
+          camera: cameraShared?.value,
         });
       }
       const nextActive = samplerMirrorFromBatch(batch);
@@ -298,7 +307,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       }
       GestureStateManager.activate(event.handlerTag);
     },
-    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState, viewportShared],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState, viewportShared],
   );
 
   const handleTouchesMove = useCallback<ManualTouchHandler>(
@@ -326,11 +335,12 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
+          camera: cameraShared?.value,
         });
         }
       }
     },
-    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch],
   );
 
   const handleTouchesUp = useCallback<ManualTouchHandler>(
@@ -359,6 +369,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
+          camera: cameraShared?.value,
         });
         }
         const mirror = samplerMirrorFromBatch(batch);
@@ -373,7 +384,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         GestureStateManager.deactivate(event.handlerTag);
       }
     },
-    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
   );
 
   const handleTouchesCancel = useCallback<ManualTouchHandler>(
@@ -393,6 +404,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
+          camera: cameraShared?.value,
         });
       }
       const nextActive = samplerMirrorFromBatch(batch);
@@ -400,7 +412,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         scheduleOnRN(reportSamplerState, { generation, active: nextActive });
       }
     },
-    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
   );
 
   const handleFinalize = useCallback<ManualFinalizeHandler>(
@@ -423,6 +435,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
           atMs: Date.now(),
+          camera: cameraShared?.value,
         });
       }
       const nextActive = samplerMirrorFromBatch(batch);
@@ -499,6 +512,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
             layoutEpoch={layoutEpoch}
             forwardSeq={forwardSeq}
             generation={generation}
+            camera={cameraShared}
           />
         ) : null}
       </View>

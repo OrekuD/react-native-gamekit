@@ -30,12 +30,12 @@ export function paddedCameraBounds2D(
   assertValidLogicalView(logicalView);
   assertNonnegativePadding(padding);
   const bounds = getCameraVisibleBounds2D(camera, logicalView);
-  return {
+  return Object.freeze({
     x: bounds.x - padding,
     y: bounds.y - padding,
     width: bounds.width + padding * 2,
     height: bounds.height + padding * 2,
-  };
+  });
 }
 
 /**

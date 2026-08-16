@@ -15,6 +15,7 @@
  * rendering and pointer input share one composition.
  */
 import type { Aabb2D, Point2D } from '../geometry/types';
+import { GeometryError } from '../geometry/validation';
 import type { ResolvedViewport2D } from '../viewport2d/types';
 import { surfaceToWorld, worldToSurface } from '../viewport2d/math';
 import type { Camera2D } from './types';
@@ -43,6 +44,13 @@ export function logicalViewCenter2D(logicalView: Aabb2D): Point2D {
  * the identity camera (`center` origin, `zoom` 1, no rotation).
  */
 export function createCamera2D(value?: Partial<Camera2D>): Camera2D {
+  if (value !== undefined && (typeof value !== 'object' || value === null || Array.isArray(value))) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      'camera',
+      `expected a camera record, got ${value === null ? 'null' : typeof value}`,
+    );
+  }
   const camera: Camera2D = {
     center: value?.center ?? { x: 0, y: 0 },
     zoom: value?.zoom ?? 1,

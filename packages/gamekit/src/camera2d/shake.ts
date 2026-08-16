@@ -13,6 +13,13 @@ import { assertValidCamera2D } from './validation';
 import { assertFiniteNumber, assertNonnegativeSize, GeometryError } from '../geometry/validation';
 
 function assertValidShakeOptions(options: CameraShakeOptions2D): void {
+  if (typeof options !== 'object' || options === null || Array.isArray(options)) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      'options',
+      `expected a shake options record, got ${options === null ? 'null' : typeof options}`,
+    );
+  }
   assertFiniteNumber(options.seed, 'seed');
   assertFiniteNumber(options.elapsedSeconds, 'elapsedSeconds');
   if (!(options.elapsedSeconds >= 0)) {
@@ -59,19 +66,25 @@ export function sampleCameraShake2D(
 
   const { seed, elapsedSeconds, durationSeconds, amplitude, frequency = Math.PI * 2 } = options;
   if (elapsedSeconds >= durationSeconds || amplitude === 0) {
-    return base;
+    // T12-F6: even the endpoint returns a frozen copy — never the caller's
+    // base object by identity.
+    return Object.freeze({
+      center: Object.freeze({ x: base.center.x, y: base.center.y }),
+      zoom: base.zoom,
+      rotationRadians: base.rotationRadians,
+    });
   }
   const envelope = 1 - elapsedSeconds / durationSeconds;
   const offset = {
     x: Math.sin(elapsedSeconds * frequency + phaseOf(seed, 1)) * amplitude * envelope,
     y: Math.sin(elapsedSeconds * frequency + phaseOf(seed, 2)) * amplitude * envelope,
   };
-  return {
-    center: {
+  return Object.freeze({
+    center: Object.freeze({
       x: base.center.x + offset.x,
       y: base.center.y + offset.y,
-    },
+    }),
     zoom: base.zoom,
     rotationRadians: base.rotationRadians,
-  };
+  });
 }

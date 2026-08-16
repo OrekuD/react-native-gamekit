@@ -7,7 +7,7 @@
  * centering axes where the world is smaller than the view.
  */
 import type { Aabb2D } from '../geometry/types';
-import { assertFiniteNumber, assertNonnegativeSize } from '../geometry/validation';
+import { assertFiniteNumber, assertNonnegativeSize, GeometryError } from '../geometry/validation';
 import type { Camera2D } from './types';
 import { assertValidCamera2D, assertValidLogicalView } from './validation';
 
@@ -47,18 +47,29 @@ export function clampCameraBounds2D(
 ): Camera2D {
   assertValidCamera2D(camera);
   assertValidLogicalView(logicalView);
+  if (
+    typeof worldBounds !== 'object' ||
+    worldBounds === null ||
+    Array.isArray(worldBounds)
+  ) {
+    throw new GeometryError(
+      'GEOMETRY_INVALID_NUMBER',
+      'worldBounds',
+      `expected a rect record, got ${worldBounds === null ? 'null' : typeof worldBounds}`,
+    );
+  }
   assertFiniteNumber(worldBounds.x, 'worldBounds.x');
   assertFiniteNumber(worldBounds.y, 'worldBounds.y');
   assertNonnegativeSize(worldBounds.width, 'worldBounds.width');
   assertNonnegativeSize(worldBounds.height, 'worldBounds.height');
 
   const extents = cameraHalfExtents2D(camera, logicalView);
-  return {
-    center: {
+  return Object.freeze({
+    center: Object.freeze({
       x: clampCenter(camera.center.x, extents.x, worldBounds.x, worldBounds.x + worldBounds.width),
       y: clampCenter(camera.center.y, extents.y, worldBounds.y, worldBounds.y + worldBounds.height),
-    },
+    }),
     zoom: camera.zoom,
     rotationRadians: camera.rotationRadians,
-  };
+  });
 }

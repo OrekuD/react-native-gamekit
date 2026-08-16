@@ -9,7 +9,7 @@
  * effectively gated on readiness while close/reopen follows the shell's
  * lease policy.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -17,11 +17,23 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import { type SpriteFieldSession, type PlaySnapshot } from './spriteFieldGame';
 
+/** Diagnostic publication cadence (T12-F7): at most ~8 publications per
+ * second regardless of camera speed. Whole-unit quantization alone is not a
+ * frequency guarantee. */
+const DIAGNOSTIC_INTERVAL_SECONDS = 0.125;
+
 export default function SpriteFieldContent({
   game,
   onExit,
   assetState,
-}: PlaygroundGameContentProps) {
+  onHudPublish,
+  onDiagnosticsPublish,
+}: PlaygroundGameContentProps & {
+  /** Test instrumentation: called exactly when the HUD setter runs. */
+  readonly onHudPublish?: () => void;
+  /** Test instrumentation: called exactly when a diagnostic publishes. */
+  readonly onDiagnosticsPublish?: () => void;
+}) {
   // RF2: the shell owns the asset load; the content consumes the status. The
   // loading/error branch never reads a gameplay snapshot or casts the neutral
   // canvas session — the real Sprite Field session is used only when ready.
@@ -34,8 +46,9 @@ export default function SpriteFieldContent({
     animationMode: PlaySnapshot['animationMode'];
   } | null>(null);
   // T12.7 diagnostics: an opt-in readout of camera + culling state. The
-  // values are QUANTIZED (whole units) so the dedupe gate publishes only
-  // when something meaningful changes; nothing re-renders per frame.
+  // values are quantized AND gated by an explicit publication cadence, and
+  // no diagnostic projection or setter runs while the toggle is off
+  // (T12-F7).
   const [diagnostics, setDiagnostics] = useState<boolean>(false);
   const [diag, setDiag] = useState<{
     total: number;
@@ -44,6 +57,12 @@ export default function SpriteFieldContent({
     cy: number;
     zoom: number;
   } | null>(null);
+  const onHudPublishRef = useRef(onHudPublish);
+  const onDiagnosticsPublishRef = useRef(onDiagnosticsPublish);
+  useEffect(() => {
+    onHudPublishRef.current = onHudPublish;
+    onDiagnosticsPublishRef.current = onDiagnosticsPublish;
+  });
 
   // Render-phase: initialize the HUD from the real session exactly when it
   // becomes available (the sanctioned adjust-during-render pattern).
@@ -60,32 +79,53 @@ export default function SpriteFieldContent({
   }
 
   // Low-frequency overlay: subscribed only to the real session's commits.
+  // BOTH setters are gated by last-published refs compared BEFORE invoking
+  // React (T12-F7): unchanged commits never call a setter, and diagnostics
+  // do no work at all while the toggle is off.
+  const lastHudRef = useRef<{ score: number; clip: string; animationMode: PlaySnapshot['animationMode'] } | undefined>(undefined);
+  const lastDiagRef = useRef<{ total: number; visible: number; cx: number; cy: number; zoom: number } | undefined>(undefined);
+  const lastDiagAtRef = useRef<number>(-Infinity);
   useEffect(() => {
     if (session === null) {
       return;
     }
-    return session.addCommitListener((frame) => {
-      const snapshot = frame.current as PlaySnapshot;
-      setHud((previous) =>
-        previous !== null &&
-        previous.score === snapshot.score &&
-        previous.clip === snapshot.animation.clip &&
-        previous.animationMode === snapshot.animationMode
-          ? previous
-          : {
-              score: snapshot.score,
-              clip: snapshot.animation.clip,
-              animationMode: snapshot.animationMode,
-            },
-      );
-      // Quantized diagnostics: publishes only when the rounded values
-      // change, so a moving camera never drives React per frame.
-      setDiag((previous) => {
-        const next = quantizeDiagnostics(snapshot);
-        return previous !== null && sameDiagnostics(previous, next) ? previous : next;
-      });
-    }).remove;
-  }, [session, diagnostics]);
+    const update = (frame: unknown): void => {
+      const snapshot = (frame as { current: PlaySnapshot }).current;
+      const hudNext = {
+        score: snapshot.score,
+        clip: snapshot.animation.clip,
+        animationMode: snapshot.animationMode,
+      };
+      const lastHud = lastHudRef.current;
+      if (
+        lastHud === undefined ||
+        lastHud.score !== hudNext.score ||
+        lastHud.clip !== hudNext.clip ||
+        lastHud.animationMode !== hudNext.animationMode
+      ) {
+        lastHudRef.current = hudNext;
+        setHud(hudNext);
+        onHudPublishRef.current?.();
+      }
+      if (!diagnostics) {
+        return; // No diagnostic projection or setter while off.
+      }
+      if (snapshot.elapsed - lastDiagAtRef.current < DIAGNOSTIC_INTERVAL_SECONDS) {
+        return; // Explicit cadence, independent of camera speed.
+      }
+      const diagNext = quantizeDiagnostics(snapshot);
+      const lastDiag = lastDiagRef.current;
+      if (lastDiag !== undefined && sameDiagnostics(lastDiag, diagNext)) {
+        return;
+      }
+      lastDiagRef.current = diagNext;
+      lastDiagAtRef.current = snapshot.elapsed;
+      setDiag(diagNext);
+      onDiagnosticsPublishRef.current?.();
+    };
+    update(session.getRenderFrame());
+    return session.addCommitListener(update).remove;
+  }, [diagnostics, session]);
 
   return (
     <SafeAreaView pointerEvents="box-none" edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>

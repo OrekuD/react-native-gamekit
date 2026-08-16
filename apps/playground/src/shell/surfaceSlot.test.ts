@@ -318,3 +318,101 @@ describe('surface state machine (T8 canonical transitions)', () => {
     assert.equal(bound.pointerEnabled, true);
   });
 });
+
+describe('camera definition through the surface (T12-F1)', () => {
+  const CAMERA_DEF = { select: () => ({ center: { x: 0, y: 0 }, zoom: 1, rotationRadians: 0 }) };
+  const OTHER_CAMERA = { select: () => ({ center: { x: 9, y: 9 }, zoom: 2, rotationRadians: 0 }) };
+
+  it('carries the camera on open-ready and omits it from neutral slots', () => {
+    const opened: SurfaceEvent = {
+      kind: 'open-ready',
+      requestId: 2,
+      generation: 2,
+      gameId: 'camera-lab',
+      session: session('cam') as never,
+      renderer: RENDERER,
+      content: CONTENT,
+      pointer: true,
+      camera2D: CAMERA_DEF as never,
+    };
+    const { slot } = reduceSurfaceState(neutral(), opened);
+    assert.equal(slot.camera2D, CAMERA_DEF as never, 'the slot carries the registered definition');
+    assert.equal(effectiveBinding(slot).camera2D, CAMERA_DEF as never);
+    assert.equal(neutral().camera2D, undefined, 'the neutral binding has no camera');
+  });
+
+  it('keeps the camera absent for loading placeholders and atomic with asset-ready', () => {
+    const loading: SurfaceEvent = {
+      kind: 'open-loading',
+      requestId: 2,
+      generation: 2,
+      gameId: 'sprite-field',
+      session: session('placeholder') as never,
+      renderer: RENDERER,
+      content: CONTENT,
+    };
+    const { slot: loadingSlot } = reduceSurfaceState(neutral(), loading);
+    assert.equal(loadingSlot.camera2D, undefined, 'no camera on the placeholder');
+
+    const ready: SurfaceEvent = {
+      kind: 'asset-ready',
+      requestId: 2,
+      generation: 3,
+      session: session('play') as never,
+      assets: { descriptor: {} },
+      camera2D: CAMERA_DEF as never,
+    };
+    const { slot: readySlot } = reduceSurfaceState(loadingSlot, ready);
+    assert.equal(readySlot.camera2D, CAMERA_DEF as never, 'camera arrives atomically with the session');
+    assert.equal(effectiveBinding(readySlot).camera2D, CAMERA_DEF as never);
+  });
+
+  it('publishes a fresh camera definition on same-id reopen with a new generation', () => {
+    const first: SurfaceEvent = {
+      kind: 'open-ready',
+      requestId: 2,
+      generation: 2,
+      gameId: 'camera-lab',
+      session: session('a') as never,
+      renderer: RENDERER,
+      pointer: true,
+      camera2D: CAMERA_DEF as never,
+    };
+    const { slot: firstSlot } = reduceSurfaceState(neutral(), first);
+    const reopened: SurfaceEvent = {
+      kind: 'open-ready',
+      requestId: 3,
+      generation: 4,
+      gameId: 'camera-lab',
+      session: session('b') as never,
+      renderer: RENDERER,
+      pointer: true,
+      camera2D: OTHER_CAMERA as never,
+    };
+    const { slot: secondSlot } = reduceSurfaceState(firstSlot, reopened);
+    assert.notEqual(secondSlot.generation, firstSlot.generation);
+    assert.equal(secondSlot.camera2D, OTHER_CAMERA as never, 'the new generation owns the new camera');
+  });
+
+  it('clears the camera on close', () => {
+    const opened: SurfaceEvent = {
+      kind: 'open-ready',
+      requestId: 2,
+      generation: 2,
+      gameId: 'camera-lab',
+      session: session('a') as never,
+      renderer: RENDERER,
+      pointer: true,
+      camera2D: CAMERA_DEF as never,
+    };
+    const { slot: openedSlot } = reduceSurfaceState(neutral(), opened);
+    const closed: SurfaceEvent = {
+      kind: 'close',
+      generation: 5,
+      neutralSession: NEUTRAL_SESSION as never,
+      neutralRenderer: RENDERER,
+    };
+    const { slot: closedSlot } = reduceSurfaceState(openedSlot, closed);
+    assert.equal(closedSlot.camera2D, undefined, 'close drops the camera');
+  });
+});

@@ -5,10 +5,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  clampCameraBounds2D,
   createCamera2D,
+  followCamera2D,
   getCameraVisibleBounds2D,
   interpolateCamera2D,
   logicalToWorld2D,
+  sampleCameraShake2D,
   surfaceToWorld2D,
   worldToLogical2D,
   worldToSurface2D,
@@ -58,14 +61,44 @@ describe('camera2d values', () => {
     assert.deepEqual(camera, { center: { x: 10, y: -20 }, zoom: 2, rotationRadians: 0 });
   });
 
-  it('rejects non-finite centers, zoom, and rotation', () => {
-    rejects(() => createCamera2D({ center: { x: NaN, y: 0 } }), 'center.x');
-    rejects(() => createCamera2D({ center: { x: 0, y: Infinity } }), 'center.y');
-    rejects(() => createCamera2D({ zoom: NaN }), 'zoom');
-    rejects(() => createCamera2D({ zoom: 0 }), 'zoom');
-    rejects(() => createCamera2D({ zoom: -1 }), 'zoom');
-    rejects(() => createCamera2D({ rotationRadians: Infinity }), 'rotationRadians');
-    rejects(() => createCamera2D({ rotationRadians: NaN }), 'rotationRadians');
+  it('rejects non-finite centers, zoom, and rotation with structured fields', () => {
+    rejects(() => createCamera2D({ center: { x: NaN, y: 0 } }), 'camera.center.x');
+    rejects(() => createCamera2D({ center: { x: 0, y: Infinity } }), 'camera.center.y');
+    rejects(() => createCamera2D({ zoom: NaN }), 'camera.zoom');
+    rejects(() => createCamera2D({ zoom: 0 }), 'camera.zoom');
+    rejects(() => createCamera2D({ zoom: -1 }), 'camera.zoom');
+    rejects(() => createCamera2D({ rotationRadians: Infinity }), 'camera.rotationRadians');
+    rejects(() => createCamera2D({ rotationRadians: NaN }), 'camera.rotationRadians');
+  });
+
+  it('rejects malformed outer shapes before dereferencing (T12-F6)', () => {
+    rejects(() => createCamera2D(null as never), 'camera');
+    // createCamera2D fills defaults, so these must reach the shape check
+    // with a malformed NESTED value instead.
+    rejects(() => createCamera2D({ center: [1, 2] } as never), 'camera.center');
+    rejects(() => createCamera2D({ center: 'nope' } as never), 'camera.center');
+    rejects(() => worldToLogical2D(null as never, createCamera2D(), VIEW), 'point');
+    rejects(() => worldToLogical2D({ x: 0, y: 0 }, createCamera2D(), null as never), 'logicalView');
+  });
+
+  it('freezes every helper output and never aliases caller input (T12-F6)', () => {
+    // A caller-owned UNFROZEN camera: helpers must not freeze or alias it.
+    const input = { center: { x: 10, y: 20 }, zoom: 1, rotationRadians: 0 };
+    const followed = followCamera2D(input, { x: 30, y: 40 });
+    const clamped = clampCameraBounds2D(followed, { x: 0, y: 0, width: 1000, height: 1000 }, VIEW);
+    const shaken = sampleCameraShake2D(clamped, { seed: 1, elapsedSeconds: 0.1, durationSeconds: 1, amplitude: 2 });
+    const atEnd = sampleCameraShake2D(clamped, { seed: 1, elapsedSeconds: 5, durationSeconds: 1, amplitude: 2 });
+    for (const output of [followed, clamped, shaken, atEnd]) {
+      assert.ok(Object.isFrozen(output), 'outer value frozen');
+      assert.ok(Object.isFrozen(output.center), 'nested center frozen');
+    }
+    assert.notEqual(atEnd, clamped, 'the endpoint returns a copy, never the base identity');
+    assert.notEqual(followed.center, input.center, 'no nested aliasing');
+    // Mutating the caller's input after a call never alters published results.
+    input.center.x = 999;
+    assert.equal(followed.center.x, 30, 'the follow result ignores later input mutation');
+    assert.equal(atEnd.center.x, clamped.center.x, 'the endpoint copy is stable');
+    assert.equal(input.center.x, 999, 'the caller-owned input stays mutable');
   });
 });
 

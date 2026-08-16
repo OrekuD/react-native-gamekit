@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { before, describe, it, mock } from 'node:test';
-import { createElement } from 'react';
+import { createElement, StrictMode } from 'react';
 import { act, create } from 'react-test-renderer';
 
 type HostProps = Record<string, unknown> & { readonly children?: unknown };
@@ -101,10 +101,17 @@ let PointerBinding: new (
   input: unknown,
   getViewport: () => unknown,
   generation: number,
-  getCamera?: () => unknown,
 ) => {
-  begin(pointerId: number, point: { x: number; y: number }): boolean;
-  move(pointerId: number, point: { x: number; y: number }): void;
+  begin(
+    pointerId: number,
+    point: { x: number; y: number },
+    camera?: { readonly camera: Cam; readonly cutId: number },
+  ): boolean;
+  move(
+    pointerId: number,
+    point: { x: number; y: number },
+    camera?: { readonly camera: Cam; readonly cutId: number },
+  ): void;
   end(pointerId: number): void;
 };
 let createCamera2D: (value?: Partial<Cam>) => Cam;
@@ -133,9 +140,17 @@ before(async () => {
   const batch = await import('../src/react/sprites/SpriteBatch.tsx');
   batchVisibleBounds2D = batch.batchVisibleBounds2D as unknown as typeof batchVisibleBounds2D;
   intersectsBounds2D = batch.intersectsBounds2D as unknown as typeof intersectsBounds2D;
+  SpriteBatchComponent = batch.SpriteBatch as unknown as typeof SpriteBatchComponent;
+  const collision = await import('../src/collision2d/index.ts');
+  intersectsAabbAabb2DPublic = collision.intersectsAabbAabb2D as unknown as typeof intersectsAabbAabb2DPublic;
+  const policy = await import('../src/react/sprites/spriteBatchPolicy.ts');
+  batchUpdatePolicy = policy.batchUpdatePolicy as unknown as typeof batchUpdatePolicy;
 });
 
 const usePresentedCameraBindingRef: { current: unknown } = { current: undefined };
+let SpriteBatchComponent: React.ComponentType<Record<string, unknown>>;
+let batchUpdatePolicy: (count: number, capacity: number, dev: boolean) => { overflow: boolean; activeCount: number };
+let intersectsAabbAabb2DPublic: (first: unknown, second: unknown) => boolean;
 
 const FIT = {
   surfaceSize: { width: 320, height: 480 },
@@ -164,26 +179,48 @@ interface CameraBinding {
 }
 
 /** Render the real binding hook with a controllable presented value. */
-function harness(definition: unknown) {
+function harness(definition: unknown, strict = false) {
   let presented!: { value: unknown };
   let binding!: CameraBinding;
-  function Probe() {
+  let renderer!: ReturnType<typeof create>;
+  const useSharedValueMockRef = { current: { value: undefined } };
+  function Probe({ def }: { readonly def: unknown }) {
     const value = useSharedValueMockRef.current as { value: unknown };
     const created = (usePresentedCameraBindingRef.current as (
       definition: unknown,
       presented: unknown,
-    ) => CameraBinding)(definition, value);
+    ) => CameraBinding)(def, value);
     presented = value;
     binding = created;
     return null;
   }
-  const useSharedValueMockRef = { current: { value: undefined } };
   act(() => {
-    create(<Probe />);
+    renderer = create(
+      strict ? (
+        <StrictMode>
+          <Probe def={definition} />
+        </StrictMode>
+      ) : (
+        <Probe def={definition} />
+      ),
+    );
   });
   return {
     presented: () => presented.value,
     binding,
+    rerender: (nextDefinition: unknown) => {
+      act(() => {
+        renderer.update(
+          strict ? (
+            <StrictMode>
+              <Probe def={nextDefinition} />
+            </StrictMode>
+          ) : (
+            <Probe def={nextDefinition} />
+          ),
+        );
+      });
+    },
   };
 }
 
@@ -256,6 +293,99 @@ describe('presented camera binding (T12.3)', () => {
     assert.equal((third.presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'hard cut snaps');
   });
 
+  it('treats definition replacement as ONE pending cut and then interpolates (T12-F3)', () => {
+    const definitionA = { select: (f: Frame) => f.current.camera };
+    const definitionB = { select: (f: Frame) => f.current.camera };
+    const { presented, binding, rerender } = harness(definitionA);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
+    act(() => binding.commit(frame('play', cameraA)));
+    act(() => binding.present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 0);
+
+    // Replacement: the first B commit snaps...
+    rerender(definitionB);
+    act(() => binding.commit(frame('play', cameraB)));
+    act(() => binding.present(0.25));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'first B commit snaps');
+
+    // ...and later B commits interpolate normally.
+    const cameraC = createCamera2D({ center: { x: 200, y: 0 } });
+    act(() => binding.commit(frame('play', cameraC)));
+    act(() => binding.present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 150, 'second B commit interpolates');
+    act(() => binding.present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 200, 'third B commit completes');
+  });
+
+  it('produces exactly one cut per replacement under Strict Mode (T12-F3)', () => {
+    const definitionA = { select: (f: Frame) => f.current.camera };
+    const definitionB = { select: (f: Frame) => f.current.camera };
+    const { presented, binding, rerender } = harness(definitionA, true);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
+    act(() => binding.commit(frame('play', cameraA)));
+    act(() => binding.present(1));
+
+    rerender(definitionB);
+    // One cut: the first B commit snaps, the second interpolates.
+    act(() => binding.commit(frame('play', cameraB)));
+    act(() => binding.present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'the single replacement cut snaps');
+    const cameraC = createCamera2D({ center: { x: 200, y: 0 } });
+    act(() => binding.commit(frame('play', cameraC)));
+    act(() => binding.present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 150, 'interpolation resumes after the cut');
+  });
+
+  it('recovers after select, cut, and validation failures (T12-F3)', () => {
+    let failSelect = false;
+    let failCut = false;
+    const definition = {
+      select: (f: Frame) => {
+        if (failSelect) {
+          throw new Error('select boom');
+        }
+        return f.current.camera;
+      },
+      cut: (f: Frame) => {
+        if (failCut) {
+          throw new Error('cut boom');
+        }
+        return f.scene === 'boss';
+      },
+    };
+    const { presented, binding } = harness(definition);
+    const cameraA = createCamera2D({ center: { x: 10, y: 0 } });
+    act(() => binding.commit(frame('play', cameraA)));
+    act(() => binding.present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10);
+
+    // Select failure: prior presentation intact.
+    failSelect = true;
+    act(() => binding.commit(frame('play', cameraA)));
+    act(() => binding.present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'select failure keeps the last valid value');
+    failSelect = false;
+
+    // Cut failure: prior presentation intact.
+    failCut = true;
+    act(() => binding.commit(frame('play', cameraA)));
+    act(() => binding.present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'cut failure keeps the last valid value');
+    failCut = false;
+
+    // Validation failure: an invalid camera is rejected, then recovery.
+    const invalid = { center: { x: NaN, y: 0 }, zoom: 1, rotationRadians: 0 };
+    act(() => binding.commit(frame('play', invalid)));
+    act(() => binding.present(0.5));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 10, 'invalid camera rejected');
+    const cameraB = createCamera2D({ center: { x: 50, y: 0 } });
+    act(() => binding.commit(frame('play', cameraB)));
+    act(() => binding.present(1));
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50, 'the next valid commit recovers');
+  });
+
   it('keeps the previous presented value safe when the selector throws', () => {
     const definition = {
       select: (f: Frame) => {
@@ -277,7 +407,7 @@ describe('presented camera binding (T12.3)', () => {
 });
 
 describe('camera-aware pointer conversion (T12.4)', () => {
-  function eventsBinding(getCamera: () => unknown) {
+  function eventsBinding() {
     const events: unknown[] = [];
     const input = {
       begin: (_a: string, _id: number, point: unknown) => events.push(point),
@@ -285,15 +415,16 @@ describe('camera-aware pointer conversion (T12.4)', () => {
       end: () => undefined,
       cancel: () => undefined,
     };
-    const binding = new PointerBinding('move', input, () => FIT, 1, getCamera);
+    const binding = new PointerBinding('move', input, () => FIT, 1);
     return { events, binding };
   }
 
-  it('maps surface -> world through the presented camera after containment', () => {
+  it('maps surface -> world through the event-time camera cut after containment', () => {
     const camera = createCamera2D({ center: { x: 40, y: -30 }, zoom: 1.5, rotationRadians: 0.4 });
-    const { events, binding } = eventsBinding(() => camera);
-    assert.equal(binding.begin(7, { x: 20, y: 20 }), true);
-    binding.move(7, { x: 100, y: 100 });
+    const { events, binding } = eventsBinding();
+    const cut = { camera, cutId: 1 };
+    assert.equal(binding.begin(7, { x: 20, y: 20 }, cut), true);
+    binding.move(7, { x: 100, y: 100 }, cut);
     assert.deepEqual(
       events[0],
       logicalToWorld2D(surfaceToWorld(FIT, { x: 20, y: 20 }), camera, FIT.visibleLogicalBounds),
@@ -320,21 +451,44 @@ describe('camera-aware pointer conversion (T12.4)', () => {
       end: () => undefined,
       cancel: () => undefined,
     };
-    const binding = new PointerBinding('move', input, () => letterboxed, 1, () => camera);
-    assert.equal(binding.begin(7, { x: 0, y: 240 }), false, 'letterbox begin rejected');
+    const binding = new PointerBinding('move', input, () => letterboxed, 1);
+    const cut = { camera, cutId: 1 };
+    assert.equal(binding.begin(7, { x: 0, y: 240 }, cut), false, 'letterbox begin rejected');
     assert.equal(events.length, 0, 'no event synthesized');
   });
 
-  it('uses the current camera for every move (drag continuity)', () => {
-    let camera: unknown = createCamera2D({ center: { x: 0, y: 0 } });
-    const { events, binding } = eventsBinding(() => camera);
-    binding.begin(7, { x: 10, y: 10 });
-    camera = createCamera2D({ center: { x: 80, y: 0 } });
-    binding.move(7, { x: 10, y: 10 });
+  it('uses the EVENT-TIME camera stamp, never a later presentation (T12-F4)', () => {
+    // A touch happens under camera A; presentation advances to camera B
+    // before the JS dispatch. The delivered world coordinate uses the
+    // stamped cut from each event, never a lazy JS-side read.
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 80, y: 0 } });
+    const { events, binding } = eventsBinding();
+    binding.begin(7, { x: 10, y: 10 }, { camera: cameraA, cutId: 1 });
+    binding.move(7, { x: 10, y: 10 }, { camera: cameraB, cutId: 1 });
+    assert.deepEqual(
+      events[0],
+      logicalToWorld2D(surfaceToWorld(FIT, { x: 10, y: 10 }), cameraA, FIT.visibleLogicalBounds),
+      'the begin uses camera A (its event time)',
+    );
     assert.deepEqual(
       events[1],
-      logicalToWorld2D(surfaceToWorld(FIT, { x: 10, y: 10 }), camera, FIT.visibleLogicalBounds),
-      'each move uses the currently presented camera',
+      logicalToWorld2D(surfaceToWorld(FIT, { x: 10, y: 10 }), cameraB, FIT.visibleLogicalBounds),
+      'the move uses camera B (its own event time)',
+    );
+  });
+
+  it('keeps drag continuity while the stamped camera changes mid-drag', () => {
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 80, y: 0 } });
+    const { events, binding } = eventsBinding();
+    binding.begin(7, { x: 10, y: 10 }, { camera: cameraA, cutId: 1 });
+    binding.move(7, { x: 10, y: 10 }, { camera: cameraB, cutId: 1 });
+    binding.move(7, { x: 20, y: 20 }, { camera: cameraB, cutId: 1 });
+    assert.equal(events.length, 3, 'ownership continues through the camera change');
+    assert.deepEqual(
+      events[2],
+      logicalToWorld2D(surfaceToWorld(FIT, { x: 20, y: 20 }), cameraB, FIT.visibleLogicalBounds),
     );
   });
 });
@@ -483,6 +637,64 @@ describe('world and layer transforms (T12.5)', () => {
     // Padding rescues a just-off-screen sprite.
     assert.equal(intersectsBounds2D({ x: 54, y: 0, width: 10, height: 10 }, visible), true);
     assert.equal(batchVisibleBounds2D(undefined, FIT, 0), undefined, 'no camera: no culling');
+  });
+
+  it('keeps boundary parity between the inline and public predicates (T12-F5)', () => {
+    const cases = [
+      { x: 0, y: 0, width: 10, height: 10 }, // fully inside
+      { x: -5, y: -5, width: 200, height: 200 }, // crossing
+      { x: 56, y: 0, width: 1, height: 1 }, // left edge contact
+      { x: 143, y: 0, width: 1, height: 1 }, // right edge contact
+      { x: 0, y: 56, width: 1, height: 1 }, // top edge contact
+      { x: 0, y: 143, width: 1, height: 1 }, // bottom edge contact
+      { x: 2000, y: 2000, width: 10, height: 10 }, // just outside
+    ];
+    const view = { x: 56, y: -14, width: 88, height: 128 };
+    for (const bounds of cases) {
+      assert.equal(
+        intersectsBounds2D(bounds, view),
+        intersectsAabbAabb2DPublic(bounds, view),
+        `parity for ${JSON.stringify(bounds)}`,
+      );
+    }
+  });
+
+  it('rejects invalid culling padding at the public boundary (T12-F5)', () => {
+    for (const padding of [-1, NaN, Infinity, -Infinity]) {
+      assert.throws(
+        () => {
+          act(() => {
+            create(
+              <SpriteBatchComponent
+                scene="play"
+                commit={undefined as never}
+                alpha={undefined as never}
+                source={{ image: undefined, descriptor: { kind: 'image' } } as never}
+                capacity={4}
+                select={() => []}
+                write={() => undefined}
+                cull={{
+                  camera: undefined as never,
+                  viewport: undefined as never,
+                  padding,
+                  bounds: () => ({ x: 0, y: 0, width: 1, height: 1 }),
+                }}
+              />,
+            );
+          });
+        },
+        RangeError,
+        `padding ${String(padding)} rejected`,
+      );
+    }
+  });
+
+  it('clamps production overflow to exactly the capacity writes (T12-F5)', () => {
+    const policy = batchUpdatePolicy(64, 32, false);
+    assert.equal(policy.overflow, true);
+    assert.equal(policy.activeCount, 32, 'production clamps to capacity');
+    assert.equal(batchUpdatePolicy(16, 32, false).activeCount, 16);
+    assert.throws(() => batchUpdatePolicy(64, 32, true), /overflow/i, 'development throws');
   });
 
   it('renders GameLayer2D only inside GameWorld2D', () => {

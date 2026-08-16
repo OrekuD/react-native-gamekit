@@ -11,6 +11,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GameSession } from 'rn-gamekit';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
+import { createCameraLabInstrumentation, type CameraLabCounters, type CameraLabInstrumentation } from './cameraLabInstrumentation';
 import type { CameraLabSnapshot } from './cameraLabGame';
 
 interface LabHudRecord {
@@ -25,9 +26,14 @@ interface LabHudRecord {
   readonly rotation: number;
   readonly visible: number;
   readonly total: number;
+  readonly rawTouches: number;
+  readonly forwarded: number;
+  readonly accepted: number;
+  readonly rejected: number;
+  readonly presentedCommits: number;
 }
 
-function recordOf(snap: CameraLabSnapshot): LabHudRecord {
+function recordOf(snap: CameraLabSnapshot, counters: CameraLabCounters): LabHudRecord {
   return {
     follow: snap.follow,
     rotating: snap.rotating,
@@ -40,6 +46,11 @@ function recordOf(snap: CameraLabSnapshot): LabHudRecord {
     rotation: Math.round(snap.camera.rotationRadians * 100) / 100,
     visible: snap.visibleMarkerIds.length,
     total: snap.markers.length,
+    rawTouches: counters.rawTouches,
+    forwarded: counters.forwarded,
+    accepted: counters.accepted,
+    rejected: counters.rejected,
+    presentedCommits: counters.presentedCommits,
   };
 }
 
@@ -55,27 +66,92 @@ function hudEqual(first: LabHudRecord, second: LabHudRecord): boolean {
     first.cy === second.cy &&
     first.rotation === second.rotation &&
     first.visible === second.visible &&
-    first.total === second.total
+    first.total === second.total &&
+    first.rawTouches === second.rawTouches &&
+    first.forwarded === second.forwarded &&
+    first.accepted === second.accepted &&
+    first.rejected === second.rejected &&
+    first.presentedCommits === second.presentedCommits
   );
 }
 
-export default function CameraLabContent({ game, onExit }: PlaygroundGameContentProps) {
+/** Diagnostic publication cadence (T12-F7): ~8 Hz regardless of camera
+ * speed; whole-unit buckets alone are not a frequency guarantee. */
+const DIAGNOSTIC_INTERVAL_SECONDS = 0.125;
+
+export default function CameraLabContent({
+  game,
+  onExit,
+  onPublish,
+  onRunSurfaceEvent,
+}: PlaygroundGameContentProps & {
+  /** Test instrumentation: called exactly when a HUD record publishes. */
+  readonly onPublish?: () => void;
+}) {
   const session = game as GameSession;
   const insets = useSafeAreaInsets();
+  // T12-F8: the lab owns one instrumentation pair attached to the shell's
+  // GameView/GamePointerInput for the lifetime of this content. The forced
+  // rerender control never replaces it, remounts the canvas, or rebuilds
+  // the gesture. Counters are read inside the commit listener (never
+  // during render) and published through the HUD record at the cadence.
+  const [rerenderBump, setRerenderBump] = useState(0);
+  const instrumentationRef = useRef<CameraLabInstrumentation | undefined>(undefined);
+  const onRunSurfaceEventRef = useRef(onRunSurfaceEvent);
+  useEffect(() => {
+    onRunSurfaceEventRef.current = onRunSurfaceEvent;
+  });
+  useEffect(() => {
+    const created = createCameraLabInstrumentation();
+    instrumentationRef.current = created;
+    onRunSurfaceEventRef.current?.({
+      kind: 'attach',
+      attachment: {
+        session,
+        pointer: created.pointer,
+        view: created.view,
+      },
+    });
+    return () => {
+      instrumentationRef.current = undefined;
+      if (game.status !== 'disposed') {
+        onRunSurfaceEventRef.current?.({ kind: 'detach', session });
+      }
+    };
+  }, [game, session]);
   const [display, setDisplay] = useState<LabHudRecord | undefined>(undefined);
   const lastPublishedRef = useRef<LabHudRecord | undefined>(undefined);
+  const lastPublishedAtRef = useRef<number>(-Infinity);
+  const onPublishRef = useRef(onPublish);
+  useEffect(() => {
+    onPublishRef.current = onPublish;
+  });
 
   useEffect(() => {
     lastPublishedRef.current = undefined;
     const update = (frame: unknown): void => {
       const snap = (frame as { current: CameraLabSnapshot }).current;
-      const next = recordOf(snap);
+      // T12-F7: pre-setter dedupe AND an explicit cadence — quantized
+      // buckets can change every fixed step while the camera moves.
+      if (snap.elapsed - lastPublishedAtRef.current < DIAGNOSTIC_INTERVAL_SECONDS) {
+        return;
+      }
+      const counters = instrumentationRef.current?.readCounters() ?? {
+        rawTouches: 0,
+        forwarded: 0,
+        accepted: 0,
+        rejected: 0,
+        presentedCommits: 0,
+      };
+      const next = recordOf(snap, counters);
       const last = lastPublishedRef.current;
       if (last !== undefined && hudEqual(last, next)) {
         return;
       }
       lastPublishedRef.current = next;
+      lastPublishedAtRef.current = snap.elapsed;
       setDisplay(next);
+      onPublishRef.current?.();
     };
     update(session.getRenderFrame());
     const subscription = session.addCommitListener(update);
@@ -93,6 +169,14 @@ export default function CameraLabContent({ game, onExit }: PlaygroundGameContent
     ['toggle-debug', 'Bounds'],
     ['toggle-culling', 'Cull'],
   ] as const;
+
+  // T12-F8: a forced React rerender while a drag stays active. It must not
+  // remount the Canvas, replace the gesture, or reset the camera binding —
+  // this content lives outside GameView, and the attached instrumentation
+  // is ref-owned, so the bump only re-renders the overlay.
+  const forceRerender = (): void => {
+    setRerenderBump((current) => current + 1);
+  };
 
   return (
     <View pointerEvents="box-none" style={styles.safeArea}>
@@ -124,6 +208,14 @@ export default function CameraLabContent({ game, onExit }: PlaygroundGameContent
             <Text style={styles.buttonLabel}>{label}</Text>
           </Pressable>
         ))}
+        <Pressable
+          accessibilityLabel="Force a React rerender"
+          accessibilityRole="button"
+          onPress={forceRerender}
+          style={styles.button}
+        >
+          <Text style={styles.buttonLabel}>Rerender</Text>
+        </Pressable>
       </View>
 
       {display === undefined ? null : (
@@ -133,6 +225,9 @@ export default function CameraLabContent({ game, onExit }: PlaygroundGameContent
           </Text>
           <Text style={styles.hudLine}>
             {display.visible}/{display.total} markers · follow {display.follow ? 'on' : 'off'} · rotate {display.rotating ? 'on' : 'off'} · shake {display.shaking ? 'on' : 'off'} · cull {display.culling ? 'on' : 'off'} · bounds {display.debug ? 'on' : 'off'}
+          </Text>
+          <Text style={styles.hudLine}>
+            raw {display.rawTouches} · fwd {display.forwarded} · ok {display.accepted} · stale {display.rejected} · commits {display.presentedCommits} · bump {rerenderBump}
           </Text>
         </View>
       )}

@@ -32,5 +32,8 @@ export function defineGameCamera2D<TFrame>(
   if (typeof definition.select !== 'function') {
     throw new Error('defineGameCamera2D requires a select function');
   }
+  if (definition.cut !== undefined && typeof definition.cut !== 'function') {
+    throw new Error('defineGameCamera2D requires cut to be a function when provided');
+  }
   return definition;
 }

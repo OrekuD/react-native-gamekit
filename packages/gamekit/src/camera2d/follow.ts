@@ -19,7 +19,7 @@ function assertNonnegativeDeadZone(deadZone: Aabb2D): void {
 }
 
 function followFactor(halfLifeSeconds: number, deltaSeconds: number): number {
-  if (!(deltaSeconds > 0)) {
+  if (!Number.isFinite(deltaSeconds) || !(deltaSeconds > 0)) {
     throw new GeometryError(
       'GEOMETRY_INVALID_NUMBER',
       'deltaSeconds',
@@ -53,6 +53,15 @@ export function followCamera2D(
 
   const perAxisX = options?.perAxis?.x ?? true;
   const perAxisY = options?.perAxis?.y ?? true;
+  if (options?.perAxis !== undefined) {
+    if (typeof perAxisX !== 'boolean' || typeof perAxisY !== 'boolean') {
+      throw new GeometryError(
+        'GEOMETRY_INVALID_NUMBER',
+        'perAxis',
+        `expected boolean per-axis flags, got x=${String(perAxisX)} y=${String(perAxisY)}`,
+      );
+    }
+  }
   const deadZone = options?.deadZone;
   if (deadZone !== undefined) {
     assertNonnegativeDeadZone(deadZone);
@@ -115,9 +124,11 @@ export function followCamera2D(
     nextCenter = desired;
   }
 
-  return {
-    center: nextCenter,
+  // T12-F6: every public helper returns a frozen value; the caller's
+  // camera is never aliased or mutated.
+  return Object.freeze({
+    center: Object.freeze({ x: nextCenter.x, y: nextCenter.y }),
     zoom: camera.zoom,
     rotationRadians: camera.rotationRadians,
-  };
+  });
 }

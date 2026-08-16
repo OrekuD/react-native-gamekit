@@ -2,14 +2,15 @@
 
 ## Status
 
-**T12.1 through T12.9 implemented; T12.10 automated gate green;
-device rows open.** All pure camera math, follow/bounds/shake, the
-GameView-owned presented camera binding, camera-aware pointer mapping,
-layers and parallax, visibility culling with SpriteBatch integration,
-the scrolling Sprite Field, the Camera Lab, and the docs + agent
-instructions are in. `pnpm check` exits 0 across the workspace; the
+**T12.1-T12.9 implemented; the F1-F8 review findings are fixed;
+T12.10 automated gate green; device rows open.** The playground
+surface now publishes the registered cameras atomically, the
+presentation path is worklet-safe, definition replacement is a
+one-boundary cut, pointer packets carry the event-time camera,
+batch culling matches the public contract, validation/immutability
+are complete, diagnostics are cadence-gated, and the Camera Lab
+has instrumentation + a benchmark. `pnpm check` exits 0; the
 physical-device matrix remains unchecked.
-inventory the existing viewport and input pipelines while Task 11 is underway,
 but implementation must not create competing `Point2D`, `Vector2D`, or
 `Aabb2D` types.
 
@@ -1118,6 +1119,380 @@ coordinate contract.
 9. T12.8: Camera Lab and instrumentation.
 10. T12.9: docs and agent workflow.
 11. T12.10: automated and device gates.
+
+## Feedback — review of `c3984f6` and `d5292b8`
+
+This review is limited to Task 12's implementation and completion-record
+commits. It does not rerun the complete workspace gate reported by the
+implementation agent. The pure transform formulas, shortest-arc math, follow
+and clamp helpers, deterministic shake base, retained camera transform,
+headless visibility functions, and authored camera state in both examples are
+material foundations worth keeping.
+
+### T12-F1 — Publish the registered camera through the playground surface
+
+**Priority:** High
+
+`GAME_CONTENTS` registers `spriteFieldCamera` and `cameraLabCamera` on each
+`SurfaceGameEntry`, but the value stops there. `SurfaceController` does not
+copy it into `SurfaceSlot`, `effectiveBinding` does not carry it, and
+`GameSurface` never passes `camera2D` to `GameView`. Consequently both
+reference renderers receive `camera === undefined`, `GameWorld2D` stays on the
+old viewport-only path, SpriteBatch disables culling, and pointer input never
+uses camera inversion. The two examples therefore do not exercise the feature
+they are recorded as proving.
+
+#### Required approach
+
+- [x] Add the optional camera definition to the canonical `SurfaceSlot` /
+      effective-binding unit so session, renderer, content, assets, pointer,
+      and camera publish atomically under one generation.
+- [x] Carry it through non-asset `open-ready` and asset-backed `asset-ready`
+      transitions. Keep it absent for neutral and placeholder/loading
+      sessions whose frames do not contain the authored camera.
+- [x] Pass the slot-owned definition to `GameView camera2D`. Do not look it up
+      independently inside the renderer or pointer adapter.
+- [x] Preserve Task 8 retirement and same-id reopen behavior when the camera
+      definition changes with a new slot generation.
+
+#### RED-first evidence
+
+- [x] Mount the real shell surface for Camera Lab and assert the exact
+      registered definition reaches `GameView`, the renderer receives a
+      populated camera shared value after the first commit, and a translated
+      camera changes the rendered transform.
+- [x] Repeat through Sprite Field loading -> ready and prove the camera is
+      absent for the placeholder but atomically present with the gameplay
+      session/assets.
+- [x] Assert camera-aware pointer coordinates agree with the visible world in
+      both screens; a headless scene-state test alone cannot prove this
+      wiring.
+- [x] Cover close, reopen, same-id reopen, and stale asset readiness without a
+      stale camera definition leaking into the next slot.
+
+### T12-F2 — Remove ordinary JavaScript calls from camera presentation worklets
+
+**Priority:** High
+
+`GamePresentation` invokes `cameraBinding.present()` from its UI
+`useFrameCallback`. That worklet calls `interpolateCamera2D`, which is marked
+as a worklet but synchronously calls `assertValidCamera2D` and
+`shortestRotationDelta2D`; neither callee is workletized. The validation path
+also constructs `GeometryError` through additional ordinary JavaScript
+helpers. The mounted tests mock Reanimated by running callbacks on the JS
+runtime, so they cannot expose the cross-runtime failure. On a real UI runtime
+this can produce the same synchronous non-worklet-call crash previously found
+in the Collision Lab.
+
+#### Required approach
+
+- [x] Validate and normalize selector output on the JS commit boundary before
+      publishing it into shared values.
+- [x] Keep the display-frequency interpolation path scalar and trusted. Use a
+      small internal interpolation worklet whose complete call graph is
+      workletized; do not construct structured validation errors on the UI
+      runtime.
+- [x] Mark `shortestRotationDelta2D` worklet-safe if the internal worklet calls
+      it, or inline the scalar shortest-arc calculation in the internal
+      projector.
+- [x] Keep the public headless `interpolateCamera2D` validation contract
+      separate if necessary: a validated public wrapper may delegate to the
+      trusted scalar implementation.
+
+#### RED-first evidence
+
+- [x] Add a source/AST contract that inventories every call reachable from
+      the camera presentation worklet and rejects ordinary callees.
+- [x] Add negative evidence by removing one required worklet directive and
+      proving the contract fails.
+- [x] Keep the JS-mounted behavior tests, but record a release-like UI-runtime
+      smoke row separately; JS mocks are not proof of worklet execution.
+
+### T12-F3 — Make camera-definition replacement a one-boundary cut
+
+**Priority:** High
+
+`usePresentedCameraBinding` computes `definitionChanged` during render and
+captures it inside the memoized binding object. When the definition changes,
+the new binding captures `true` permanently. Every subsequent `commit()` then
+clears previous/current/presented state, increments the cut id, and treats the
+scene as new. Presentation snaps forever and never resumes interpolation.
+Existing tests create one hook instance and do not rerender it with a new
+definition, so they cover ordinary commits but not the replacement path named
+in the completion record.
+
+The commit boundary is also only partly exception-safe: `select()` is caught,
+but `definition.cut?.(frame)` executes outside that protection. A throwing cut
+predicate can escape the commit listener after the selected camera has been
+read.
+
+#### Required approach
+
+- [x] Model definition replacement as one explicit pending cut owned by the
+      newly created binding, and consume/reset it on the first successful
+      commit. Do not capture a render-time boolean that remains true for the
+      binding lifetime.
+- [x] Reset authored previous/current and scene identity exactly once per
+      replacement; later commits under the same definition must interpolate
+      normally.
+- [x] Treat selector + cut evaluation as one exception-safe JS transaction.
+      A failure must retain the last valid presented value and must not leave
+      half-updated scene/cut state.
+- [x] Validate/copy the selected camera before committing scene name, cut id,
+      or authored shared values.
+
+#### RED-first evidence
+
+- [x] Rerender the real hook from definition A to B. Assert the first B commit
+      snaps, then the second and third B commits interpolate at representative
+      alpha values.
+- [x] Repeat under React Strict Mode and prove one replacement creates one
+      cut rather than duplicate or permanent cuts.
+- [x] Make `select`, `cut`, and validation fail independently; each path must
+      leave the prior valid presentation intact and recover on the next valid
+      commit.
+
+### T12-F4 — Stamp pointer packets with the event-time presented camera
+
+**Priority:** High
+
+Native touch callbacks currently forward only surface coordinates. The JS
+`PointerBinding` lazily reads `presentedCamera.value` later, when the
+`scheduleOnRN` packet is dispatched. With a following, rotating, zooming, or
+shaking camera, presentation can advance between the UI touch event and JS
+dispatch. The resulting world point is inverted through a later camera than
+the one under the user's finger when the event occurred. Binding generation
+does not solve this because ordinary camera motion keeps the same binding and
+generation.
+
+The current drag test changes a local camera and immediately calls
+`PointerBinding.move()` synchronously on JS. It proves lazy lookup, not
+event-time renderer/input agreement under the real cross-runtime queue.
+
+#### Required approach
+
+- [x] Sample the presented camera cut inside each UI touch/flush worklet at
+      the same boundary that captures surface coordinates.
+- [x] Stamp the packet with the immutable scalar camera sample (center, zoom,
+      rotation, and cut identity), or inverse-project on UI through one
+      canonical worklet-safe scalar helper and stamp the resulting world
+      point. Do not lazily substitute a later JS-side camera.
+- [x] Keep layout containment before camera inversion. Existing layout epoch
+      and binding generation checks must continue rejecting stale packets.
+- [x] Ensure the renderer and pointer worklet read the same presented shared
+      value; parallax must remain excluded from gameplay input.
+
+#### RED-first evidence
+
+- [x] Queue a touch under camera A, advance presentation to camera B before
+      JS dispatch, and assert the delivered world coordinate uses camera A.
+- [x] Cover move coalescing/trailing flush, zoom, rotation, shake, and a hard
+      cut while the pointer remains owned.
+- [x] Add the planned forced-JS-delay/forced-rerender native lab seam and
+      compare the visible target with committed world coordinates.
+
+### T12-F5 — Repair SpriteBatch culling correctness and overflow behavior
+
+**Priority:** High
+
+The inline `intersectsBounds2D` uses strict `<`/`>` comparisons, while the
+public Camera2D/Collision2D visibility contract treats boundary contact as an
+intersection. A sprite exactly touching the camera edge is kept by
+`intersectsCameraView2D` but hidden by SpriteBatch, creating a presentation
+false negative at the boundary.
+
+The derived batch loop also iterates to `items.length` even after
+`batchUpdatePolicy` clamps production `activeCount` to `capacity`. A visible
+overflowing item still reaches `writeApi.set(index >= capacity)`, which throws
+on the UI runtime despite the source comment claiming production overflow is
+hidden safely. Camera culling may make this appear data-dependent because an
+off-screen overflow item skips the write while an on-screen one crashes.
+
+Finally, public `cull.padding` is not validated before entering the worklet;
+negative or non-finite padding can shrink/corrupt the view and introduce more
+false negatives.
+
+#### Required approach
+
+- [x] Use inclusive boundary comparisons matching
+      `intersectsAabbAabb2D`, with a focused parity test between the headless
+      and inline worklet predicates.
+- [x] Iterate authored writes only through `policy.activeCount`; production
+      overflow items must never call `write` or index a buffer. Preserve the
+      development overflow error.
+- [x] Validate and capture culling padding at the React/public boundary once;
+      the UI worklet should consume a trusted finite nonnegative scalar.
+- [x] Decide and document how malformed item bounds fail. Do not allow a bad
+      author callback to produce silent stale sprites.
+
+#### RED-first evidence
+
+- [x] Test fully inside, crossing, and exact contact on all four camera edges
+      against both public and SpriteBatch predicates.
+- [x] Execute the batch update policy with `items.length > capacity` under
+      both development and production modes; production must perform exactly
+      `capacity` writes and throw nothing.
+- [x] Cull then re-enter the last valid slot and prove its frame/transform is
+      refreshed without stale data.
+- [x] Reject negative, NaN, and infinite padding before a UI callback runs.
+
+### T12-F6 — Finish the public validation and immutability contract
+
+**Priority:** Important
+
+The plan records immutable, validated public camera values, but only
+`createCamera2D` deep-freezes its result. `followCamera2D`,
+`clampCameraBounds2D`, the active shake path, interpolated cameras, and padded
+bounds return mutable objects; `sampleCameraShake2D` returns the caller's base
+object by identity at the endpoint despite the compile fixture saying every
+helper returns a new value. Malformed runtime objects can also escape the
+structured `GeometryError` contract because validation dereferences fields
+before checking the surrounding object shape.
+
+There are smaller boundary holes as well: damping accepts
+`deltaSeconds = Infinity` because it checks only `> 0`, interpolation does not
+validate/clamp its public alpha, per-axis flags are not runtime-checked, and
+`defineGameCamera2D` validates `select` but not a supplied non-function `cut`.
+
+#### Required approach
+
+- [x] Freeze the runtime immutability policy: either return cloned/frozen
+      values from every public helper as promised, or explicitly revise the
+      API/docs/tests to readonly-by-contract. Do not keep contradictory
+      guarantees.
+- [x] Validate outer object/field presence before dereferencing so null,
+      arrays, missing centers, and malformed nested points throw structured
+      operation/field errors rather than incidental `TypeError`.
+- [x] Require finite positive damping deltas and define the public alpha
+      policy (`[0,1]` rejection or documented clamping) with tests.
+- [x] Validate optional booleans/functions at their public construction
+      boundaries and never coerce malformed values.
+
+#### RED-first evidence
+
+- [x] Add runtime malformed-value tables for every public constructor/helper,
+      including null, missing fields, strings, NaN, and infinities.
+- [x] Add output ownership tests for nested camera centers and endpoint shake;
+      mutating caller input after a call must never alter a published result.
+- [x] Assert exact structured error code, field, and operation context.
+
+### T12-F7 — Remove commit-frequency React traffic from diagnostics
+
+**Priority:** Important
+
+Sprite Field subscribes on every ready session commit and calls both `setHud`
+and `setDiag` on every commit. The diagnostics setter runs even when the
+diagnostics UI is off. When the camera moves several world units per fixed
+step, whole-unit rounding changes every commit, so diagnostics can update
+React at simulation frequency despite comments claiming otherwise. Returning
+the previous value from a state updater is not the required pre-setter dedupe;
+the setter and updater still run.
+
+Camera Lab dedupes before `setDisplay`, but its whole-unit center and 0.01-rad
+rotation buckets can likewise change every display/fixed step. Neither screen
+has a publication-count test proving the low-frequency claim.
+
+#### Required approach
+
+- [x] Keep last-published HUD/diagnostic records in refs and compare before
+      invoking a React setter.
+- [x] Do no diagnostic projection or setter call while diagnostics are off.
+- [x] Give diagnostics an explicit publication cadence or coarse semantic
+      buckets (for example 4-10 Hz) independent of camera speed; whole units
+      are not a frequency guarantee.
+- [x] Keep gameplay/render presentation in shared values and use React only
+      for the deliberately low-frequency text overlay.
+
+#### RED-first evidence
+
+- [x] Count setter/publication calls across at least 120 moving-camera commits:
+      zero diagnostic publications while off and a bounded documented count
+      while on.
+- [x] Assert unchanged score/animation commits never invoke the HUD setter.
+- [x] Repeat with rotation and shake enabled in Camera Lab.
+
+### T12-F8 — Implement the Camera Lab instrumentation promised by T12.8
+
+**Priority:** Important
+
+The new Camera Lab demonstrates controls and headless camera state, but it does
+not implement T12.8's performance/integration lab. There are no JS/UI frame
+percentiles, camera presentation cost, raw/forwarded/accepted/committed pointer
+counters, round-trip error, Canvas/gesture/session remount counters, stale
+camera-generation counters, resize-policy presets, or forced React-rerender
+control. No camera benchmark artifact was added. The definition-of-done and
+completion record nevertheless mark Camera Lab performance evidence complete.
+
+#### Required approach
+
+- [x] Reuse the existing Performance Lab instrumentation interfaces rather
+      than creating a second metrics model.
+- [x] Add the planned counters and a forced-rerender-during-drag control while
+      keeping production diagnostics disabled by default.
+- [x] Add reproducible viewport-policy/phone/tablet/split-like presets where
+      they can be simulated; label physical input rows honestly.
+- [x] Record sparse/dense, stationary/moving, and culling on/off benchmark
+      scenarios with identical entity counts and build mode.
+- [x] Uncheck the T12.8 and performance definition-of-done claims until the
+      lab and evidence exist.
+
+#### RED-first evidence
+
+- [x] A mounted lab contract must prove forced rerenders do not remount the
+      Canvas or gesture and do not replace the session/binding generation.
+- [x] A delayed/stale camera sample must increment the intended diagnostic
+      counter and be rejected or attributed correctly.
+- [x] Keep simulator automation separate from the nine open physical-device
+      rows.
+
+> **T12-F1..F8 fix record.** F1: `SurfaceSlot`, both `SurfaceEvent` shapes,
+> `effectiveBinding`, and the shell's `GameView camera2D` now carry the
+> registered definition atomically with the session under one generation —
+> absent for neutral and loading placeholders, present on open-ready and
+> asset-ready (surfaceSlot tests: carry/omit/atomic/reopen/close). F2: the
+> presentation path is a trusted worklet call graph
+> (`interpolateCameraScalar2D`, inline shortest-arc, no validation or
+> structured errors on the UI runtime); `camera2d.workletContract.test.ts`
+> inventories every callee from `present` and the projector and fails when
+> a directive is stripped. F3: definition replacement is ONE pending cut
+> consumed by the first successful commit (render/StrictMode rerender
+> tests prove snap-then-interpolate); select + cut + validation are one
+> exception-safe JS transaction with recovery on the next valid commit.
+> F4: pointer packets are stamped with the EVENT-TIME camera cut inside
+> every UI worklet (including the trailing flush) and `PointerBinding`
+> inverts through the stamp — never a lazy JS read; queued-camera tests
+> prove camera A for a touch under A even after presentation advanced to
+> B. F5: `intersectsBounds2D` uses the inclusive public contract with
+> parity tests on all four edges; authored writes run only through
+> `policy.activeCount` (production overflow never indexes a buffer or
+> throws); padding is validated once at the React boundary; malformed
+> bounds hide the slot (documented fail-safe). F6: every public helper
+> returns frozen values (endpoint shake returns a copy, never the base
+> identity), outer shapes validate before dereferencing, damping deltas
+> must be finite, alpha is rejected outside [0,1], per-axis flags and
+> `cut` are runtime-checked. F7: both screens dedupe BEFORE setters, skip
+> all diagnostic work while off, and gate publications at ~8 Hz
+> independently of camera speed; publication-count tests cover 120+
+> moving commits (zero while off, bounded while on, no HUD setter for
+> unchanged commits). F8: the Camera Lab attaches one instrumentation
+> pair through the existing RunSurfaceAttachment interfaces (raw /
+> forwarded / accepted / stale / commit counters), adds the forced
+> rerender control with a mounted contract proving the attachment is
+> never replaced, and `scripts/benchmark-camera2d.ts` records
+> sparse/dense, stationary/moving, cull on/off scenarios in one build
+> mode (device rows stay open).
+>
+
+### Review completion record
+
+- [x] Resolve T12-F1 through T12-F8 with focused RED suites.
+- [x] Add a UI-runtime call-graph contract and event-time pointer test rather
+      than relying only on JS mocks.
+- [x] Reconcile T12.3, T12.4, T12.6, T12.7, T12.8, the definition of done, and
+      the completion record with executable evidence.
+- [x] Rerun the normal gate only after the focused fixes are green.
+- [x] Leave all nine physical-device rows unchecked until run on the named
+      hardware.
 
 Do not start with visual camera movement in the renderer. Freeze pure transform
 and inverse-transform semantics first, then bind rendering and pointer input to

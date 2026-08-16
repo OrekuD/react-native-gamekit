@@ -23,7 +23,9 @@ import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 import type { CameraCut2D } from '../../camera2d';
 import type { Aabb2D } from '../../geometry/types';
 import type { CommitFrame } from '../../core/session/types';
+import { batchVisibleBounds2D, intersectsBounds2D } from './batchVisibility';
 import type { ResolvedViewport2D } from '../../viewport2d/types';
+export { batchVisibleBounds2D, intersectsBounds2D };
 import type { SceneSnapshot } from '../../scene/types';
 import type { SceneMap } from '../../definition/types';
 import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
@@ -78,7 +80,9 @@ export interface SpriteBatchProps<
    * outside the conservative visible region are hidden (zero-size slots)
    * instead of drawn. Slot identity and capacity are unchanged; the
    * simulation never knows culling happened. `bounds` maps an item to its
-   * world AABB and runs as a worklet on the UI runtime.
+   * world AABB and runs as a worklet on the UI runtime. A bounds record
+   * with non-finite values hides the item (fail-safe: invalid geometry is
+   * never drawn); padding must be finite and nonnegative (T12-F5).
    */
   readonly cull?: {
     readonly camera: SharedValue<CameraCut2D | undefined>;
@@ -101,48 +105,6 @@ function frameRectOf(
   return (source as LoadedSpriteSheet).frames[frame];
 }
 
-/**
- * Conservative visible bounds for batch culling (T12.6).
- *
- * Worklet-safe inline version of the headless `paddedCameraBounds2D` —
- * the presented camera is already validated at the public boundary, so the
- * per-frame path allocates nothing and validates nothing.
- */
-export function batchVisibleBounds2D(
-  camera: CameraCut2D | undefined,
-  viewport: ResolvedViewport2D | undefined,
-  padding: number,
-): Aabb2D | undefined {
-  'worklet';
-  if (camera === undefined || viewport === undefined) {
-    return undefined;
-  }
-  const view = viewport.visibleLogicalBounds;
-  const halfWidth = view.width / 2 / camera.camera.zoom;
-  const halfHeight = view.height / 2 / camera.camera.zoom;
-  const cos = Math.abs(Math.cos(camera.camera.rotationRadians));
-  const sin = Math.abs(Math.sin(camera.camera.rotationRadians));
-  const extentX = halfWidth * cos + halfHeight * sin + padding;
-  const extentY = halfWidth * sin + halfHeight * cos + padding;
-  return {
-    x: camera.camera.center.x - extentX,
-    y: camera.camera.center.y - extentY,
-    width: extentX * 2,
-    height: extentY * 2,
-  };
-}
-
-/** Axis-aligned intersection test, worklet-safe (no validation). */
-export function intersectsBounds2D(first: Aabb2D, second: Aabb2D): boolean {
-  'worklet';
-  return (
-    first.x < second.x + second.width &&
-    first.x + first.width > second.x &&
-    first.y < second.y + second.height &&
-    first.y + first.height > second.y
-  );
-}
-
 export function SpriteBatch<
   TScenes extends SceneMap,
   TSceneName extends Extract<keyof TScenes, string>,
@@ -162,6 +124,14 @@ export function SpriteBatch<
   if (!Number.isInteger(capacity) || capacity <= 0) {
     throw new Error(
       `SpriteBatch capacity must be a positive integer, got ${String(capacity)}`,
+    );
+  }
+  // T12-F5: culling padding is validated ONCE at the React boundary; the UI
+  // worklet consumes a trusted finite nonnegative scalar.
+  const cullPadding = cull?.padding ?? 0;
+  if (!Number.isFinite(cullPadding) || cullPadding < 0) {
+    throw new RangeError(
+      `SpriteBatch cull.padding must be a finite nonnegative number, got ${String(cullPadding)}`,
     );
   }
   const rects = useRectBuffer(capacity, (rect) => {
@@ -253,16 +223,19 @@ export function SpriteBatch<
       }
     }
     const count = policy.activeCount;
-    // T12.6: culling hides off-screen slots in place. The visible bounds
-    // are computed once per commit from the PRESENTED camera; hidden slots
-    // are cleared directly (zero size) without touching the author's write
-    // or reallocating buffers, so slot identity is stable across camera
-    // moves.
+    // T12.6 + T12-F5: culling hides off-screen slots in place, and
+    // authored writes run ONLY through `policy.activeCount`. In production
+    // an overflowing item (index >= capacity) is never written and never
+    // indexes a buffer — the [count, capacity) hide loop below clears the
+    // unused tail. The visible bounds are computed once per commit from the
+    // PRESENTED camera; hidden slots are cleared directly (zero size)
+    // without touching the author's write or reallocating buffers, so slot
+    // identity is stable across camera moves.
     const visible =
       cull === undefined
         ? undefined
-        : batchVisibleBounds2D(cull.camera.value, cull.viewport.value, cull.padding ?? 0);
-    for (let index = 0; index < items.length; index += 1) {
+        : batchVisibleBounds2D(cull.camera.value, cull.viewport.value, cullPadding);
+    for (let index = 0; index < count; index += 1) {
       const item = items[index];
       if (item === undefined) {
         continue;
@@ -284,7 +257,7 @@ export function SpriteBatch<
       }
     }
     return count;
-  }, [commit, alpha, scene, select, write, writeApi, cull]);
+  }, [commit, alpha, scene, select, write, writeApi, cull, cullPadding]);
 
   void activeCount;
 

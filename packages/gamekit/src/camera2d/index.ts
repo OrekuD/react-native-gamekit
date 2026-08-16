@@ -9,7 +9,7 @@
  * `src/react/`.
  */
 export { createCamera2D, getCameraVisibleBounds2D, logicalToWorld2D, worldToLogical2D, worldToSurface2D, surfaceToWorld2D } from './transform';
-export { interpolateCamera2D, shortestRotationDelta2D } from './interpolation';
+export { interpolateCamera2D, interpolateCameraScalar2D, shortestRotationDelta2D } from './interpolation';
 export { followCamera2D } from './follow';
 export { clampCameraBounds2D, cameraHalfExtents2D } from './bounds';
 export { sampleCameraShake2D } from './shake';

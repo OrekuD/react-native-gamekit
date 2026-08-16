@@ -1,4 +1,4 @@
-import type { Camera2D } from '../camera2d';
+import type { CameraCut2D } from '../camera2d';
 import { logicalToWorld2D } from '../camera2d';
 import type { InputController } from '../core/input/types';
 import type { Point2D } from '../geometry/types';
@@ -11,6 +11,12 @@ import type { CoalescedPointerEvent } from './pointerCoalescer';
  * replacement carry the old epoch and are rejected on the RN runtime, so a
  * stale begin cannot reacquire input with old coordinates and a stale
  * terminal edge cannot release a newer capture that reused the pointer id.
+ *
+ * T12-F4: the packet also carries the presented camera cut sampled AT
+ * EVENT TIME on the UI runtime. JS inverts through that stamp — never a
+ * later lazy read — so the world coordinate matches the camera under the
+ * finger when the touch happened, even while the camera follows, zooms,
+ * rotates, or shakes.
  */
 export type PointerPacket = CoalescedPointerEvent & {
   /** Monotonic adapter-owned binding generation (F3 follow-up). */
@@ -21,6 +27,8 @@ export type PointerPacket = CoalescedPointerEvent & {
   readonly seq: number;
   /** UI-runtime timestamp of the forward (F1 latency causality). */
   readonly atMs: number;
+  /** The presented camera cut at event time; absent for no-camera games. */
+  readonly camera?: CameraCut2D | undefined;
 };
 
 /** Monotonic generation source for factory-created bindings (F3). */
@@ -40,8 +48,6 @@ export interface PointerBindingIdentity<TName extends string> {
    * packets under the new camera owner.
    */
   readonly camera: unknown;
-  /** Read the currently presented camera lazily, per event (T12.4). */
-  readonly getCamera?: () => Camera2D | undefined;
 }
 
 /** A binding plus the identity it was created for. */
@@ -78,7 +84,6 @@ export function createPointerBinding<TName extends string>(
         identity.input,
         getViewport,
         nextFactoryGeneration++,
-        identity.getCamera,
       ),
       identity,
     },
@@ -103,7 +108,6 @@ export class PointerBinding<TActionName extends string> {
   readonly #action: TActionName;
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
-  readonly #getCamera: (() => Camera2D | undefined) | undefined;
   readonly #generation: number;
   #disposed = false;
 
@@ -112,29 +116,28 @@ export class PointerBinding<TActionName extends string> {
     input: InputController<TActionName>,
     getViewport: () => ResolvedViewport2D | undefined,
     generation: number,
-    getCamera?: () => Camera2D | undefined,
   ) {
     this.#action = action;
     this.#input = input;
     this.#getViewport = getViewport;
-    this.#getCamera = getCamera;
     this.#generation = generation;
   }
 
   /**
-   * Surface -> world through the viewport and the presented camera (T12.4).
+   * Surface -> world through the viewport and the EVENT-TIME camera cut
+   * (T12.4, T12-F4).
    *
    * The frozen order: inverse viewport first, then inverse camera, using
-   * the camera currently presented for that frame — the same camera the
-   * renderer drew with. Without a camera this is exactly `surfaceToWorld`.
+   * the camera stamp sampled by the UI worklet when the touch happened —
+   * the same camera the renderer drew at that moment. Without a camera
+   * stamp this is exactly `surfaceToWorld`.
    */
-  #toWorld(viewport: ResolvedViewport2D, point: Point2D): Point2D {
+  #toWorld(viewport: ResolvedViewport2D, point: Point2D, camera: CameraCut2D | undefined): Point2D {
     const logical = surfaceToWorld(viewport, point);
-    const camera = this.#getCamera?.();
     if (camera === undefined) {
       return logical;
     }
-    return logicalToWorld2D(logical, camera, viewport.visibleLogicalBounds);
+    return logicalToWorld2D(logical, camera.camera, viewport.visibleLogicalBounds);
   }
 
   /**
@@ -162,13 +165,13 @@ export class PointerBinding<TActionName extends string> {
     }
     switch (packet.kind) {
       case 'begin':
-        this.handleTouchesDown(packet.pointerId, packet.x, packet.y);
+        this.handleTouchesDown(packet.pointerId, packet.x, packet.y, packet.camera);
         break;
       case 'move':
-        this.handleTouchesMove(packet.pointerId, packet.x, packet.y);
+        this.handleTouchesMove(packet.pointerId, packet.x, packet.y, packet.camera);
         break;
       case 'end':
-        this.handleTouchesUp(packet.pointerId, packet.x, packet.y);
+        this.handleTouchesUp(packet.pointerId, packet.x, packet.y, packet.camera);
         break;
       case 'cancel':
         this.handleTouchesCancelled();
@@ -183,7 +186,11 @@ export class PointerBinding<TActionName extends string> {
    * Returns `false` when the layout is invalid or the point starts in
    * letterbox space; the gesture must be rejected and never becomes the owner.
    */
-  begin(pointerId: number, surfacePoint: Point2D): boolean {
+  begin(
+    pointerId: number,
+    surfacePoint: Point2D,
+    camera?: CameraCut2D,
+  ): boolean {
     if (this.#disposed) {
       return false;
     }
@@ -194,12 +201,12 @@ export class PointerBinding<TActionName extends string> {
     if (!containsSurfacePoint(viewport, surfacePoint)) {
       return false;
     }
-    this.#input.begin(this.#action, pointerId, this.#toWorld(viewport, surfacePoint));
+    this.#input.begin(this.#action, pointerId, this.#toWorld(viewport, surfacePoint, camera));
     return true;
   }
 
   /** Move a pointer. Conversion remains unbounded outside content bounds. */
-  move(pointerId: number, surfacePoint: Point2D): void {
+  move(pointerId: number, surfacePoint: Point2D, camera?: CameraCut2D): void {
     if (this.#disposed) {
       return;
     }
@@ -207,7 +214,7 @@ export class PointerBinding<TActionName extends string> {
     if (viewport === undefined) {
       return;
     }
-    this.#input.move(this.#action, pointerId, this.#toWorld(viewport, surfacePoint));
+    this.#input.move(this.#action, pointerId, this.#toWorld(viewport, surfacePoint, camera));
   }
 
   /** End a pointer. The owning pointer is released by the input buffer. */
@@ -227,13 +234,13 @@ export class PointerBinding<TActionName extends string> {
   }
 
   /** Handle a touch-down gesture event with a surface position. */
-  handleTouchesDown(pointerId: number, x: number, y: number): boolean {
-    return this.begin(pointerId, { x, y });
+  handleTouchesDown(pointerId: number, x: number, y: number, camera?: CameraCut2D): boolean {
+    return this.begin(pointerId, { x, y }, camera);
   }
 
   /** Handle a touch-move gesture event with a surface position. */
-  handleTouchesMove(pointerId: number, x: number, y: number): void {
-    this.move(pointerId, { x, y });
+  handleTouchesMove(pointerId: number, x: number, y: number, camera?: CameraCut2D): void {
+    this.move(pointerId, { x, y }, camera);
   }
 
   /**
@@ -242,8 +249,8 @@ export class PointerBinding<TActionName extends string> {
    * The final position is forwarded before ownership ends so the documented
    * release frame contains the actual point where the pointer lifted.
    */
-  handleTouchesUp(pointerId: number, x: number, y: number): void {
-    this.move(pointerId, { x, y });
+  handleTouchesUp(pointerId: number, x: number, y: number, camera?: CameraCut2D): void {
+    this.move(pointerId, { x, y }, camera);
     this.end(pointerId);
   }
 

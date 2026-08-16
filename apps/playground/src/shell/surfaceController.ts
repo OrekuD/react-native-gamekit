@@ -129,6 +129,7 @@ export class SurfaceController {
       renderer: entry.renderer,
       content: entry.content as unknown as ComponentType<{ readonly game: GameSession }>,
       pointer: entry.pointer,
+      camera2D: entry.camera2D,
     });
   }
 
@@ -165,6 +166,7 @@ export class SurfaceController {
       generation: this.allocateGeneration(),
       session: entry.createSession(),
       assets,
+      camera2D: entry.camera2D,
     });
   }
 
