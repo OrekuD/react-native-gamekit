@@ -1,4 +1,5 @@
 import type { AssetGroupMap, GameAssetManifest } from '../assets/types';
+import type { GameEventDescriptor } from '../events/types';
 import type { Viewport } from '../viewport2d/types';
 
 /** The button action supported by the runtime. */
@@ -37,6 +38,10 @@ export interface SceneDefinitionMarker {
   readonly __actionType?: string;
   /** @internal Type witness for transition targets declared by this scene. */
   readonly __transitionType?: string;
+  /** @internal Type witness for emitted event names. */
+  readonly __emitType?: string;
+  /** @internal Type witness for the game event map. */
+  readonly __eventMapType?: Record<string, unknown>;
 }
 
 /** The collection of functional scenes declared by a game. */
@@ -53,6 +58,7 @@ export interface GameDefinition<
   TInput extends InputMap = InputMap,
   TInitialScene extends keyof TScenes = keyof TScenes,
   TAssets extends AssetGroupMap = AssetGroupMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
 > {
   /** The viewport configuration of the game. */
   readonly viewport: Viewport;
@@ -64,4 +70,6 @@ export interface GameDefinition<
   readonly scenes: TScenes;
   /** The scene created first when a session starts. */
   readonly initialScene: TInitialScene;
+  /** Typed game event declarations (T13). Absence keeps the no-event fast path. */
+  readonly events?: TEventDefs;
 }

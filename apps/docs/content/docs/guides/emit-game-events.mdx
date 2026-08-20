@@ -1,0 +1,93 @@
+---
+title: Emit game events
+description: "Declare one typed event, emit it from the authoritative update, and subscribe to it after the tick commits."
+---
+
+This guide adds a typed `brick-hit` event to Brick Breaker, emits it when a brick breaks, and shows it outside simulation without touching score or scene transitions.
+
+## 1. Declare the event map
+
+```ts
+import { defineGameEvents, gameEvent, type Point2D } from 'rn-gamekit';
+
+export const brickBreakerEvents = defineGameEvents({
+  'brick-hit': gameEvent<{ brickId: string; point: Point2D }>(),
+  'life-lost': gameEvent<{ score: number }>(),
+  'game-over': gameEvent<{ won: boolean; score: number }>(),
+});
+```
+
+Keep the map at the game level and pass it to `defineGame({ events: brickBreakerEvents })`. Literal names and payload types are preserved through scenes and subscriptions.
+
+## 2. Let the scene emit it
+
+```ts
+import { defineScene } from 'rn-gamekit';
+
+const play = defineScene({
+  actions: ['primary'],
+  transitions: ['game-over'],
+  emits: ['brick-hit', 'life-lost', 'game-over'],
+  create: createPlayState,
+  update: ({ state, input, events, deltaSeconds }) => {
+    // ... move ball, collide ...
+    if (collision.removed > 0) {
+      for (let i = 0; i < state.bricks.length; i++) {
+        if (state.bricks[i] && !collision.bricks[i]) {
+          events.emit('brick-hit', { brickId: String(i), point: { x: ball.x, y: ball.y } });
+        }
+      }
+    }
+    if (ballLost(ball, logicalHeight)) {
+      events.emit('life-lost', { score });
+      events.emit('game-over', { won: false, score });
+      transition.setScene('game-over');
+    }
+    if (score >= TOTAL_BRICKS) {
+      events.emit('game-over', { won: true, score });
+    }
+    return nextState;
+  },
+  snapshot: ({ state }) => state,
+});
+```
+
+`emits` narrows `events.emit` to the listed names. Emitting an undeclared name, the wrong payload, or a non-plain value (functions, `NaN`, cycles, etc.) throws `GameEventError` with the exact path `payload.point.x` and discards the whole tick's staged events.
+
+The emitter is valid only for that update — retaining it and calling `emit` afterwards throws.
+
+## 3. Subscribe after the commit
+
+```ts
+import { seedGameEvent } from 'rn-gamekit';
+
+const session = createGameSession(brickBreakerDefinition);
+
+// Count hits without ever writing to scene state.
+let hitCount = 0;
+const sub = session.addGameEventListener('brick-hit', (event) => {
+  hitCount += 1;
+  audio.play(brickHitSound);
+  particles.emit(burst, { position: event.payload.point, seed: seedGameEvent(event) });
+  // event.payload is DeepReadonly and the envelope is frozen — mutation throws.
+});
+
+// Later, when the screen unmounts or the game swaps:
+sub.remove(); // idempotent
+```
+
+Delivery happens after the source tick commits, in `(tick, ordinal)` order. Catch-up ticks publish by tick order, then emission order, and a display callback that ran zero steps publishes nothing. A listener added during delivery receives only later ticks; a removal prevents only later ticks. If a listener throws, its siblings still run and the error is reported via `console.error` — the game does not pause and no events are lost for other listeners.
+
+Pause produces no new events; resume replays none. `dispose` prevents future delivery and releases listeners once.
+
+## 4. Check the common pitfalls
+
+- **Don't derive events from snapshots or React renders.** Emit from the update where the fact is decided — otherwise you reintroduce the snapshot-diff race events are meant to replace.
+- **Don't await effects inside the update.** Simulation never awaits a listener's async work.
+- **Don't put services in `state`.** Keep `state` plain data and keep effects (audio, haptics, particles) outside, consuming events.
+- **Don't carry large payloads.** Events are bounded (512 nodes, depth 10) — send an id and a point, not a texture.
+- **Don't forget the no-event fast path.** Games that don't declare `events` pay nothing; adding an empty `events` map is not free.
+
+## Where to go next
+
+Read the full contract in [Events](../engine-systems/events) for the envelope, payload grammar, and failure isolation. Brick Breaker's `brickBreakerGame.ts` and `BrickBreakerContent.tsx` show the same three events (`brick-hit`, `life-lost`, `game-over`) consumed as a transient hit count that never feeds back into authority.

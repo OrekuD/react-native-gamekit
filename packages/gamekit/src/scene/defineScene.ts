@@ -25,12 +25,21 @@ export function defineScene<
   TState,
   TSnapshot,
   const TTransitions extends readonly string[] = [],
+  const TEmits extends readonly string[] = [],
+  TEventMap extends Record<string, unknown> = Record<string, never>,
 >(
   definition: Omit<
-    SceneDefinition<TState, TSnapshot, TActions[number], TTransitions[number]>,
-    'kind' | '__actionType' | '__transitionType' | '__snapshotType' | 'actions' | 'transitions'
-  > & { readonly actions: TActions; readonly transitions?: TTransitions },
-): SceneDefinition<TState, TSnapshot, TActions[number], TTransitions[number]> {
+    SceneDefinition<
+      TState,
+      TSnapshot,
+      TActions[number],
+      TTransitions[number],
+      TEmits[number],
+      TEventMap
+    >,
+    'kind' | '__actionType' | '__transitionType' | '__snapshotType' | '__emitType' | '__eventMapType' | 'actions' | 'transitions' | 'emits'
+  > & { readonly actions: TActions; readonly transitions?: TTransitions; readonly emits?: TEmits },
+): SceneDefinition<TState, TSnapshot, TActions[number], TTransitions[number], TEmits[number], TEventMap> {
   return {
     kind: 'gamekit.scene',
     ...definition,

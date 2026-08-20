@@ -1,4 +1,5 @@
 import type { InputMap, SceneMap } from '../../definition/types';
+import type { GameEventDescriptor, GameEventEnvelope, InferGameEventMap } from '../../events/types';
 import type { SceneSnapshot } from '../../scene/types';
 import type { Viewport } from '../../viewport2d/types';
 import type { InputController } from '../input/types';
@@ -60,7 +61,11 @@ export interface GameSubscription {
 }
 
 /** A closure-backed, headless running instance of one game definition. */
-export interface GameSession<TScenes extends SceneMap = SceneMap, TInput extends InputMap = InputMap> {
+export interface GameSession<
+  TScenes extends SceneMap = SceneMap,
+  TInput extends InputMap = InputMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
+> {
   /** Current lifecycle status. */
   readonly status: GameSessionStatus;
   /** The active scene name, updated by transitions and restarts. */
@@ -111,6 +116,23 @@ export interface GameSession<TScenes extends SceneMap = SceneMap, TInput extends
   getRenderFrame(): GameRenderFrame<TScenes>;
   /** Observe simulation commits at commit frequency (never per display frame). */
   addCommitListener(listener: (frame: CommitFrame<TScenes>) => void): GameSubscription;
+  /**
+   * Observe deterministic game events after they commit (T13).
+   *
+   * Each listener receives committed envelopes for the subscribed name in
+   * deterministic `(tick, ordinal)` order. Delivery happens after the
+   * source tick's authoritative state commits and never during the update
+   * itself. Listeners are invoked from a per-event snapshot; a listener
+   * added during delivery receives only later events. Removing a listener
+   * is idempotent and prevents future deliveries. A throwing listener does
+   * not suppress siblings or alter simulation; the error is reported via a
+   * visible non-recursive sink (`console.error`). Simulation never awaits
+   * an async effect started by a listener.
+   */
+  addGameEventListener<TName extends keyof InferGameEventMap<TEventDefs> & string>(
+    name: TName,
+    listener: (event: GameEventEnvelope<TName, InferGameEventMap<TEventDefs>[TName]>) => void,
+  ): GameSubscription;
 }
 
 /** Error thrown when live work is requested from a disposed session. */

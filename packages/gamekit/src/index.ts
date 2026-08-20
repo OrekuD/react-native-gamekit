@@ -20,6 +20,18 @@ export type {
   FollowCamera2DOptions2D,
 } from './camera2d';
 export { createGameSession } from './core/session/createGameSession';
+export { GameEventError } from './events/errors';
+export { defineGameEvents, gameEvent } from './events/defineGameEvents';
+export { seedGameEvent } from './events/seed';
+export type {
+  AnyGameEventEnvelope,
+  GameEventDefinitions,
+  GameEventDescriptor,
+  GameEventEmitter,
+  GameEventEnvelope,
+  GameEventMap,
+  InferGameEventMap,
+} from './events/types';
 export { GameSessionDisposedError, GameSessionLifecycleError } from './core/session/types';
 export type {
   ButtonState,
@@ -80,6 +92,7 @@ export type {
   SceneDefinitionMarker,
   SceneMap,
 } from './definition/types';
+export { PAYLOAD_LIMITS } from './events/payload';
 export * from './geometry';
 export * from './collision2d';
 export { defineScene } from './scene/defineScene';

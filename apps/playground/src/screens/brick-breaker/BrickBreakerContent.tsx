@@ -28,6 +28,28 @@ function useHudValue(
 }
 
 /**
+ * Transient brick-hit count consumed outside simulation (T13.4).
+ *
+ * The count is a pure effect of committed events — it never feeds back
+ * into score, collision, or scene-transition authority. Rerenders,
+ * interpolation frames, pause/resume, and catch-up ticks do not duplicate
+ * the count because events are published once per successful tick.
+ */
+function useBrickHitCount(session: BrickBreakerSession): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    // Reset on session change (surface controller swaps).
+    // eslint-disable-next-line -- reset is intentional for session swap
+    setCount(0);
+    const sub = session.addGameEventListener('brick-hit', () => {
+      setCount((prev) => prev + 1);
+    });
+    return sub.remove;
+  }, [session]);
+  return count;
+}
+
+/**
  * Brick Breaker content (T8.1): two sibling interaction regions.
  *
  * The safe-area top bar (back control + centered title) and the gameplay
@@ -42,6 +64,7 @@ function useHudValue(
 export default function BrickBreakerContent({ game, onExit }: PlaygroundGameContentProps) {
   const session = game as BrickBreakerSession;
   const hud = useHudValue(session);
+  const hitCount = useBrickHitCount(session);
 
   const startOrRestart = useCallback(() => {
     if (session.status === 'disposed') {
@@ -80,7 +103,7 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
         style={styles.stage}
         testID={BRICK_BREAKER_LAYOUT.stage.testID}
       >
-        <GameHud hud={hud} />
+        <GameHud hud={hud} hitCount={hitCount} />
 
         {hud.awaitingStart ? (
           <Pressable
@@ -100,12 +123,15 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
   );
 }
 
-function GameHud({ hud }: { readonly hud: HudState }) {
+function GameHud({ hud, hitCount }: { readonly hud: HudState; readonly hitCount: number }) {
   return (
     <View pointerEvents="none" style={StyleSheet.absoluteFill}>
       <View style={styles.score}>
         <Text style={styles.scoreLabel}>Score</Text>
         <Text style={styles.scoreValue}>{String(hud.score).padStart(2, '0')}</Text>
+        <Text style={styles.hitCount} testID="brick-hit-count">
+          Hits {String(hitCount).padStart(2, '0')}
+        </Text>
       </View>
 
       {hud.awaitingStart ? (
@@ -174,6 +200,13 @@ const styles = StyleSheet.create({
     fontSize: 30,
     fontWeight: '800',
     lineHeight: 36,
+  },
+  hitCount: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 1,
+    marginTop: 2,
   },
   promptWrap: {
     alignItems: 'center',

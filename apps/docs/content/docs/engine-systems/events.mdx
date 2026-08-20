@@ -1,0 +1,114 @@
+---
+title: Events
+description: "Deterministic, typed facts emitted during a successful fixed tick and delivered after it commits — the bridge from simulation to audio, haptics, particles, and transient UI."
+---
+
+Events are how simulation reports discrete facts without letting effects leak back into gameplay. A tick either commits and publishes its events, or it fails and publishes none. Consumers run after the commit, on the same RN thread, and a throwing consumer never pauses the game or silences its siblings.
+
+Use events for one-off facts: a brick broke, a life was lost, the game was won. Use snapshots for continuous state like positions and scores, and inputs for player intent.
+
+## Definitions are the contract
+
+Declare the map once, at the game level:
+
+```ts
+import { defineGameEvents, gameEvent, type Point2D } from 'rn-gamekit';
+
+export const brickBreakerEvents = defineGameEvents({
+  'brick-hit': gameEvent<{ brickId: string; point: Point2D }>(),
+  'life-lost': gameEvent<{ score: number }>(),
+  'game-over': gameEvent<{ won: boolean; score: number }>(),
+});
+```
+
+`gameEvent<T>()` is a type witness — no runtime cost. `defineGameEvents` validates names, freezes the map, and preserves literal inference so `keyof typeof brickBreakerEvents` and the payload types flow through scenes and subscriptions without duplicate unions.
+
+## Scenes declare what they may emit
+
+```ts
+import { defineScene } from 'rn-gamekit';
+
+const play = defineScene({
+  actions: ['primary'],
+  transitions: ['game-over'],
+  emits: ['brick-hit', 'life-lost', 'game-over'],
+  create: createPlayState,
+  update: ({ state, input, events, deltaSeconds }) => {
+    // ... move ball, check collisions ...
+    if (collision.removed > 0) {
+      events.emit('brick-hit', { brickId: String(index), point: { x: ball.x, y: ball.y } });
+    }
+    return nextState;
+  },
+  snapshot: ({ state }) => state,
+});
+```
+
+A scene can only emit names listed in its `emits`. The game validates that every `emits` entry is declared in the game's `events` map. A scene that tries to emit an undeclared name or the wrong payload fails at staging time, and the whole tick is discarded.
+
+Games without `events` keep the allocation-free fast path — no emitter is created and no event work runs.
+
+## The emitter lives for one tick
+
+Each update receives a fresh `events` emitter:
+
+1. Stage emissions in call order during the update.
+2. Invalidate the emitter when the update returns or throws — retaining it and calling `emit` afterwards throws `GameEventError`.
+3. Discard every staged event if the update, snapshot, deep-freeze, or transition preparation fails.
+4. Commit staged events only with the successful authoritative tick.
+5. Publish catch-up ticks by tick order, then emission order.
+
+Zero-step display callbacks publish nothing.
+
+## Envelopes are the committed facts
+
+```ts
+interface GameEventEnvelope<TName extends string, TPayload> {
+  readonly name: TName;
+  readonly payload: DeepReadonly<TPayload>;
+  readonly tick: number;
+  readonly scene: string;
+  readonly sceneTick: number;
+  readonly ordinal: number;
+}
+```
+
+- `(tick, ordinal)` is unique within one live session — the identity for trace comparison and `seedGameEvent`.
+- `scene` and `sceneTick` capture the source scene and its local tick, so a transition tick's events retain the source.
+- `payload` is the cloned, frozen plain value you emitted. `tick`, `scene`, `sceneTick`, and `ordinal` are numbers and strings, never wall time, UUIDs, React renders, or display frames.
+
+```ts
+import { seedGameEvent } from 'rn-gamekit';
+
+session.addGameEventListener('brick-hit', (event) => {
+  particles.emit(burst, { position: event.payload.point, seed: seedGameEvent(event) });
+});
+```
+
+`seedGameEvent` is deterministic from `(tick, ordinal, name)` and is stable across replays.
+
+## Payloads are plain values
+
+V1 accepts finite numbers, strings, booleans, `null`, optional `undefined` (as a property value), arrays, and plain records (`Object.prototype` or `Object.create(null)`). It rejects functions, symbols, bigints, promises/thenables, sparse arrays, class instances (`Map`, `Set`, `Date`, etc.), unsafe prototype keys (`__proto__`, `constructor`, `prototype`), symbol keys, React elements, cycles, and non-finite numbers.
+
+Payloads are cloned and frozen when staged. Errors identify the event and the exact path, for example `Event "brick-hit" payload invalid at payload.point.x: number must be finite`. A bounded size policy keeps events from carrying textures, audio buffers, or saves: at most 512 nodes, depth 10, string length 4096, and array length 256.
+
+Envelopes themselves are frozen — `event.payload.brickId = 'x'` throws.
+
+## Delivery is post-tick and isolated
+
+- Events are delivered only after the source tick's state commits.
+- Listeners are invoked from a per-tick snapshot. A listener added during delivery receives only later ticks; a removal prevents only later ticks. Both operations are idempotent.
+- A throwing listener does not suppress siblings or pause the game. The error is reported via `console.error` — a visible, non-recursive sink — and the simulation continues.
+- Simulation never awaits an async effect started by a listener.
+- `pause` produces no new simulation events; `resume` replays none. `dispose` prevents future delivery and releases listeners once.
+- Multiple independent subscribers are supported; return values from listeners are ignored and an unbounded history is not retained.
+
+## Events vs inputs, snapshots, lifecycle
+
+- **Inputs** are player intent sampled at tick start (`input.pointer`, `input.button`). Events are simulation facts emitted during the tick.
+- **Snapshots** are the continuous state rendered every frame (`getRenderFrame`, `addCommitListener`). Events are discrete and fire only on successful ticks.
+- **Lifecycle status** (`idle`, `running`, `paused`, `disposed`) is the session's control state. Events are gameplay facts within `running`.
+- **Effects** (audio, haptics, particles, transient HUD, achievements) consume events outside the update. They never write back to `state` and never change score, collision, or scene transitions — those stay authoritative inside the update.
+
+See [Emit game events](../guides/emit-game-events) for the hands-on path, and the Brick Breaker source at `apps/playground/src/screens/brick-breaker` for the reference integration (brick-hit, life-lost, and game-over).

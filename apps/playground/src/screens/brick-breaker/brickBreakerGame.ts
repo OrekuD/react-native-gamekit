@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Brick Breaker — the Task 3 reference game.
  *
@@ -14,12 +15,15 @@ import {
   collideCircleAabb2D,
   createGameSession,
   defineGame,
+  defineGameEvents,
   defineScene,
   expandAabb2D,
+  gameEvent,
   intersectsAabbAabb2D,
   type Aabb2D,
   type CommitFrame,
   type GameSession,
+  type Point2D,
   type SceneSnapshot,
 } from 'rn-gamekit';
 
@@ -58,6 +62,15 @@ export const BRICK_BREAKER_CONFIG = {
 } as const;
 
 export const TOTAL_BRICKS = BRICK_BREAKER_CONFIG.bricks.columns * BRICK_BREAKER_CONFIG.bricks.rows;
+
+/** Typed game events for Brick Breaker (T13). */
+export const brickBreakerEvents = defineGameEvents({
+  'brick-hit': gameEvent<{ readonly brickId: string; readonly point: Point2D }>(),
+  'life-lost': gameEvent<{ readonly score: number }>(),
+  'game-over': gameEvent<{ readonly won: boolean; readonly score: number }>(),
+});
+
+export type BrickBreakerEvents = typeof brickBreakerEvents;
 
 /** Immutable brick geometry in its fixed grid position. */
 export interface BrickGeometry {
@@ -320,8 +333,9 @@ function createPlayScene(loopForPerformanceLab: boolean) {
   return defineScene({
     actions: ['start', 'primary'],
     transitions: ['game-over'],
+    emits: ['brick-hit', 'life-lost', 'game-over'],
     create: createPlayState,
-    update: ({ state, input, transition, deltaSeconds }) => {
+    update: ({ state, input, transition, events, deltaSeconds }) => {
       const pointer = input.pointer('primary');
       const { logicalWidth, logicalHeight, paddle } = BRICK_BREAKER_CONFIG;
 
@@ -350,8 +364,22 @@ function createPlayScene(loopForPerformanceLab: boolean) {
       ball = collision.ball;
       const score = state.score + collision.removed;
 
+      // T13: emit one brick-hit per removed brick, with deterministic point.
+      if (collision.removed > 0) {
+        for (let index = 0; index < state.bricks.length; index += 1) {
+          if (state.bricks[index] && !collision.bricks[index]) {
+            (events as { emit(name: string, payload: unknown): void }).emit('brick-hit', {
+              brickId: String(index),
+              point: { x: ball.x, y: ball.y },
+            });
+          }
+        }
+      }
+
       if (ballLost(ball, logicalHeight)) {
         if (loopForPerformanceLab) {
+          (events as { emit(name: string, payload: unknown): void }).emit('life-lost', { score });
+          (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: false, score });
           return {
             ...state,
             paddleX,
@@ -360,13 +388,14 @@ function createPlayScene(loopForPerformanceLab: boolean) {
             bricks: collision.bricks,
           };
         }
-        // Loss is result-free here: the game-over scene is a generic screen
-        // because Task 3 transitions carry no payloads.
+        (events as { emit(name: string, payload: unknown): void }).emit('life-lost', { score });
+        (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: false, score });
         transition.setScene('game-over');
         return { ...state, paddleX, ball, score };
       }
       if (score >= TOTAL_BRICKS) {
         if (loopForPerformanceLab) {
+          (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: true, score });
           return {
             ...state,
             paddleX,
@@ -375,6 +404,7 @@ function createPlayScene(loopForPerformanceLab: boolean) {
             score: 0,
           };
         }
+        (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: true, score });
         return {
           ...state,
           paddleX,
@@ -432,6 +462,7 @@ export const brickBreakerDefinition = defineGame({
       description: 'Move the paddle and start or restart the game',
     },
   },
+  events: brickBreakerEvents,
   scenes: {
     ready: readyScene,
     play: playScene,
@@ -452,6 +483,7 @@ export const brickBreakerPerformanceDefinition = defineGame({
   viewport: brickBreakerDefinition.viewport,
   assets: brickBreakerDefinition.assets,
   input: brickBreakerDefinition.input,
+  events: brickBreakerEvents,
   scenes: {
     ready: readyScene,
     play: performancePlayScene,
@@ -475,5 +507,5 @@ export function createBrickBreakerSession(): BrickBreakerSession {
 export type BrickBreakerDefinition = typeof brickBreakerDefinition;
 
 export type BrickBreakerRenderFrame = CommitFrame<BrickBreakerDefinition['scenes']>;
-export type BrickBreakerSession = GameSession<BrickBreakerDefinition['scenes'], BrickBreakerDefinition['input']>;
+export type BrickBreakerSession = GameSession<BrickBreakerDefinition['scenes'], BrickBreakerDefinition['input'], BrickBreakerEvents>;
 export type BrickBreakerSnapshot = SceneSnapshot<BrickBreakerDefinition['scenes'][keyof BrickBreakerDefinition['scenes']]>;

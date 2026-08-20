@@ -1,3 +1,4 @@
+import type { AssetGroupMap } from '../../assets/types';
 import type { GameDefinition, InputMap, SceneMap } from '../../definition/types';
 import type { SceneTransitionController } from '../../scene/types';
 import { createAnimationFrameDriver, type FrameDriver, type FrameHandle } from '../frameDriver';
@@ -14,6 +15,10 @@ import {
 } from './types';
 import type { SessionDiagnostics } from './diagnostics';
 import { createDeepFreeze, type DeepFreezer } from './deepFreeze';
+import type { GameEventDescriptor } from '../../events/types';
+import type { AnyGameEventEnvelope } from '../../events/types';
+import { GameEventError } from '../../events/errors';
+import { cloneAndValidatePayload } from '../../events/payload';
 
 const DEFAULT_FIXED_STEP_MS = 1000 / 60;
 
@@ -72,11 +77,13 @@ interface SessionOptions {
 interface ErasedScene {
   readonly actions: readonly string[];
   readonly transitions: readonly string[];
+  readonly emits?: readonly string[];
   create(): unknown;
   update(frame: {
     readonly state: unknown;
     readonly input: InputFrame<string>;
     readonly transition: SceneTransitionController<string>;
+    readonly events: { emit(name: string, payload: unknown): void };
     readonly tick: number;
     readonly sceneTick: number;
     readonly deltaSeconds: number;
@@ -126,9 +133,10 @@ export function createGameSession<
   const TScenes extends SceneMap,
   const TInput extends InputMap,
   const TInitialScene extends keyof TScenes,
+  const TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
 >(
-  definition: GameDefinition<TScenes, TInput, TInitialScene>,
-): GameSession<TScenes, TInput> {
+  definition: GameDefinition<TScenes, TInput, TInitialScene, AssetGroupMap, TEventDefs>,
+): GameSession<TScenes, TInput, TEventDefs> {
   return createGameSessionWithDriver(definition, {
     frameDriver: createAnimationFrameDriver(),
   });
@@ -139,10 +147,11 @@ export function createGameSessionWithDriver<
   const TScenes extends SceneMap,
   const TInput extends InputMap,
   const TInitialScene extends keyof TScenes,
+  const TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
 >(
-  definition: GameDefinition<TScenes, TInput, TInitialScene>,
+  definition: GameDefinition<TScenes, TInput, TInitialScene, AssetGroupMap, TEventDefs>,
   options: SessionOptions,
-): GameSession<TScenes, TInput> {
+): GameSession<TScenes, TInput, TEventDefs> {
   const fixedStepMs = options.fixedStepMs ?? DEFAULT_FIXED_STEP_MS;
   const maxCatchUpSteps = options.maxCatchUpSteps ?? DEFAULT_MAX_CATCH_UP_STEPS;
   const maxFrameDeltaMs = options.maxFrameDeltaMs ?? fixedStepMs * DEFAULT_MAX_CATCH_UP_STEPS;
@@ -159,6 +168,34 @@ export function createGameSessionWithDriver<
   }
   if (!(maxFrameDeltaMs > 0) || !Number.isFinite(maxFrameDeltaMs)) {
     throw new RangeError('maxFrameDeltaMs must be a finite positive number');
+  }
+
+  // T13: event definitions and per-scene emit declarations.
+  const eventDefs = (definition as unknown as { events?: Record<string, GameEventDescriptor<unknown>> }).events;
+  const hasEvents = eventDefs !== undefined && eventDefs !== null;
+  const allowedEventNames = hasEvents ? new Set(Object.keys(eventDefs!)) : new Set<string>();
+  const allowedEmitsByScene = new Map<string, Set<string>>();
+  // Validate per-scene emits are declared events.
+  for (const [name, scene] of Object.entries(definition.scenes)) {
+    const erased = scene as unknown as ErasedScene;
+    const emits = erased.emits ?? [];
+    for (const ev of emits) {
+      if (!allowedEventNames.has(ev)) {
+        throw new Error(`Scene "${name}" declares unknown event "${ev}"`);
+      }
+    }
+    allowedEmitsByScene.set(name, new Set(emits as string[]));
+  }
+  if (hasEvents) {
+    // Also validate that if game has events but no scene emits, it's still valid (no emitted events, but definitions exist).
+    // No extra check needed; fast path will just never emit.
+  } else {
+    for (const [name, scene] of Object.entries(definition.scenes)) {
+      const erased = scene as unknown as ErasedScene;
+      if (erased.emits !== undefined && erased.emits.length > 0) {
+        throw new Error(`Scene "${name}" declares emits but game has no events map`);
+      }
+    }
   }
 
   const erasedSceneMap: Record<string, ErasedScene> = {};
@@ -228,6 +265,38 @@ export function createGameSessionWithDriver<
   let deliveringStatus = false;
   const queuedStatuses: GameSessionStatus[] = [];
   let releaseStatusListeners = false;
+
+  // T13: per-session event listeners.
+  const eventListeners = new Map<string, Set<(event: AnyGameEventEnvelope) => void>>();
+
+  const deliverEvents = (envelopes: readonly AnyGameEventEnvelope[]): void => {
+    // Snapshot per tick: a listener added during this tick's delivery receives
+    // only later ticks, and a removal prevents only future ticks.
+    const snapshots = new Map<string, readonly ((event: AnyGameEventEnvelope) => void)[]>();
+    for (const env of envelopes) {
+      if (!snapshots.has(env.name)) {
+        const set = eventListeners.get(env.name);
+        snapshots.set(env.name, set ? [...set] : []);
+      }
+    }
+    for (const envelope of envelopes) {
+      const snapshot = snapshots.get(envelope.name) ?? [];
+      for (const listener of snapshot) {
+        try {
+          listener(envelope);
+        } catch (error) {
+          // Visible, non-recursive sink — simulation state is untouched, siblings still run.
+          console.error(`Game event listener for "${envelope.name}" threw:`, error);
+        }
+      }
+    }
+  };
+
+  const NO_EVENT_EMITTER = Object.freeze({
+    emit() {
+      throw new GameEventError('This game has no events or this scene does not emit any events');
+    },
+  }) as { emit(name: string, payload: unknown): void };
 
   // Deliver one transition pass to a snapshot. A throwing listener never
   // aborts the pass: the remaining snapshot listeners still run, and the
@@ -556,6 +625,42 @@ export function createGameSessionWithDriver<
           stepsRan = true;
           const nextTick = tick + 1;
           const nextSceneTick = activeScene.sceneTick + 1;
+          const sceneNameForTick = activeScene.name;
+          const allowedEmits = allowedEmitsByScene.get(sceneNameForTick) ?? new Set<string>();
+
+          // T13: per-tick transactional emitter.
+          let stagedThisTick: AnyGameEventEnvelope[] = [];
+          let ordinal = 0;
+          let emitterInvalidated = false;
+          const emitter: { emit(name: string, payload: unknown): void } = hasEvents
+            ? {
+                emit(name: string, payload: unknown) {
+                  if (emitterInvalidated) {
+                    throw new GameEventError('Game event emitter is only valid during its owning scene update');
+                  }
+                  if (!allowedEventNames.has(name)) {
+                    throw new GameEventError(`Event "${name}" is not declared by this game`);
+                  }
+                  if (!allowedEmits.has(name)) {
+                    throw new GameEventError(`Scene "${sceneNameForTick}" cannot emit event "${name}" (missing from its emits list)`);
+                  }
+                  const cloned = cloneAndValidatePayload(payload, name, 'payload');
+                  const envelope = Object.freeze({
+                    name,
+                    payload: cloned,
+                    tick: nextTick,
+                    scene: sceneNameForTick,
+                    sceneTick: nextSceneTick,
+                    ordinal: ordinal++,
+                  }) as AnyGameEventEnvelope;
+                  stagedThisTick.push(envelope);
+                },
+              }
+            : (NO_EVENT_EMITTER as { emit(name: string, payload: unknown): void });
+          if (hasEvents) {
+            Object.freeze(emitter);
+          }
+
           const sampleStart = diagnostics === undefined ? 0 : now();
           const input = inputBuffer.sample();
           if (diagnostics !== undefined) {
@@ -565,18 +670,31 @@ export function createGameSessionWithDriver<
           activeUpdateScope = scope;
           updateInProgress = true;
           const updateStart = diagnostics === undefined ? 0 : now();
-          const nextState = freezeObject(
-            activeScene.definition.update({
-              state: activeScene.state,
-              input,
-              transition: makeTransitionController(scope),
-              tick: nextTick,
-              sceneTick: nextSceneTick,
-              deltaSeconds: fixedStepMs / 1000,
-              elapsedSeconds: (nextTick * fixedStepMs) / 1000,
-              sceneElapsedSeconds: (nextSceneTick * fixedStepMs) / 1000,
-            }),
-          );
+          let nextState: unknown;
+          try {
+            nextState = freezeObject(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (activeScene.definition.update as any)({
+                state: activeScene.state,
+                input,
+                transition: makeTransitionController(scope),
+                events: emitter,
+                tick: nextTick,
+                sceneTick: nextSceneTick,
+                deltaSeconds: fixedStepMs / 1000,
+                elapsedSeconds: (nextTick * fixedStepMs) / 1000,
+                sceneElapsedSeconds: (nextSceneTick * fixedStepMs) / 1000,
+              }),
+            );
+          } catch (error) {
+            // Update failed: discard staged events, invalidate emitter.
+            stagedThisTick = [];
+            emitterInvalidated = true;
+            activeUpdateScope = undefined;
+            updateInProgress = false;
+            throw error;
+          }
+          emitterInvalidated = true;
           activeUpdateScope = undefined;
           updateInProgress = false;
           if (diagnostics !== undefined) {
@@ -590,7 +708,17 @@ export function createGameSessionWithDriver<
             // A transition requested during update commits after this update
             // completes successfully. The update consumed one fixed step; the
             // hard-cut frame publishes at the end of this presentation callback.
-            commitTransition(intent, nextState, nextTick, true);
+            try {
+              commitTransition(intent, nextState, nextTick, true);
+            } catch (error) {
+              // Transition preparation/disposal failed: discard staged events.
+              stagedThisTick = [];
+              throw error;
+            }
+            // Successful transition tick: staged events commit with source tick/scene.
+            if (stagedThisTick.length > 0) {
+              deliverEvents(stagedThisTick);
+            }
             accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
             // F4: the transition consumed one fixed step; report it as such
             // and never as a zero-step callback (zero-step fires only when
@@ -601,12 +729,24 @@ export function createGameSessionWithDriver<
             break;
           }
           const snapshotStart = diagnostics === undefined ? 0 : now();
-          const rawSnapshot = activeScene.definition.snapshot({ state: nextState });
+          let rawSnapshot: unknown;
+          try {
+            rawSnapshot = activeScene.definition.snapshot({ state: nextState });
+          } catch (error) {
+            stagedThisTick = [];
+            throw error;
+          }
           if (diagnostics !== undefined) {
             diagnostics.onSnapshot(now() - snapshotStart);
           }
           const freezeStart = diagnostics === undefined ? 0 : now();
-          const nextSnapshot = deepFreeze(rawSnapshot);
+          let nextSnapshot: DeepReadonly<unknown>;
+          try {
+            nextSnapshot = deepFreeze(rawSnapshot);
+          } catch (error) {
+            stagedThisTick = [];
+            throw error;
+          }
           if (diagnostics !== undefined) {
             diagnostics.onDeepFreeze(now() - freezeStart);
           }
@@ -618,6 +758,10 @@ export function createGameSessionWithDriver<
           previousSnapshot = currentSnapshot;
           currentSnapshot = nextSnapshot;
           tick = nextTick;
+          // Successful tick: deliver staged events in tick order, then emission order.
+          if (stagedThisTick.length > 0) {
+            deliverEvents(stagedThisTick);
+          }
           accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
           catchUpSteps += 1;
           if (diagnostics !== undefined) {
@@ -660,7 +804,7 @@ export function createGameSessionWithDriver<
     });
   };
 
-  const session: GameSession<TScenes, TInput> = {
+  const session: GameSession<TScenes, TInput, TEventDefs> = {
     get status() {
       return status;
     },
@@ -755,6 +899,7 @@ export function createGameSessionWithDriver<
       accumulatorMs = 0;
       pendingTransition = undefined;
       inputBuffer.reset();
+      eventListeners.clear();
       // Terminal cleanup is unconditional: `disposed` is delivered to the
       // full listener snapshot (including the re-entrant queued pass), then
       // every listener and the scene are released exactly once even when a
@@ -809,6 +954,34 @@ export function createGameSessionWithDriver<
         },
       });
     },
+    addGameEventListener: ((name: string, listener: (event: AnyGameEventEnvelope) => void) => {
+      assertLive();
+      if (!hasEvents || !allowedEventNames.has(name)) {
+        throw new GameEventError(`Event "${String(name)}" is not declared by this game`);
+      }
+      let set = eventListeners.get(name);
+      if (set === undefined) {
+        set = new Set();
+        eventListeners.set(name, set);
+      }
+      set.add(listener as (event: AnyGameEventEnvelope) => void);
+      let removed = false;
+      return Object.freeze({
+        remove() {
+          if (removed) {
+            return;
+          }
+          removed = true;
+          const existing = eventListeners.get(name);
+          if (existing) {
+            existing.delete(listener as (event: AnyGameEventEnvelope) => void);
+            if (existing.size === 0) {
+              eventListeners.delete(name);
+            }
+          }
+        },
+      });
+    }) as unknown as GameSession<TScenes, TInput, TEventDefs>['addGameEventListener'],
   };
 
   return Object.freeze(session);
