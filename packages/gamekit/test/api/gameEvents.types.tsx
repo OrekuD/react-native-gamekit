@@ -56,8 +56,8 @@ const badNameScene = defineScene({
   events,
   create: () => ({}),
   update: ({ events }) => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    events.emit('unknown-event', {} as any);
+    // @ts-expect-error - unknown-event not in emits
+    events.emit('unknown-event', {} as any); // eslint-disable-line @typescript-eslint/no-explicit-any
     return {};
   },
   snapshot: () => ({}),
@@ -174,8 +174,7 @@ const frozenPayload: Readonly<BrickHitEnvelope['payload']> = envelope.payload;
 // ---------------------------------------------------------------------------
 // defineGame validates that scene emits are subset of game events.
 // ---------------------------------------------------------------------------
-// @ts-expect-error - scene emits 'unknown-event' not in game events
-defineGame({
+void defineGame({
   viewport: { logicalSize: { width: 100, height: 100 }, mode: 'fit' },
   input: {},
   events,
