@@ -1,6 +1,7 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import type { AssetGroupMap } from '../assets/types';
 import type { GameEventDescriptor } from '../events/types';
-import type { GameDefinition, InputMap, SceneMap } from './types';
+import type { GameDefinition, InputMap, SceneDefinitionMarker, SceneMap } from './types';
 
 type SceneActions<TScene> = TScene extends { readonly __actionType?: infer TAction }
   ? Exclude<TAction, undefined>
@@ -56,6 +57,19 @@ type ValidateEventsWhenScenesEmit<
   : TEventDefs extends Record<string, never>
     ? { readonly __eventsRequired: 'scenes declare emits but game has no events map' }
     : unknown;
+
+type SceneEventDefs<TScene> = TScene extends { readonly __eventDefsType?: infer T }
+  ? T
+  : never;
+
+// Runtime identity is checked via reference equality in the function body.
+// Type-level check is intentionally permissive to avoid false positives for
+// games without events and for separate test files that share the same
+// events shape but not the same branded instance.
+type ValidateSceneEventDefsIdentity<
+  TScenes extends SceneMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>>,
+> = unknown;
 
 /**
  * Declare a game.
@@ -115,7 +129,8 @@ export function defineGame<
     ValidateSceneActions<TScenes, TInput> &
     ValidateSceneTransitions<TScenes> &
     ValidateSceneEmits<TScenes, TEventDefs> &
-    ValidateEventsWhenScenesEmit<TScenes, TEventDefs>,
+    ValidateEventsWhenScenesEmit<TScenes, TEventDefs> &
+    ValidateSceneEventDefsIdentity<TScenes, TEventDefs>,
 ): GameDefinition<TScenes, TInput, TInitialScene, TAssets, TEventDefs> {
   // The viewport config is part of the public session surface; freeze it so a
   // caller cannot mutate a live game's coordinate authority.
@@ -123,6 +138,30 @@ export function defineGame<
   Object.freeze(definition.viewport);
   if (definition.events !== undefined) {
     Object.freeze(definition.events);
+    // Runtime identity check: every scene that declares `events` must reference
+    // the same object as the game's `events`. This catches two different
+    // `defineGameEvents` instances with compatible shapes that would otherwise
+    // be structurally compatible at the type level.
+    for (const [name, scene] of Object.entries(definition.scenes)) {
+      const s = scene as unknown as { events?: unknown; emits?: readonly string[] };
+      if (s.events !== undefined && s.events !== definition.events) {
+        throw new Error(
+          `Scene "${name}" is bound to a different events object than the game. Pass the same defineGameEvents() result to both defineScene({ events }) and defineGame({ events }).`,
+        );
+      }
+      if (s.events === undefined && s.emits !== undefined && s.emits.length > 0) {
+        throw new Error(
+          `Scene "${name}" declares emits but is not bound to the game's events. Pass \`events\` to defineScene.`,
+        );
+      }
+    }
+  } else {
+    for (const [name, scene] of Object.entries(definition.scenes)) {
+      const s = scene as unknown as { events?: unknown; emits?: readonly string[] };
+      if (s.events !== undefined) {
+        throw new Error(`Scene "${name}" is bound to events but the game has no events map`);
+      }
+    }
   }
   return definition;
 }

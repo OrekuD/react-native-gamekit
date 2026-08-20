@@ -34,19 +34,58 @@ const ready = defineScene({
   snapshot: ({ state }) => state,
 });
 
-// Inline-scene emission is fully typed via defineGame's contextual event map.
-// Separate definitions without an explicit event map default to unknown payloads,
-// so this fixture demonstrates the typed path inline.
-
-
-// A scene that emits an unknown event for validation tests.
-const badNameScene = defineScene({
+// Standalone scene with explicit events binding — the ergonomic typed path.
+const _validStandalone = defineScene({
   actions: [],
-  emits: ['unknown-event'],
+  emits: ['brick-hit'],
+  events,
   create: () => ({}),
   update: ({ events }) => {
-    // @ts-expect-error - cannot emit undeclared name
-    events.emit('unknown-event', {});
+    // Correct payload compiles.
+    events.emit('brick-hit', { brickId: '1', point: { x: 0, y: 0 } });
+    return {};
+  },
+  snapshot: () => ({}),
+});
+
+// Undeclared event name fails at the emits declaration and at the emit call.
+const badNameScene = defineScene({
+  actions: [],
+  // @ts-expect-error - 'unknown-event' is not declared in events
+  emits: ['unknown-event'],
+  events,
+  create: () => ({}),
+  update: ({ events }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    events.emit('unknown-event', {} as any);
+    return {};
+  },
+  snapshot: () => ({}),
+});
+
+// Wrong payload shape fails at the emit call.
+const _badPayloadScene = defineScene({
+  actions: [],
+  emits: ['brick-hit'],
+  events,
+  create: () => ({}),
+  update: ({ events }) => {
+    // @ts-expect-error - brickId should be string, not number
+    events.emit('brick-hit', { brickId: 123, point: { x: 0, y: 0 } });
+    return {};
+  },
+  snapshot: () => ({}),
+});
+
+// Missing required field fails at the emit call.
+const _missingFieldScene = defineScene({
+  actions: [],
+  emits: ['brick-hit'],
+  events,
+  create: () => ({}),
+  update: ({ events }) => {
+    // @ts-expect-error - missing required field 'point'
+    events.emit('brick-hit', { brickId: '1' });
     return {};
   },
   snapshot: () => ({}),
@@ -169,3 +208,6 @@ sub1.remove();
 void noEventGame;
 void _names;
 void frozenPayload;
+void _validStandalone;
+void _badPayloadScene;
+void _missingFieldScene;

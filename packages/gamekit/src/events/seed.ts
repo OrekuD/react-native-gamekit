@@ -21,10 +21,12 @@ function hashString(value: string): number {
 
 export function seedGameEvent(event: AnyGameEventEnvelope): number {
   const nameHash = hashString(event.name);
-  // Deterministic mixing of tick, sceneTick, ordinal, and name hash.
+  // Deterministic mixing of tick, ordinal, and name hash — the documented
+  // stable identity (tick, ordinal, name). sceneTick is intentionally
+  // excluded; it is presentation-local and would make the seed disagree
+  // with its contract.
   let seed = 17;
   seed = Math.imul(seed, 31) + event.tick;
-  seed = Math.imul(seed, 31) + event.sceneTick;
   seed = Math.imul(seed, 31) + event.ordinal;
   seed = Math.imul(seed, 31) + nameHash;
   return seed >>> 0;

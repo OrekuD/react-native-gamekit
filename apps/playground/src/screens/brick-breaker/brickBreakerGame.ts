@@ -334,6 +334,7 @@ function createPlayScene(loopForPerformanceLab: boolean) {
     actions: ['start', 'primary'],
     transitions: ['game-over'],
     emits: ['brick-hit', 'life-lost', 'game-over'],
+    events: brickBreakerEvents,
     create: createPlayState,
     update: ({ state, input, transition, events, deltaSeconds }) => {
       const pointer = input.pointer('primary');
@@ -368,7 +369,7 @@ function createPlayScene(loopForPerformanceLab: boolean) {
       if (collision.removed > 0) {
         for (let index = 0; index < state.bricks.length; index += 1) {
           if (state.bricks[index] && !collision.bricks[index]) {
-            (events as { emit(name: string, payload: unknown): void }).emit('brick-hit', {
+            events.emit('brick-hit', {
               brickId: String(index),
               point: { x: ball.x, y: ball.y },
             });
@@ -378,8 +379,8 @@ function createPlayScene(loopForPerformanceLab: boolean) {
 
       if (ballLost(ball, logicalHeight)) {
         if (loopForPerformanceLab) {
-          (events as { emit(name: string, payload: unknown): void }).emit('life-lost', { score });
-          (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: false, score });
+          events.emit('life-lost', { score });
+          events.emit('game-over', { won: false, score });
           return {
             ...state,
             paddleX,
@@ -388,14 +389,14 @@ function createPlayScene(loopForPerformanceLab: boolean) {
             bricks: collision.bricks,
           };
         }
-        (events as { emit(name: string, payload: unknown): void }).emit('life-lost', { score });
-        (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: false, score });
+        events.emit('life-lost', { score });
+        events.emit('game-over', { won: false, score });
         transition.setScene('game-over');
         return { ...state, paddleX, ball, score };
       }
       if (score >= TOTAL_BRICKS) {
         if (loopForPerformanceLab) {
-          (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: true, score });
+          events.emit('game-over', { won: true, score });
           return {
             ...state,
             paddleX,
@@ -404,7 +405,7 @@ function createPlayScene(loopForPerformanceLab: boolean) {
             score: 0,
           };
         }
-        (events as { emit(name: string, payload: unknown): void }).emit('game-over', { won: true, score });
+        events.emit('game-over', { won: true, score });
         return {
           ...state,
           paddleX,

@@ -131,7 +131,7 @@ export interface GameSession<
    */
   addGameEventListener<TName extends keyof InferGameEventMap<TEventDefs> & string>(
     name: TName,
-    listener: (event: GameEventEnvelope<TName, InferGameEventMap<TEventDefs>[TName]>) => void,
+    listener: (event: GameEventEnvelope<TName, InferGameEventMap<TEventDefs>[TName]>) => void | Promise<void>,
   ): GameSubscription;
 }
 

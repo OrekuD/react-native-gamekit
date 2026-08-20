@@ -28,6 +28,7 @@ const play = defineScene({
   actions: ['primary'],
   transitions: ['game-over'],
   emits: ['brick-hit', 'life-lost', 'game-over'],
+  events: brickBreakerEvents,
   create: createPlayState,
   update: ({ state, input, events, deltaSeconds }) => {
     // ... move ball, collide ...
@@ -52,7 +53,7 @@ const play = defineScene({
 });
 ```
 
-`emits` narrows `events.emit` to the listed names. Emitting an undeclared name, the wrong payload, or a non-plain value (functions, `NaN`, cycles, etc.) throws `GameEventError` with the exact path `payload.point.x` and discards the whole tick's staged events.
+`emits` narrows `events.emit` to the listed names. For standalone scenes, pass the same `events` object to `defineScene({ events, emits })` so `events.emit` is typed to the exact payload — a wrong shape (missing `brickId`, wrong field type) fails at compile time. At runtime, staging validates the plain-data and size boundary (finite numbers, plain records, no cycles, accessor/non-enumerable rejection, limits) and an undeclared name throws `GameEventError` with the exact path `payload.point.x`, discarding the whole tick's staged events.
 
 The emitter is valid only for that update — retaining it and calling `emit` afterwards throws.
 

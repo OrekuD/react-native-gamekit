@@ -1,4 +1,4 @@
-import type { GameEventDescriptor } from './types';
+import type { BrandedGameEventDefs, GameEventDescriptor } from './types';
 
 /**
  * Create a type witness for one event payload.
@@ -32,7 +32,7 @@ function isValidEventName(name: string): boolean {
  */
 export function defineGameEvents<const T extends Record<string, GameEventDescriptor<unknown>>>(
   definitions: T,
-): T {
+): BrandedGameEventDefs<T> {
   for (const [name, descriptor] of Object.entries(definitions)) {
     if (!isValidEventName(name)) {
       throw new Error(`Invalid game event name: "${name}"`);
@@ -42,5 +42,5 @@ export function defineGameEvents<const T extends Record<string, GameEventDescrip
     }
     Object.freeze(descriptor);
   }
-  return Object.freeze({ ...definitions }) as T;
+  return Object.freeze({ ...definitions }) as BrandedGameEventDefs<T>;
 }

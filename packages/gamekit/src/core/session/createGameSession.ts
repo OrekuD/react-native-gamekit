@@ -78,6 +78,7 @@ interface ErasedScene {
   readonly actions: readonly string[];
   readonly transitions: readonly string[];
   readonly emits?: readonly string[];
+  readonly events?: unknown;
   create(): unknown;
   update(frame: {
     readonly state: unknown;
@@ -175,7 +176,7 @@ export function createGameSessionWithDriver<
   const hasEvents = eventDefs !== undefined && eventDefs !== null;
   const allowedEventNames = hasEvents ? new Set(Object.keys(eventDefs!)) : new Set<string>();
   const allowedEmitsByScene = new Map<string, Set<string>>();
-  // Validate per-scene emits are declared events.
+  // Validate per-scene emits are declared events and that the scene's `events` reference matches the game's.
   for (const [name, scene] of Object.entries(definition.scenes)) {
     const erased = scene as unknown as ErasedScene;
     const emits = erased.emits ?? [];
@@ -185,19 +186,22 @@ export function createGameSessionWithDriver<
       }
     }
     allowedEmitsByScene.set(name, new Set(emits as string[]));
-  }
-  if (hasEvents) {
-    // Also validate that if game has events but no scene emits, it's still valid (no emitted events, but definitions exist).
-    // No extra check needed; fast path will just never emit.
-  } else {
-    for (const [name, scene] of Object.entries(definition.scenes)) {
-      const erased = scene as unknown as ErasedScene;
-      if (erased.emits !== undefined && erased.emits.length > 0) {
-        throw new Error(`Scene "${name}" declares emits but game has no events map`);
+    // Runtime identity check for the branded event definitions.
+    if (erased.events !== undefined) {
+      if (!hasEvents) {
+        throw new Error(`Scene "${name}" is bound to events but the game has no events map`);
       }
+      if (erased.events !== eventDefs) {
+        throw new Error(
+          `Scene "${name}" is bound to a different events object than the game. Pass the same defineGameEvents() result to both defineScene({ events }) and defineGame({ events }).`,
+        );
+      }
+    } else if (emits.length > 0) {
+      throw new Error(
+        `Scene "${name}" declares emits but is not bound to the game's events. Pass \`events\` to defineScene.`,
+      );
     }
   }
-
   const erasedSceneMap: Record<string, ErasedScene> = {};
   for (const [name, scene] of Object.entries(definition.scenes)) {
     const erased = scene as unknown as ErasedScene;
@@ -267,12 +271,22 @@ export function createGameSessionWithDriver<
   let releaseStatusListeners = false;
 
   // T13: per-session event listeners.
-  const eventListeners = new Map<string, Set<(event: AnyGameEventEnvelope) => void>>();
+  const eventListeners = new Map<string, Set<(event: AnyGameEventEnvelope) => void | Promise<void>>>();
+
+  // Centralized, non-recursive error sink for game event listeners.
+  // A failing reporter must not pause the session or escape into the fixed-step loop.
+  const reportGameEventListenerError = (name: string, error: unknown): void => {
+    try {
+      console.error(`Game event listener for "${name}" threw:`, error);
+    } catch {
+      // Swallow reporter failures — the session must remain running and siblings must still run.
+    }
+  };
 
   const deliverEvents = (envelopes: readonly AnyGameEventEnvelope[]): void => {
     // Snapshot per tick: a listener added during this tick's delivery receives
     // only later ticks, and a removal prevents only future ticks.
-    const snapshots = new Map<string, readonly ((event: AnyGameEventEnvelope) => void)[]>();
+    const snapshots = new Map<string, readonly ((event: AnyGameEventEnvelope) => void | Promise<void>)[]>();
     for (const env of envelopes) {
       if (!snapshots.has(env.name)) {
         const set = eventListeners.get(env.name);
@@ -282,11 +296,17 @@ export function createGameSessionWithDriver<
     for (const envelope of envelopes) {
       const snapshot = snapshots.get(envelope.name) ?? [];
       for (const listener of snapshot) {
+        let result: unknown;
         try {
-          listener(envelope);
+          result = listener(envelope);
         } catch (error) {
-          // Visible, non-recursive sink — simulation state is untouched, siblings still run.
-          console.error(`Game event listener for "${envelope.name}" threw:`, error);
+          reportGameEventListenerError(envelope.name, error);
+          continue;
+        }
+        if (result !== null && typeof result === 'object' && typeof (result as Promise<unknown>).then === 'function') {
+          (result as Promise<unknown>).catch((error) => {
+            reportGameEventListenerError(envelope.name, error);
+          });
         }
       }
     }
@@ -954,7 +974,7 @@ export function createGameSessionWithDriver<
         },
       });
     },
-    addGameEventListener: ((name: string, listener: (event: AnyGameEventEnvelope) => void) => {
+    addGameEventListener: ((name: string, listener: (event: AnyGameEventEnvelope) => void | Promise<void>) => {
       assertLive();
       if (!hasEvents || !allowedEventNames.has(name)) {
         throw new GameEventError(`Event "${String(name)}" is not declared by this game`);
@@ -964,7 +984,7 @@ export function createGameSessionWithDriver<
         set = new Set();
         eventListeners.set(name, set);
       }
-      set.add(listener as (event: AnyGameEventEnvelope) => void);
+      set.add(listener as (event: AnyGameEventEnvelope) => void | Promise<void>);
       let removed = false;
       return Object.freeze({
         remove() {
@@ -974,7 +994,7 @@ export function createGameSessionWithDriver<
           removed = true;
           const existing = eventListeners.get(name);
           if (existing) {
-            existing.delete(listener as (event: AnyGameEventEnvelope) => void);
+            existing.delete(listener as (event: AnyGameEventEnvelope) => void | Promise<void>);
             if (existing.size === 0) {
               eventListeners.delete(name);
             }

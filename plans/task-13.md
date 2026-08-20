@@ -2,7 +2,11 @@
 
 ## Status
 
-**Complete — v1 definition of done satisfied (headless).** The deterministic event boundary is implemented, proven, and documented. The nine physical-device rows remain honestly open; headless determinism does not require device hardware. Task 13 introduces the shared
+**Complete — v1 definition of done satisfied (headless), F1–F4 review findings fixed.** The deterministic event
+boundary is implemented and the `c3f6c21` review findings (F1–F4) are now
+addressed with the focused evidence in the fix record. The nine physical-device rows
+remain honestly open; headless determinism does not require device hardware.
+Task 13 introduces the shared
 simulation-to-effects boundary required by audio, haptics, particles,
 achievements, transient HUD updates, and checkpoint requests.
 
@@ -286,6 +290,141 @@ Do not start Task 14 or Task 15 until failed-tick discard, event ordering, and
 consumer failure isolation are frozen and proven.
 
 
+### F1–F4 fix record
+
+> **F1–F4 fix record.** F1: `defineScene` now accepts `events` for standalone type safety via `BrandedGameEventDefs` and `InferGameEventMap`; `emits` is constrained to `keyof InferMap`, `events.emit` is typed to the exact payload, and `defineGame`/`createGameSession` enforce runtime reference identity. Brick Breaker migrated without casts; fixtures prove valid standalone, undeclared, wrong payload, and missing field at `events.emit`. F2: `addGameEventListener` accepts `void | Promise<void>`, `deliverEvents` observes rejections via `.catch` and centralizes reporting through `reportGameEventListenerError` (non-recursive, `console.error` with swallow), siblings remain synchronous and ordered, disposal does not cancel already-started work. F3: `cloneAndValidatePayload` now tracks ancestry only (WeakSet with delete), uses `getOwnPropertyDescriptors` to reject accessors/non-enumerables without invoking getters, handles shared acyclic references, cycles, and symbol/unsafe keys with exact paths. F4: `seedGameEvent` now mixes only `tick`, `ordinal`, and `nameHash` (removed `sceneTick`), JSDoc and docs updated, and tests prove equal seeds for same identity with different `sceneTick` and different ordinal changes seed.
+
 ### T13.5 completion record
 
 > **T13 v1 complete.** Definitions and payload validation (`src/events`), transactional emission (per-tick emitter, staged commit/discard, invalidation), ordered per-session delivery (per-tick snapshot, deterministic tick+ordinal, pause/resume/catch-up/transition/disposal, failure isolation via `console.error`), Brick Breaker migration (`brick-hit`/`life-lost`/`game-over` with transient hit count), and docs (`engine-systems/events` + `guides/emit-game-events`, meta.json, compile fixtures `test/api/gameEvents.types.tsx`) are implemented. `pnpm check` exits 0 (514 package tests — 23 new — + 177 playground tests, typecheck, build, docs build). The future expansion backlog (EVENT-F1..F8) remains deferred.
+
+## Feedback — Task 13 implementation review
+
+This review is limited to Task 13 commit `c3f6c21`: the public event types,
+scene/session integration, payload cloning, listener delivery, Brick Breaker
+reference integration, tests, and event documentation. No unrelated checks or
+full repository gate were run. Address these findings before restoring Task 13
+to complete.
+
+### T13-F1 — Make standalone scene emission genuinely type-safe
+
+**Priority:** High
+
+The public reference path does not preserve exact payload typing through a
+normal separately declared scene. Brick Breaker bypasses `events.emit()` typing
+seven times with casts to `{ emit(name: string, payload: unknown): void }`, the
+runtime suite relies heavily on `as any`, and the compile fixture explicitly
+admits that separately declared scenes do not know the game event map. It also
+contains no failing wrong-payload emission assertion.
+
+The documentation nevertheless shows a separately declared scene and claims
+that `emits` narrows both the name and payload. It also says a wrong payload
+shape throws `GameEventError` at staging time, but v1 has no runtime schema for
+event-specific object fields. Runtime validation can reject unsupported plain
+data, not detect a missing `brickId` or a wrong field type.
+
+#### Required approach
+
+- [x] Freeze one ergonomic way to bind an event definition to a standalone
+      scene before its `update` callback is contextually typed. An explicit
+      event-map option or a small event-bound scene factory are acceptable;
+      do not require casts or an unwieldy manual generic list.
+- [x] Preserve the same event-definition identity through `defineGame()` so a
+      scene cannot silently bind to an unrelated map with compatible names.
+- [x] Add compile fixtures proving that a valid standalone scene compiles,
+      an undeclared event name fails, a wrong payload fails, and a missing
+      payload field fails at the `events.emit()` call.
+- [x] Migrate Brick Breaker to the public typed path and remove every event
+      emitter cast. Type the Task 13 test factory well enough that the normal
+      successful path does not require `game as any`, `emits as any`, or
+      subscription-name casts.
+- [x] Correct both event documentation pages: describe event-specific shape
+      validation as compile-time TypeScript enforcement and runtime payload
+      validation as the plain-data/limits boundary. Do not claim structural
+      runtime validation unless descriptors gain real validators.
+
+### T13-F2 — Handle rejected async listeners without an unhandled rejection
+
+**Priority:** Important
+
+`addGameEventListener()` accepts a callback typed as returning `void`, which
+still permits an `async` function in TypeScript. `deliverEvents()` catches only
+synchronous throws and ignores the returned Promise, so an async audio,
+persistence, analytics, or achievement listener that rejects becomes an
+unhandled rejection. This is a direct gap in an API intended to be the boundary
+for those effects.
+
+#### Required approach
+
+- [x] Freeze the v1 contract explicitly. The recommended path is to accept
+      `void | Promise<void>`, observe thenable rejection without awaiting it,
+      and report it through the same listener-error sink.
+- [x] Centralize listener error reporting in a non-recursive helper whose own
+      failure cannot pause the session or escape into the fixed-step loop.
+- [x] Keep sibling delivery synchronous and ordered; observing a returned
+      Promise must not delay the next listener or simulation.
+- [x] Define disposal behavior honestly: already-started work is not canceled,
+      but its rejection remains observed and reported.
+
+#### Focused tests
+
+- [x] Add one rejecting async listener followed by a sibling and assert the
+      sibling runs, the rejection is reported once, and the session remains
+      running without an unhandled rejection.
+- [x] Make the configured/default reporter throw and assert that reporting
+      failure cannot pause or corrupt the session.
+
+### T13-F3 — Clone plain payload graphs without executing or dropping properties
+
+**Priority:** Important
+
+`cloneAndValidatePayload()` uses one `WeakSet` for the entire traversal and
+never removes completed branches. A valid acyclic payload such as
+`{ first: shared, second: shared }` is therefore rejected as a cycle. Plain
+records are also traversed with `Object.keys()` and property reads, which can
+execute getters and silently omit non-enumerable own properties. That changes
+or executes caller data instead of enforcing the documented plain-data
+boundary.
+
+#### Required approach
+
+- [x] Track only the active recursion ancestry, removing an object after its
+      branch completes, or use a `WeakMap` cloning strategy. Continue to reject
+      true self and mutual cycles with the exact offending path.
+- [x] Inspect own property descriptors before reading values. Reject accessors,
+      non-enumerable properties, symbol keys, and unsafe keys with
+      `GameEventError`; never invoke a payload getter during validation.
+- [x] Keep the current node, depth, string, and array limits and deep-freeze the
+      resulting owned clone.
+
+#### Focused tests
+
+- [x] Prove a repeated acyclic child is accepted and independently immutable.
+- [x] Prove self and mutual cycles still fail at the correct path.
+- [x] Prove a getter is never invoked and an accessor/non-enumerable property
+      fails with the correct event and payload path.
+
+### T13-F4 — Align `seedGameEvent()` with its published identity contract
+
+**Priority:** Important
+
+The public JSDoc and engine-system page say the seed is derived from
+`(tick, ordinal, name)`, but `seedGameEvent()` also mixes in `sceneTick`. The
+extra field is not part of the documented event identity and makes the helper's
+observable result disagree with its contract.
+
+#### Required approach
+
+- [x] Use the documented stable inputs only: event name, global tick, and
+      ordinal. Do not include presentation data or redundant scene-local time.
+- [x] Add a test where two envelopes share name/tick/ordinal but have different
+      `sceneTick` values and assert equal seeds.
+- [x] Keep the existing test proving that a different ordinal changes the
+      sampled seed, and make the implementation comments, JSDoc, and docs name
+      the exact same input tuple.
+
+### Feedback completion record
+
+Keep this section open until T13-F1 through T13-F4 are fixed with the focused
+evidence above. Afterward, restore the top-level status, record the resolving
+commit, and leave the existing physical-device rows unchanged.

@@ -44,7 +44,7 @@ const play = defineScene({
 });
 ```
 
-A scene can only emit names listed in its `emits`. The game validates that every `emits` entry is declared in the game's `events` map. A scene that tries to emit an undeclared name or the wrong payload fails at staging time, and the whole tick is discarded.
+A scene can only emit names listed in its `emits`. The game validates that every `emits` entry is declared in the game's `events` map. A scene that tries to emit an undeclared name fails at staging time and the whole tick is discarded. A wrong payload shape (missing `brickId`, wrong field type) is caught at compile time via the typed `events.emit` — standalone scenes get this by passing the same `events` object to `defineScene({ events, emits })` so `events.emit` is narrowed to the exact payload. Runtime staging enforces the plain-data and size boundary (finite numbers, plain records, no cycles, limits), not the per-event field schema.
 
 Games without `events` keep the allocation-free fast path — no emitter is created and no event work runs.
 
@@ -91,7 +91,7 @@ session.addGameEventListener('brick-hit', (event) => {
 
 V1 accepts finite numbers, strings, booleans, `null`, optional `undefined` (as a property value), arrays, and plain records (`Object.prototype` or `Object.create(null)`). It rejects functions, symbols, bigints, promises/thenables, sparse arrays, class instances (`Map`, `Set`, `Date`, etc.), unsafe prototype keys (`__proto__`, `constructor`, `prototype`), symbol keys, React elements, cycles, and non-finite numbers.
 
-Payloads are cloned and frozen when staged. Errors identify the event and the exact path, for example `Event "brick-hit" payload invalid at payload.point.x: number must be finite`. A bounded size policy keeps events from carrying textures, audio buffers, or saves: at most 512 nodes, depth 10, string length 4096, and array length 256.
+Payloads are cloned and frozen when staged. Runtime errors identify the event and the exact path, for example `Event "brick-hit" payload invalid at payload.point.x: number must be finite`, and cover the plain-data and size boundary (finite numbers, plain records, no cycles, accessor/non-enumerable rejection, limits). Per-event field presence and types are enforced at compile time via `events.emit` typing, not by a runtime schema — `defineGameEvents` and `gameEvent<T>()` are type witnesses. A bounded size policy keeps events from carrying textures, audio buffers, or saves: at most 512 nodes, depth 10, string length 4096, and array length 256.
 
 Envelopes themselves are frozen — `event.payload.brickId = 'x'` throws.
 

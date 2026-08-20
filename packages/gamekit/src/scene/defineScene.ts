@@ -1,8 +1,26 @@
+import type { GameEventDescriptor, InferGameEventMap } from '../events/types';
 import type { SceneDefinition } from './types';
 
 /**
  * Define a synchronous functional scene while inferring its state, snapshot,
  * action, and transition types.
+ *
+ * To get typed event emission in a standalone scene, pass the same
+ * `events` object that will be passed to `defineGame({ events })`:
+ *
+ * ```ts
+ * const events = defineGameEvents({ 'brick-hit': gameEvent<{ id: string }>() });
+ * const play = defineScene({
+ *   actions: ['primary'],
+ *   emits: ['brick-hit'],
+ *   events,
+ *   update: ({ events }) => {
+ *     events.emit('brick-hit', { id: '1' }); // typed, wrong payload fails
+ *   },
+ *   // ...
+ * });
+ * const game = defineGame({ events, scenes: { play }, initialScene: 'play' });
+ * ```
  *
  * @example
  * ```ts
@@ -25,8 +43,8 @@ export function defineScene<
   TState,
   TSnapshot,
   const TTransitions extends readonly string[] = [],
-  const TEmits extends readonly string[] = [],
-  TEventMap extends Record<string, unknown> = Record<string, never>,
+  const TEmits extends readonly (keyof InferGameEventMap<TEventDefs> & string)[] = [],
+  const TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
 >(
   definition: Omit<
     SceneDefinition<
@@ -35,13 +53,28 @@ export function defineScene<
       TActions[number],
       TTransitions[number],
       TEmits[number],
-      TEventMap
+      TEventDefs
     >,
-    'kind' | '__actionType' | '__transitionType' | '__snapshotType' | '__emitType' | '__eventMapType' | 'actions' | 'transitions' | 'emits'
-  > & { readonly actions: TActions; readonly transitions?: TTransitions; readonly emits?: TEmits },
-): SceneDefinition<TState, TSnapshot, TActions[number], TTransitions[number], TEmits[number], TEventMap> {
+    | 'kind'
+    | '__actionType'
+    | '__transitionType'
+    | '__snapshotType'
+    | '__emitType'
+    | '__eventMapType'
+    | '__eventDefsType'
+    | 'actions'
+    | 'transitions'
+    | 'emits'
+    | 'events'
+  > & {
+    readonly actions: TActions;
+    readonly transitions?: TTransitions;
+    readonly emits?: TEmits;
+    readonly events?: TEventDefs;
+  },
+): SceneDefinition<TState, TSnapshot, TActions[number], TTransitions[number], TEmits[number], TEventDefs> {
   return {
     kind: 'gamekit.scene',
     ...definition,
-  };
+  } as SceneDefinition<TState, TSnapshot, TActions[number], TTransitions[number], TEmits[number], TEventDefs>;
 }

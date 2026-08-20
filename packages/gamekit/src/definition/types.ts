@@ -42,6 +42,8 @@ export interface SceneDefinitionMarker {
   readonly __emitType?: string;
   /** @internal Type witness for the game event map. */
   readonly __eventMapType?: Record<string, unknown>;
+  /** @internal Type witness for the branded event definitions identity. */
+  readonly __eventDefsType?: Record<string, GameEventDescriptor<unknown>>;
 }
 
 /** The collection of functional scenes declared by a game. */

@@ -1,5 +1,7 @@
 import type { DeepReadonly } from '../core/session/types';
 
+declare const EventDefsBrand: unique symbol;
+
 /** A type-witness descriptor for one game event's payload. */
 export interface GameEventDescriptor<TPayload> {
   /** @internal Payload witness — no runtime value. */
@@ -14,9 +16,14 @@ export type GameEventDefinitions<TMap extends GameEventMap> = {
   readonly [K in keyof TMap]: GameEventDescriptor<TMap[K]>;
 };
 
+/** Branded event definitions — nominal identity for scene/game binding. */
+export type BrandedGameEventDefs<T extends Record<string, GameEventDescriptor<unknown>>> = T & {
+  readonly [EventDefsBrand]?: T;
+};
+
 /** Infer the payload map from a descriptor map. */
 export type InferGameEventMap<TDefs extends Record<string, GameEventDescriptor<unknown>>> = {
-  [K in keyof TDefs]: TDefs[K] extends GameEventDescriptor<infer P> ? P : never;
+  [K in keyof TDefs as K extends string ? K : never]: TDefs[K] extends GameEventDescriptor<infer P> ? P : never;
 };
 
 /** One committed event envelope. Identity is `(tick, ordinal)` within a session. */
@@ -37,8 +44,10 @@ export interface GameEventEmitter<TMap extends GameEventMap> {
   emit<TName extends keyof TMap & string>(name: TName, payload: TMap[TName]): void;
 }
 
-/** Listener for one event name. */
-export type GameEventListener<TPayload> = (event: GameEventEnvelope<string, TPayload>) => void;
+/** Listener for one event name. May be sync or async; rejections are observed without awaiting. */
+export type GameEventListener<TPayload> = (
+  event: GameEventEnvelope<string, TPayload>,
+) => void | Promise<void>;
 
 /** Infer the listener payload for a given game definition's event map. */
 export type GameEventPayloadFor<TMap extends GameEventMap, TName extends keyof TMap & string> = TMap[TName];

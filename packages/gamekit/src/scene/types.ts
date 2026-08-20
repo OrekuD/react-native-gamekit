@@ -1,5 +1,9 @@
 import type { InputFrame } from '../core/input/types';
-import type { GameEventEmitter, GameEventMap } from '../events/types';
+import type {
+  GameEventDescriptor,
+  GameEventEmitter,
+  InferGameEventMap,
+} from '../events/types';
 
 /**
  * Update-scoped scene transition controls.
@@ -25,8 +29,8 @@ export interface SceneUpdate<
   TState,
   TActionName extends string,
   TTransitionName extends string,
-  TEventMap extends GameEventMap = GameEventMap,
-  TEmits extends keyof TEventMap & string = keyof TEventMap & string,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
+  TEmits extends keyof InferGameEventMap<TEventDefs> & string = keyof InferGameEventMap<TEventDefs> & string,
 > {
   /** The authoritative state produced by the previous tick. */
   readonly state: Readonly<TState>;
@@ -35,7 +39,7 @@ export interface SceneUpdate<
   /** Update-scoped transition controls restricted to declared targets. */
   readonly transition: SceneTransitionController<TTransitionName>;
   /** Update-scoped emitter for declared game events (T13). Invalid after the update returns or throws. */
-  readonly events: GameEventEmitter<Pick<TEventMap, TEmits>>;
+  readonly events: GameEventEmitter<Pick<InferGameEventMap<TEventDefs>, TEmits>>;
   /** One-based global simulation tick number. */
   readonly tick: number;
   /** One-based tick number within the current scene instance. */
@@ -61,7 +65,7 @@ export interface SceneDefinition<
   TActionName extends string = never,
   TTransitionName extends string = never,
   TEmits extends string = never,
-  TEventMap extends GameEventMap = GameEventMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
 > {
   /** Internal scene-definition discriminator. */
   readonly kind: 'gamekit.scene';
@@ -74,17 +78,23 @@ export interface SceneDefinition<
   /** @internal Type witness for emitted event names. */
   readonly __emitType?: TEmits;
   /** @internal Type witness for the game event map. */
-  readonly __eventMapType?: TEventMap;
+  readonly __eventMapType?: InferGameEventMap<TEventDefs>;
+  /** @internal Type witness for the branded event definitions identity. */
+  readonly __eventDefsType?: TEventDefs;
   /** Semantic input actions this scene may read. */
   readonly actions: readonly TActionName[];
   /** Declared scene names this scene may transition to. */
   readonly transitions?: readonly TTransitionName[];
   /** Declared event names this scene may emit (subset of the game's event map). */
   readonly emits?: readonly TEmits[];
+  /** The branded event definitions this scene is bound to (for standalone type safety). */
+  readonly events?: TEventDefs;
   /** Create the scene's initial authoritative state. */
   readonly create: () => TState;
   /** Produce the next state for one fixed simulation tick. */
-  readonly update: (frame: SceneUpdate<TState, TActionName, TTransitionName, TEventMap, TEmits>) => TState;
+  readonly update: (
+    frame: SceneUpdate<TState, TActionName, TTransitionName, TEventDefs, TEmits>,
+  ) => TState;
   /** Extract a compact renderer-specific snapshot from current state. */
   readonly snapshot: (context: SceneSnapshotContext<TState>) => TSnapshot;
   /** Release scene-owned resources exactly once. */
