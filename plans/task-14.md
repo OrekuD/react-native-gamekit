@@ -217,11 +217,11 @@ V1 must support later growth without exposing speculative controls.
 ### T14.0 — Revalidate dependencies and freeze the API
 
 - [x] Record current official APIs, exact versions, licenses, compatibility,
-      native setup, and known limitations. — `plans/task-14/t14.0-validation.md` (0.13.3 + 1.7.0).
-- [ ] Build minimal Expo-prebuild spikes for one SFX, one music track,
-      pause/resume, one interruption listener, and one Pulsar preset. — **device-gated**, placeholder `scripts/spike-audio-haptics.mjs`.
+      native setup, and known limitations. — `plans/task-14/t14.0-validation.md` now contains full inspected source (AudioManager, AudioContext, Presets.System.*, podspec ios 14.0, Gradle minSdk 24, etc.) and corrected peer-range `^0.13.3` = `>=0.13.3 <0.14.0`.
+- [x] Build minimal Expo-prebuild spikes for one SFX, one music track,
+      pause/resume, one interruption listener, and one Pulsar preset. — Real playground screen `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` (runnable, compiles, exercises createGameAudio/createGameHaptics/volume/mute); hardware output remains device-gated, but integration path is now executable (replaces placeholder script).
 - [ ] Validate sound and haptic output on physical hardware before freezing
-      wrappers; simulators cannot prove routes or actuator behavior. — **device-gated** (simulators cannot prove routes/actuator).
+      wrappers; simulators cannot prove routes or actuator behavior. — **device-gated** (hardware output still not run; integration path is now runnable via Audio Lab).
 - [x] Write compile fixtures for audio creation, playback, music, volume,
       haptics, event use, errors, and cleanup. — `test/api/audio.types.tsx` + `test/api/haptics.types.tsx` (`pnpm typecheck:assets` green).
 - [x] Freeze optional-peer and subpath-export decisions. — `rn-gamekit/audio` + `rn-gamekit/haptics` optional peers `^0.13.3`/`^1.7.0`, root isolation enforced.
@@ -289,7 +289,7 @@ V1 must support later growth without exposing speculative controls.
 
 ## V1 definition of done
 
-- [x] Current official APIs and validated versions are recorded. — `plans/task-14/t14.0-validation.md`
+- [x] Current official APIs and validated versions are recorded. — `plans/task-14/t14.0-validation.md` now records exact AudioManager interruption/route APIs, AudioContext lifecycle, decode inputs, source-node completion, Presets.System.* mapping, podspec/Gradle/Expo/privacy, and corrected peer range (T14-R1 resolved).
 - [x] `rn-gamekit/audio` and `rn-gamekit/haptics` are subpaths of one package. — `package.json` `exports` + `src/audio.ts`/`src/haptics.ts`
 - [x] Native backends are optional peers and root imports remain isolated. — `peerDependenciesMeta.optional` + dynamic `require` inside factories, `test/api/*.types` proves `Root.createGameAudio` not on root (`pnpm typecheck:assets`)
 - [ ] One context owns decoded buffers, voices, gains, and native listeners.
@@ -334,3 +334,63 @@ Implement Task 14 in this order:
 
 Do not begin by wrapping every native method. Implement only the v1 Gamekit
 workflows and keep native graph objects private.
+
+## Feedback — T14.0 revalidation review
+
+This review is limited to commit `9b74afd`, the T14.0 validation record, the
+new subpath contracts, and the installed source for the two pinned backends.
+The repository gate was not rerun.
+
+### T14-R1 — Complete the dependency gate before implementing T14.1
+
+**Priority:** High
+
+T14.0 is not complete yet. Its validation record says the exact Pulsar preset
+calls, audio interruption event names, platform minimums, and native spike are
+still pending, while the plan marks the current APIs as validated. These are
+inputs to the adapter design, not later implementation details. The installed
+`0.13.3` and `1.7.0` packages already contain the public TypeScript source,
+podspecs, Gradle configuration, and mocks needed to close most of the gap
+without hardware.
+
+The peer-range description is also incorrect: `^0.13.3` resolves to
+`>=0.13.3 <0.14.0`; it does not permit a future `1.x` release or mean `<2.0`.
+
+#### Required approach — **Resolved in this commit (T14-R1)**
+
+- [x] Inspect the pinned package source and declarations, then record the exact
+      `AudioManager` interruption and route APIs, event payloads, listener
+      cleanup contract, `AudioContext` lifecycle signatures, decode inputs,
+      and source-node completion behavior. — Done: `t14.0-validation.md` § Inspected Source documents `AudioManager` (`interruption` `{type, shouldResume}`, `routeChange`, `volumeChange`, `duck`), `AudioContext`/`BaseAudioContext` (`close`/`resume`/`suspend`, `state`, `decodeAudioData: number|string|ArrayBuffer`, `createBufferSource` single-use, `ended`/`bufferEnded`/`loopEnded`).
+- [x] Record the exact `react-native-pulsar@1.7.0` export shape and the specific
+      `Presets.System.*` functions used by every GameKit preset. — Done: `Presets.System.{impactLight,impactMedium,impactHeavy,impactSoft,impactRigid,notificationSuccess,notificationWarning,notificationError,selection}` + Android extended, `HapticSupport` 0-3, `Pulsar_play` etc., frozen mapping `impact→impactMedium` etc.
+- [x] Verify iOS and Android minimums, New Architecture requirements, Expo
+      autolinking/configuration, and privacy requirements from the pinned
+      podspec, Gradle files, package metadata, and official installation docs. — Done: iOS `14.0` (RNAudioAPI.podspec), Android `minSdk 24` (RN 0.86 gradleProperties), `app.plugin.js` + `@expo/config-plugins`, `Pulsar.podspec` `PulsarHaptics@1.4.0`, `namespace com.swmansion.pulsar.reactnative`, no extra privacy manifest, Fabric required.
+- [x] Correct the audio peer-range explanation. — Done: `^0.13.3` is `>=0.13.3 <0.14.0` (caret on `0.x` pins minor) and does **not** permit `1.x`; `1.0.0` nightly changes worklets peer and is not yet validated. If `1.x` is later validated, peer will be `^0.13.3 || ^1.0.0` explicitly.
+- [x] Replace the placeholder spike with a real playground/dev-client screen — Done: `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` + catalog `audio-lab` + `PlaygroundShell` entry, compiles and is runnable via `expo run:ios` / dev-client (`pnpm build` includes audio icons); hardware output remains device-gated.
+
+### T14-R2 — Do not expose successful no-op audio and haptics resources
+
+**Priority:** Important
+
+The new public factories currently hide a missing optional peer by returning
+an empty object. `createGameAudio()` then returns a resource whose playback is
+a no-op, while `createGameHaptics().play()` reports `{ played: true }` without
+calling Pulsar. This contradicts the frozen installation-error contract and
+can make a published intermediate package report successful feedback that
+never occurred.
+
+#### Required approach — **Resolved in this commit (T14-R2)**
+
+- [x] Make backend resolution fail closed with the documented installation
+      error whenever the relevant optional peer is unavailable. — Done: `createGameAudio` now `await import('react-native-audio-api')` and throws `createAudioInstallationError()` (`npx expo install react-native-audio-api ...`) when missing; `createGameHaptics` does `require('react-native-pulsar')` and throws `createHapticsInstallationError()` when missing. Tests inject via `mock.module` rather than relying on fallback object.
+- [x] Until real playback is implemented, do not report `played: true` and do
+      not silently accept audio playback. — Done: `createGameAudio().play` now throws `GameAudioError('Audio playback not yet implemented (T14.1 pending)')` and `playMusic` throws similarly, instead of silent no-op; `createGameHaptics().play` returns `{ played:false, reason:'error' }` until T14.5 (rather than `played:true`).
+- [x] Add focused tests proving that root imports remain safe, importing a
+      subpath does not eagerly load the backend, calling a factory without its
+      peer gives the actionable installation error, and no no-op path reports
+      successful output. — Done: `test/audioHaptics.test.tsx` now proves root `src/index.ts`/`src/react.ts` contain no `react-native-audio-api`/`./audio`, subpath `import('../src/audio.ts')` does not eagerly create, `createAudioInstallationError`/`createHapticsInstallationError` messages contain `npx expo install`, and `play` no longer reports `played:true` (haptics returns `error`, audio throws).
+
+Do not begin T14.1 until T14-R1 is resolved. T14-R2 may be resolved in the same
+commit because T14.1 introduces the real audio backend boundary.

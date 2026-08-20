@@ -17,13 +17,20 @@ function isValidPreset(preset: HapticPreset): boolean {
 }
 
 function resolvePulsar(): unknown | null {
-  // See audio stub comment — T14.0 remains constructible in node.
   try {
+    // Use require so the optional peer can be resolved synchronously and so
+    // tests can inject a backend via mock.module (which intercepts ESM import
+    // but not this require). In production the peer is installed and this
+    // succeeds; when missing it returns null and the factory throws the
+    // actionable installation error. Tests that need a missing-peer path
+    // should mock the resolver (see test/audioHaptics.test.tsx) rather than
+    // relying on a fallback object.
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = typeof require !== 'undefined' ? require('react-native-pulsar') : null;
-    if (mod) return mod;
-  } catch {}
-  return {};
+    const mod = require('react-native-pulsar');
+    return (mod as unknown) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -35,10 +42,9 @@ function resolvePulsar(): unknown | null {
  */
 export function createGameHaptics(options?: CreateGameHapticsOptions): GameHaptics {
   const api = resolvePulsar();
-  void createHapticsInstallationError;
-  void api;
-
-  void api;
+  if (!api) {
+    throw createHapticsInstallationError();
+  }
 
   let muted = Boolean(options?.muted);
   let disposed = false;
@@ -61,12 +67,10 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
         return { played: false, reason: 'throttled' };
       }
       lastPlayAt = now;
-      // In T14.5 this will call Pulsar's verified preset API:
-      // e.g., Pulsar impact / selection / notification, handling capability
-      // checks and system suppression (low power) as { played:false }.
-      // For T14.0 we return played:true to prove the wiring without native.
-      // Capability is assumed true on device; unsupported would return false.
-      return { played: true };
+      // T14.5 will call the verified Pulsar preset (e.g. Presets.System.impactMedium)
+      // and handle capability/suppression. Until then, fail closed with an
+      // explicit unavailable result rather than reporting a successful no-op.
+      return { played: false, reason: 'error' };
     },
 
     isSupported(_preset: HapticPreset): boolean {

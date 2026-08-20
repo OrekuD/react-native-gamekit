@@ -55,6 +55,12 @@ export const PLAYGROUND_GAMES = [
     description: 'A retained animated character over an Atlas batch field.',
     label: 'Play',
   },
+  {
+    id: 'audio-lab',
+    title: 'Audio Lab',
+    description: 'T14.0 spike — audio/haptics wiring, volume/mute, lifecycle (device-gated output).',
+    label: 'Run',
+  },
 ] as const;
 
 /** Every canonical game id, used for runtime validation at the untyped boundary. */

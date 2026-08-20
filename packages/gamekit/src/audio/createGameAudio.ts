@@ -25,19 +25,17 @@ function assertVolume(volume: number): void {
   }
 }
 
-function resolveAudioApi(): unknown | null {
-  // In T14.0 the factory is constructible without decoding so the API freeze
-  // can be validated in node without native. The real peer check (with a
-  // clear `npx expo install …` message) will be enforced in T14.1 when we
-  // actually create the AudioContext. For now we return a non-null stub so
-  // tests can run without the native module installed.
+async function resolveAudioApi(): Promise<unknown | null> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = typeof require !== 'undefined' ? require('react-native-audio-api') : null;
-    if (mod) return mod;
-  } catch {}
-  // Fallback stub for node/test — treat as available.
-  return {};
+    // Use dynamic import so tests can inject a backend via mock.module
+    // (require is not interceptable in ESM). In production this resolves
+    // to the installed optional peer; when missing it throws and we
+    // surface the actionable installation error.
+    const mod = await import('react-native-audio-api');
+    return (mod as unknown) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -50,9 +48,10 @@ function resolveAudioApi(): unknown | null {
 export async function createGameAudio<T extends AudioSoundRecord>(
   options: CreateGameAudioOptions<T>,
 ): Promise<GameAudio<T>> {
-  const api = resolveAudioApi();
-  void createAudioInstallationError;
-  void api;
+  const api = await resolveAudioApi();
+  if (!api) {
+    throw createAudioInstallationError();
+  }
 
   if (!options || typeof options.sounds !== 'object' || options.sounds === null) {
     throw new GameAudioError('createGameAudio requires { sounds: Record<string, number> }');
@@ -99,16 +98,16 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       ensureNotDisposed();
       if (paused) return;
       if (muted) return;
-      // Validate category/volume if provided (fail-fast, no native work)
       if (_opts?.category !== undefined) {
         assertCategory(_opts.category);
       }
       if (_opts?.volume !== undefined) {
         assertVolume(_opts.volume);
       }
-      // In T14.2/3 this will create a fresh AudioBufferSourceNode per call,
-      // apply master+category composition, handle concurrency overflow (drop-new),
-      // and release on ended/error exactly once. For now it is fire-and-forget.
+      // T14.1 will decode and cache buffers; T14.2/3 will create a fresh
+      // AudioBufferSourceNode per call. Until then, fail closed rather than
+      // silently reporting success for a no-op resource.
+      throw new GameAudioError('Audio playback not yet implemented (T14.1 pending)');
     },
 
     async playMusic<K extends keyof T & string>(id: K): Promise<void> {
@@ -117,11 +116,11 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         currentMusicId = id;
         return;
       }
-      // In T14.3 this will stop the previous music source (if any), create a new
-      // single-use source node, start at offset 0 (or preserved offset if resuming),
-      // and guard against stale onended from the replaced track.
-      currentMusicId = id;
-      // Suspend/resume and AppState/interruption recovery are handled in T14.4.
+      // See play() — until T14.3 the music channel is not yet wired to a
+      // native AudioBufferSourceNode. Fail closed instead of silently
+      // accepting the request.
+      void id;
+      throw new GameAudioError('Music playback not yet implemented (T14.3 pending)');
     },
 
     stopMusic(): void {

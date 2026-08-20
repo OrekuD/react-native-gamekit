@@ -1,5 +1,9 @@
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+
+// Mock optional peers once — tests inject via this mock rather than relying on fallback
+mock.module('react-native-audio-api', { defaultExport: {}, namedExports: {} });
+mock.module('react-native-pulsar', { defaultExport: {}, namedExports: {} });
 
 // This file verifies the T14.0 isolation and error contract without requiring
 // native hardware. Native backends are mocked via node --experimental-test-module-mocks.
@@ -25,6 +29,14 @@ describe('T14.0 root isolation', () => {
       assert.equal(libIndex.includes('react-native-audio-api'), false);
     } catch {}
   });
+
+  it('importing a subpath does not eagerly create a backend', async () => {
+    // Importing the subpath must not throw and must not create an AudioContext
+    const mod = await import('../src/audio.ts');
+    assert.equal(typeof mod.createGameAudio, 'function');
+    const hmod = await import('../src/haptics.ts');
+    assert.equal(typeof hmod.createGameHaptics, 'function');
+  });
 });
 
 describe('T14.0 audio installation error', () => {
@@ -33,6 +45,13 @@ describe('T14.0 audio installation error', () => {
     const audio = await createGameAudio({ sounds: { sfx: 1, music: 2 } });
     assert.ok(audio);
     audio.dispose();
+  });
+
+  it('factory without peer gives actionable installation error (injected resolver)', async () => {
+    const { createAudioInstallationError } = await import('../src/audio/errors.ts');
+    const err = createAudioInstallationError();
+    assert.match(err.message, /react-native-audio-api is not installed/);
+    assert.match(err.message, /npx expo install/);
   });
 });
 
@@ -66,9 +85,20 @@ describe('T14.0 audio volume/mute contract', () => {
   it('dispose is idempotent and rejects new work', async () => {
     const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
     const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    // Until T14.2/3, play is explicit unavailable, not silent no-op
+    assert.throws(() => audio.play('sfx'), /not yet implemented/);
     audio.dispose();
     audio.dispose();
     assert.throws(() => audio.play('sfx'), /disposed/);
+  });
+});
+
+describe('T14.0 haptics installation error', () => {
+  it('factory without peer would give actionable error', async () => {
+    const { createHapticsInstallationError } = await import('../src/haptics/errors.ts');
+    const err = createHapticsInstallationError();
+    assert.match(err.message, /react-native-pulsar is not installed/);
+    assert.match(err.message, /npx expo install/);
   });
 });
 
@@ -77,7 +107,9 @@ describe('T14.0 haptics preset, mute, throttling', () => {
     const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
     const haptics = createGameHaptics();
     const first = haptics.play('impact');
-    assert.equal(first.played, true);
+    // T14.0 stub must not report successful playback — fail closed until T14.5
+    assert.equal(first.played, false);
+    assert.equal(first.reason, 'error');
     const throttled = haptics.play('impact');
     assert.equal(throttled.played, false);
     assert.equal(throttled.reason, 'throttled');
