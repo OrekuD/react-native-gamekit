@@ -59,7 +59,7 @@ audio.dispose(); // idempotent, clears voices, listeners, buffers, and closes co
 audio.play('brickHit'); // after dispose, throws GameAudioError
 ```
 
-Dispose exactly once when the owning screen unmounts. It removes interruption, route, and AppState listeners and rejects new work.
+Dispose exactly once when the owning screen unmounts. It removes interruption, route, and AppState listeners and rejects new work. Creation is a transaction: if any eager decode fails after the `AudioContext` is created, the context is closed and caches are cleared before the rejection propagates, so no leaked context remains.
 
 ## Volume categories and mute
 
@@ -73,7 +73,7 @@ audio.setMuted(true);
 audio.isMuted(); // true
 ```
 
-Values are finite numbers in `[0, 1]`. Muting does not overwrite the remembered volume. `master` composes with the selected category: effective gain is `master * category`. Changes ramp over ~20ms via `AudioParam.linearRampToValueAtTime` to avoid clicks. For per-play volume, pass `volume` in `play` options — that creates a temporary voice gain that composes with the category.
+Values are finite numbers in `[0, 1]`. Muting does not overwrite the remembered volume. The graph is `category gain → master gain → destination`, so the effective level is `master * category`. `setVolume('master', 0.8)` writes `0.8` only to the master gain; `setVolume('sfx', 0.5)` writes `0.5` only to the SFX gain. Changing one never rewrites the other. Each change ramps over ~20ms via `cancelScheduledValues` → `setValueAtTime` → `linearRampToValueAtTime` to avoid clicks. For per-play `volume`, a third temporary voice gain is inserted: effective is `master * category * voice`.
 
 ## Playing sound effects
 
@@ -107,7 +107,7 @@ await audio.playMusic('otherMusic'); // replaces levelMusic predictably
 audio.stopMusic();
 ```
 
-One music channel exists. Starting new music stops the current source and starts a new looping source. Replacement is immediate — v1 does not crossfade. Stale `ended` callbacks from the old source never affect the new one. While muted or paused, `playMusic` records intent and does not start the node; resuming starts it if intent still matches.
+One music channel exists. Starting new music stops the current source and starts a new looping source. Replacement is immediate — v1 does not crossfade. Every `playMusic`/`stopMusic` gets a monotonic generation; only the latest generation may start a source, so an older completion cannot replace a newer request even for the same sound ID. While muted or paused, `playMusic` records deferred intent; when all pause sources clear, the latest requested track starts automatically. Stale `ended` callbacks never affect the current generation.
 
 ## Lifecycle and interruptions
 
@@ -118,7 +118,7 @@ Four sources decide whether audio can run:
 3. AppState — `background` / `inactive` vs `active`
 4. System interruption — `AudioManager` `interruption` with `shouldResume`
 
-`GameAudio` listens to interruptions automatically and suspends on `began`, then resumes only if `ended` carries `shouldResume` and the other three sources agree. AppState is observed best-effort via `react-native`'s `AppState`; when the app backgrounds, audio suspends, and it resumes on `active` only when not otherwise paused or muted.
+`GameAudio` listens to interruptions automatically and suspends on `began`. It resumes on `ended` only if `shouldResume` is `true` **and** the other three sources agree. If `shouldResume` is `false`, the platform has denied automatic resume — audio stays paused until you explicitly call `audio.resume()` (or `setMuted(false)`/`play()` while unpaused). An explicit user action clears the denied state. AppState is observed best-effort; background/inactive suspends, and `active` resumes only when not otherwise paused, muted, or awaiting explicit resume. A freshly created resource with no playback schedules an idle suspend (~1.5s) and will suspend even if never used — useful for proving the idle path in tests.
 
 For session status, subscribe explicitly in your screen — this keeps the two pause authorities separate:
 

@@ -67,11 +67,25 @@ export async function createGameAudio<T extends AudioSoundRecord>(
   }
 
   const { AudioContext, AudioManager } = api;
-  const context = new AudioContext();
-
+  let context: InstanceType<typeof AudioContext> | null = null;
   type GainLike = { gain: { value: number; setValueAtTime?: (v:number,t:number)=>unknown; linearRampToValueAtTime?: (v:number,t:number)=>unknown; cancelScheduledValues?: (t:number)=>unknown }; connect: (dest: unknown)=>unknown };
   let masterGain: GainLike | null = null;
   const categoryGains: Record<AudioCategory, GainLike | null> = { master: null, music: null, sfx: null, ui: null };
+  let interruptionSub: { remove(): void } | null = null;
+  let interruptionEnabled = false;
+  let appStateSub: { remove(): void } | null = null;
+  let idleSuspendTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Create context in a transaction so failure cleans up
+  try {
+    context = new AudioContext();
+  } catch (e) {
+    throw e;
+  }
+
+  const volumes: Record<AudioCategory, number> = { master: 1, music: 1, sfx: 1, ui: 1 };
+
+  // Gain setup — master -> destination, categories -> master (F1)
   try {
     const mg = (context as unknown as { createGain: ()=> GainLike }).createGain?.();
     if (mg) {
@@ -90,12 +104,11 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   } catch {}
 
-  const volumes: Record<AudioCategory, number> = { master: 1, music: 1, sfx: 1, ui: 1 };
-
   function applyGain(category: AudioCategory): void {
     const gain = categoryGains[category];
     if (!gain) return;
-    const value = category === 'master' ? volumes.master : volumes.master * volumes[category];
+    // F1: write only own volume; composition happens in graph (master * category)
+    const value = volumes[category];
     try {
       const param = gain.gain as unknown as { value: number; cancelScheduledValues?: (t:number)=>void; setValueAtTime?: (v:number,t:number)=>void; linearRampToValueAtTime?: (v:number,t:number)=>void };
       const now = (context as unknown as { currentTime: number }).currentTime ?? 0;
@@ -118,6 +131,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
   let sessionPaused = false;
   let appPaused = false;
   let interruptionPaused = false;
+  let interruptionRequiresExplicitResume = false;
 
   const bufferCache = new Map<string, unknown>();
   const pendingDecodes = new Map<string, Promise<unknown>>();
@@ -148,7 +162,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       }
       let buffer: unknown;
       try {
-        buffer = await context.decodeAudioData(input as unknown as ArrayBuffer);
+        buffer = await (context as InstanceType<typeof AudioContext>).decodeAudioData(input as unknown as ArrayBuffer);
       } catch (e) {
         throw new GameAudioError(`Failed to decode audio asset "${String(id)}": ${(e as Error).message}`);
       }
@@ -160,40 +174,58 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     try { return await promise; } catch (e) { pendingDecodes.delete(id); throw e; }
   }
 
-  await Promise.all(soundIds.map((id) => getBuffer(id)));
+  // Transaction: eager decode with cleanup on failure (F3)
+  try {
+    await Promise.all(soundIds.map((id) => getBuffer(id)));
+  } catch (e) {
+    // Close context exactly once before rethrowing
+    try { await (context as InstanceType<typeof AudioContext>).close(); } catch {}
+    pendingDecodes.clear();
+    bufferCache.clear();
+    throw e;
+  }
+
   let currentMusicId: (keyof T & string) | null = null;
   let currentMusicNode: { stop(when?: number): void } | null = null;
+  let musicGeneration = 0;
+  let activeMusicGeneration = 0;
+  let pendingMusic: { id: keyof T & string; generation: number } | null = null;
   const activeVoices = new Set<unknown>();
   const concurrencyMap = new Map<string, Set<unknown>>();
   const cancelledReservations = new Set<unknown>();
-  let idleSuspendTimer: ReturnType<typeof setTimeout> | null = null;
 
   function isEffectivelyPaused(): boolean {
     return userPaused || sessionPaused || appPaused || interruptionPaused || muted;
   }
 
   function updateSuspendState(): void {
-    if (disposed) return;
+    if (disposed || !context) return;
     if (isEffectivelyPaused()) {
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer = null; }
-      void context.suspend().catch(() => {});
+      void (context as InstanceType<typeof AudioContext>).suspend().catch(() => {});
     } else {
       try {
         const state = (context as unknown as { state: string }).state;
-        if (state === 'suspended') void context.resume().catch(()=>{});
+        if (state === 'suspended') void (context as InstanceType<typeof AudioContext>).resume().catch(()=>{});
         applyAllGains();
       } catch {}
+      // If we have deferred music intent and now unpaused, start it (F4)
+      if (pendingMusic && !isEffectivelyPaused()) {
+        const { id, generation } = pendingMusic;
+        pendingMusic = null;
+        void startMusicInternal(id, generation);
+      }
       scheduleIdleSuspend();
     }
   }
 
   function scheduleIdleSuspend(): void {
     if (idleSuspendTimer) clearTimeout(idleSuspendTimer);
-    if (disposed || isEffectivelyPaused()) return;
-    if (activeVoices.size === 0 && currentMusicNode === null) {
+    if (disposed || !context || isEffectivelyPaused()) return;
+    if (activeVoices.size === 0 && currentMusicNode === null && !pendingMusic) {
       idleSuspendTimer = setTimeout(() => {
-        if (!disposed && activeVoices.size===0 && currentMusicNode===null && !isEffectivelyPaused()) {
-          void context.suspend().catch(()=>{});
+        if (!disposed && context && activeVoices.size===0 && currentMusicNode===null && !pendingMusic && !isEffectivelyPaused()) {
+          void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
         }
       }, 1500);
     }
@@ -212,16 +244,28 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     if (disposed) throw new GameAudioError('GameAudio is disposed');
   };
 
-  let interruptionSub: { remove(): void } | null = null;
-  let interruptionEnabled = false;
   function handleInterruption(event: unknown): void {
     const e = event as { type?: string; shouldResume?: boolean };
     if (e.type === 'began') {
       interruptionPaused = true;
-      void context.suspend().catch(()=>{});
+      interruptionRequiresExplicitResume = false;
+      void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
     } else if (e.type === 'ended') {
-      interruptionPaused = false;
-      updateSuspendState();
+      if (e.shouldResume) {
+        if (interruptionRequiresExplicitResume) {
+          // Denied auto-resume persists until explicit user action (F2)
+          void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+          return;
+        }
+        interruptionPaused = false;
+        interruptionRequiresExplicitResume = false;
+        updateSuspendState();
+      } else {
+        // Platform says don't auto-resume: keep paused until explicit user action (F2)
+        interruptionPaused = true;
+        interruptionRequiresExplicitResume = true;
+        void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+      }
     }
   }
   try {
@@ -230,7 +274,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     interruptionSub = AudioManager.addSystemEventListener('interruption', handleInterruption as never);
   } catch { interruptionSub = null; }
 
-  let appStateSub: { remove(): void } | null = null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const RN = require('react-native') as { AppState?: { currentState?: string; addEventListener: (t:string, cb:(s:string)=>void)=>{ remove:()=>void } } };
@@ -239,12 +282,12 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       const isInactive = (s: string | null | undefined) => s === 'inactive' || s === 'background';
       if (isInactive(AppState.currentState)) {
         appPaused = true;
-        void context.suspend().catch(()=>{});
+        void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
       }
       appStateSub = AppState.addEventListener('change', (next: string) => {
         if (isInactive(next)) {
           appPaused = true;
-          void context.suspend().catch(()=>{});
+          void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
         } else if (next === 'active') {
           appPaused = false;
           updateSuspendState();
@@ -254,11 +297,58 @@ export async function createGameAudio<T extends AudioSoundRecord>(
   } catch {}
 
   applyAllGains();
+  // Initial idle suspend (F2): resource with no playback should suspend
+  scheduleIdleSuspend();
+
+  async function startMusicInternal(id: keyof T & string, generation: number): Promise<void> {
+    if (disposed || !context) return;
+    if (isEffectivelyPaused()) {
+      // Defer until resume
+      pendingMusic = { id, generation };
+      return;
+    }
+    if (generation !== musicGeneration) return;
+    try {
+      const buffer = await getBuffer(id);
+      if (disposed || !context) return;
+      if (generation !== musicGeneration) return;
+      if (isEffectivelyPaused()) {
+        pendingMusic = { id, generation };
+        return;
+      }
+      if (currentMusicId !== id || activeMusicGeneration !== generation) {
+        // If another generation has taken over, don't start
+        if (generation !== musicGeneration) return;
+      }
+      const source = (context as unknown as { createBufferSource(): { buffer: unknown | null; loop: boolean; connect(dest: unknown): void; start(when?: number): void; stop(when?: number): void } }).createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      const dest = categoryGains['music'] ?? masterGain ?? (context as unknown as { destination: unknown }).destination;
+      source.connect(dest as unknown);
+      // Stop previous
+      if (currentMusicNode) { try { currentMusicNode.stop(); } catch {} }
+      currentMusicNode = source;
+      currentMusicId = id;
+      activeMusicGeneration = generation;
+      source.start();
+      if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
+      const state = (context as unknown as { state: string }).state;
+      if (state === 'suspended' && !isEffectivelyPaused()) await (context as InstanceType<typeof AudioContext>).resume().catch(()=>{});
+    } catch (e) {
+      if (generation === musicGeneration) {
+        console.warn(`[GameAudio] playMusic("${String(id)}") failed:`, e);
+        if (currentMusicId === id && activeMusicGeneration === generation) {
+          currentMusicId = null;
+        }
+      }
+    }
+  }
 
   const audio: GameAudio<T> & {
     _setSessionPaused?: (p:boolean)=>void;
     _isIdleSuspended?: ()=>boolean;
     _getConcurrencyCount?: (key:string)=>number;
+    _handleInterruption?: (e:unknown)=>void;
   } = {
     play<K extends keyof T & string>(id: K, opts?: GameAudioPlayOptions): void {
       ensureNotDisposed();
@@ -284,22 +374,20 @@ export async function createGameAudio<T extends AudioSoundRecord>(
               try { (oldest as { stop: (w?:number)=>void }).stop(); } catch {}
               set.delete(oldest);
               activeVoices.delete(oldest);
-              // Mark reservation as cancelled so its future async does not re-add a voice
               cancelledReservations.add(oldest);
             }
           }
         }
         reservation = {};
         set.add(reservation);
-        // Also add to activeVoices as placeholder to keep idle logic correct? No, placeholder not in activeVoices, only concurrency
       }
       try {
         const state = (context as unknown as { state: string }).state;
-        if (state === 'suspended' && !isEffectivelyPaused()) void context.resume().catch(()=>{});
+        if (state === 'suspended' && !isEffectivelyPaused()) void (context as InstanceType<typeof AudioContext>).resume().catch(()=>{});
       } catch {}
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer = null; }
       void (async () => {
-        if (disposed || isEffectivelyPaused()) {
+        if (disposed || !context || isEffectivelyPaused()) {
           if (reservation) {
             const set = concurrencyMap.get(concurrencyKey);
             if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
@@ -309,7 +397,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         }
         try {
           const buffer = await getBuffer(id as keyof T & string);
-          if (disposed || isEffectivelyPaused()) {
+          if (disposed || !context || isEffectivelyPaused()) {
             if (reservation) {
               const set = concurrencyMap.get(concurrencyKey);
               if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
@@ -341,7 +429,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
           let voiceGain: GainLike | null = null;
           if (opts?.volume !== undefined) {
             try {
-              voiceGain = (context as unknown as { createGain: ()=>GainLike }).createGain();
+              voiceGain = (context as unknown as { createGain: ()=> GainLike }).createGain();
               if (voiceGain) {
                 const v = opts.volume as number;
                 try { (voiceGain.gain as unknown as { value:number }).value = v; } catch {}
@@ -355,7 +443,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
           const cleanup = (): void => {
             cleanupVoice(source, limit!==undefined?concurrencyKey:undefined);
           };
-          // Swap reservation for real voice in concurrency map
           if (reservation) {
             const set = concurrencyMap.get(concurrencyKey);
             if (set) {
@@ -381,35 +468,28 @@ export async function createGameAudio<T extends AudioSoundRecord>(
 
     async playMusic<K extends keyof T & string>(id: K): Promise<void> {
       ensureNotDisposed();
+      musicGeneration++;
+      const gen = musicGeneration;
+      // Stop previous immediately and mark generation
       if (currentMusicNode) {
         try { currentMusicNode.stop(); } catch {}
         currentMusicNode = null;
       }
       currentMusicId = id;
-      if (isEffectivelyPaused()) return;
-      try {
-        const buffer = await getBuffer(id as keyof T & string);
-        if (disposed || isEffectivelyPaused() || currentMusicId !== id) return;
-        const source = (context as unknown as { createBufferSource(): { buffer: unknown | null; loop: boolean; connect(dest: unknown): void; start(when?: number): void; stop(when?: number): void } }).createBufferSource();
-        source.buffer = buffer;
-        source.loop = true;
-        const dest = categoryGains['music'] ?? masterGain ?? (context as unknown as { destination: unknown }).destination;
-        source.connect(dest as unknown);
-        currentMusicNode = source;
-        source.start();
-        if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
-        const state = (context as unknown as { state: string }).state;
-        if (state === 'suspended' && !isEffectivelyPaused()) await context.resume().catch(()=>{});
-      } catch (e) {
-        console.warn(`[GameAudio] playMusic("${String(id)}") failed:`, e);
-        if (currentMusicId === id) currentMusicId = null;
+      // If effectively paused, defer (F4)
+      if (isEffectivelyPaused()) {
+        pendingMusic = { id: id as keyof T & string, generation: gen };
+        return;
       }
+      await startMusicInternal(id as keyof T & string, gen);
     },
 
     stopMusic(): void {
       ensureNotDisposed();
+      musicGeneration++;
       if (currentMusicNode) { try { currentMusicNode.stop(); } catch {} currentMusicNode=null; }
       currentMusicId = null;
+      pendingMusic = null;
       scheduleIdleSuspend();
     },
 
@@ -417,14 +497,24 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       ensureNotDisposed();
       if (userPaused) return;
       userPaused = true;
-      void context.suspend().catch(()=>{});
+      void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
+      // Explicit user pause clears interruption denied flag (F2)
+      if (interruptionRequiresExplicitResume) {
+        interruptionRequiresExplicitResume = false;
+      }
     },
 
     resume(): void {
       ensureNotDisposed();
-      if (!userPaused) return;
+      if (!userPaused && !interruptionRequiresExplicitResume) return;
+      const wasExplicit = interruptionRequiresExplicitResume;
       userPaused = false;
+      if (wasExplicit) {
+        // Explicit user action clears denied auto-resume (F2)
+        interruptionPaused = false;
+        interruptionRequiresExplicitResume = false;
+      }
       updateSuspendState();
     },
 
@@ -434,7 +524,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       assertVolume(volume);
       volumes[category] = volume;
       applyGain(category);
-      if (category === 'master') applyAllGains();
+      // F1: don't re-apply master when changing category, and vice versa — only own gain
     },
 
     getVolume(category: AudioCategory): number {
@@ -445,7 +535,13 @@ export async function createGameAudio<T extends AudioSoundRecord>(
 
     setMuted(next: boolean): void {
       ensureNotDisposed();
+      const wasMuted = muted;
       muted = Boolean(next);
+      // Explicit unmute also clears denied interruption if needed
+      if (wasMuted && !muted && interruptionRequiresExplicitResume) {
+        interruptionPaused = false;
+        interruptionRequiresExplicitResume = false;
+      }
       updateSuspendState();
     },
 
@@ -458,29 +554,43 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       if (disposed) return;
       disposed = true;
       currentMusicId = null;
+      pendingMusic = null;
       if (currentMusicNode) { try { currentMusicNode.stop(); } catch {} currentMusicNode=null; }
       for (const v of activeVoices) { try { (v as { stop:(w?:number)=>void }).stop(); } catch {} }
       activeVoices.clear();
       concurrencyMap.clear();
+      cancelledReservations.clear();
       pendingDecodes.clear();
       bufferCache.clear();
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
       if (interruptionSub) { try { interruptionSub.remove(); } catch {} interruptionSub=null; }
       if (interruptionEnabled) { try { AudioManager.observeAudioInterruptions(false); } catch {} interruptionEnabled=false; }
       if (appStateSub) { try { appStateSub.remove(); } catch {} appStateSub=null; }
-      void context.close().catch(()=>{});
+      if (context) void (context as InstanceType<typeof AudioContext>).close().catch(()=>{});
     },
   };
 
   (audio as unknown as { _setSessionPaused: (p:boolean)=>void })._setSessionPaused = (p: boolean) => {
     sessionPaused = p;
-    if (p) void context.suspend().catch(()=>{});
+    if (p) void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
     else updateSuspendState();
   };
   (audio as unknown as { _isIdleSuspended: ()=>boolean })._isIdleSuspended = () => {
     try { return (context as unknown as { state: string }).state === 'suspended'; } catch { return false; }
   };
   (audio as unknown as { _getConcurrencyCount: (k:string)=>number })._getConcurrencyCount = (k: string) => concurrencyMap.get(k)?.size ?? 0;
+  (audio as unknown as { _handleInterruption: (e:unknown)=>void })._handleInterruption = handleInterruption;
+  (audio as unknown as { _getVolumes: ()=>typeof volumes })._getVolumes = () => ({ ...volumes });
+  (audio as unknown as { _getGainTargets: ()=>Record<string, number> })._getGainTargets = () => {
+    const out: Record<string, number> = {};
+    for (const c of CATEGORIES) {
+      const g = categoryGains[c];
+      if (g) {
+        try { out[c] = (g.gain as unknown as { value:number }).value; } catch { out[c] = volumes[c]; }
+      }
+    }
+    return out;
+  };
 
   return audio as GameAudio<T>;
 }

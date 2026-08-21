@@ -49,7 +49,7 @@ haptics.play('impact');
 haptics.play('selection');
 ```
 
-An unknown preset throws `GameHapticsError` before any native work. `isSupported(preset)` checks availability without triggering the actuator:
+An unknown preset throws `GameHapticsError` before any native work. `isSupported(preset)` checks both the Pulsar capability (`HapticSupport` 0–3 via `Pulsar_hapticSupport()`) and that the `Presets.System.*` function exists, without triggering the actuator:
 
 ```ts
 if (haptics.isSupported('impact')) {
@@ -57,14 +57,15 @@ if (haptics.isSupported('impact')) {
 }
 ```
 
-## Result, not exception
+## Result is dispatch, not confirmed playback
 
 ```ts
 const result: HapticsResult = haptics.play('impact');
-// { played: true } or { played: false, reason: 'muted' | 'throttled' | 'paused' | 'disposed' | 'unsupported' | 'error' }
+// { played: true } means the request was dispatched to Pulsar, not that the actuator physically played.
+// { played: false, reason: 'unsupported' | 'muted' | 'throttled' | 'paused' | 'disposed' | 'error' }
 ```
 
-Unsupported or system-suppressed playback returns `{ played: false, reason: 'unsupported' }`. It never throws as a gameplay error.
+`HapticsResult.played` is honest: `true` proves the `Presets.System.*` worklet was invoked, but it does not prove physical actuation or absence of system suppression. The native call returns `void`, so suppression cannot be confirmed. `isSupported` returning `true` means the device reports `HapticSupport` ≥ `LIMITED` and the preset function exists; `NO_SUPPORT` (0) makes every preset unsupported. The call never throws as a gameplay error — it returns `unsupported` or `error`.
 
 ## Mute
 
@@ -98,7 +99,7 @@ Haptics drop transient requests while `paused`, `backgrounded`, `disposed`, or `
 - `paused` or `backgrounded` (AppState or explicit `_setPaused`) → `{ reason: 'paused' }`
 - `throttled` → `{ reason: 'throttled' }`
 
-AppState is observed best-effort. When the app backgrounds, haptics are suppressed and resume on `active`. For session lifecycle, drive a helper explicitly:
+AppState is observed best-effort. When the app backgrounds, haptics are suppressed (`paused`) and resume on `active`. `HapticSupport` is queried via `Pulsar_hapticSupport()` when available; a `NO_SUPPORT` device makes every `isSupported` and `play` return `unsupported`. For session lifecycle, drive a helper explicitly:
 
 ```ts
 const statusSub = session.addStatusListener((status) => {

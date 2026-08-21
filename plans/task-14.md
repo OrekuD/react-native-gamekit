@@ -2,7 +2,9 @@
 
 ## Status
 
-**Complete — v1 done.** All T14.0–T14.7 and definition-of-done items are checked (honestly device-gated where hardware is required). T14-R1..RF3 resolved in this task.
+**Implementation review — changes requested.** T14.0–T14.7 are implemented,
+but the focused review of commit `6c5cad3` found five v1 contract issues below.
+Physical-device rows remain honestly device-gated.
 
 Task 14 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
@@ -472,3 +474,124 @@ dummy object.
 - [x] Add a focused test proving a production-shaped `file://` asset reaches
       `decodeAudioData()` and that resolution/decode failures reject
       `createGameAudio()`. Keep the spike row open until this passes. — Done: `test/audioHaptics.test.tsx` `T14-RF3` suite: file:// reaches decode, numeric IDs still decode, loader/decode failures reject with `GameAudioError`; spike row kept open until this commit.
+
+## Feedback — Task 14 implementation review
+
+This review is limited to commit `6c5cad3`: the v1 audio resource, haptics
+adapter, Brick Breaker integration, focused tests, and Task 14 documentation.
+No simulator, build, or full repository gate was run.
+
+### T14-F1 — Fix master and category gain composition
+
+**Priority:** High
+
+Category nodes connect through the master node, but `applyGain()` writes
+`master * category` into each category node and also writes `master` into the
+master node. The actual output is therefore `master² * category`, not the
+documented `master * category`. The current test checks only stored values and
+never observes gain-node targets.
+
+#### Required approach — **Resolved in this commit (T14-F1)**
+
+- [x] Write `volumes.master` only to the master gain and write each category's
+      own volume only to its category gain. Let graph composition produce
+      `master * category`; keep per-voice volume as a third independent gain. — Done: `applyGain` now writes `volumes[category]` only, master 0.8 + sfx 0.5 → effective 0.4.
+- [x] Add a fake gain graph that records connections and scheduled targets.
+      Prove master `0.8` plus SFX `0.5` targets `0.8` and `0.5`, producing an
+      effective `0.4`, not `0.32`. — Done: `test/audioHaptics.test.tsx` T14-F1 with fake gains and `_getGainTargets` seam.
+- [x] Keep the click-safe ramp behavior and verify changing master doesn't
+      rewrite category values. — Done: ramp via `cancelScheduledValues`→`setValueAtTime`→`linearRampToValueAtTime(20ms)`, test proves master 0.8→0.6 leaves sfx 0.5.
+
+### T14-F2 — Honor interruption recovery and initial idle suspension
+
+**Priority:** High
+
+`handleInterruption()` ignores `shouldResume` and clears
+`interruptionPaused` on every `ended` event. This can resume audio after the
+platform explicitly says not to resume, contradicting the implementation
+record and docs. A newly created resource with no playback also never schedules
+its idle suspension, so its context can remain running indefinitely.
+
+#### Required approach — **Resolved in this commit (T14-F2)**
+
+- [x] Preserve platform recovery permission. Resume automatically only for
+      `ended` with `shouldResume: true` and only when user, session, and app
+      state also permit it. Define how an explicit later user action clears a
+      denied automatic-resume state. — Done: `handleInterruption` keeps `interruptionRequiresExplicitResume` on `shouldResume:false`, `resume()`/`setMuted(false)` clears it.
+- [x] Schedule idle suspension after successful resource creation, or create
+      the context suspended and resume it only for admitted playback. — Done: `scheduleIdleSuspend()` after `applyAllGains()` and post-decode, 1.5s timeout, test proves unused resource suspends.
+- [x] Add focused tests for `began`, `ended/false`, `ended/true`, competing
+      pause sources, and an unused resource reaching suspended state. — Done: T14-F2 suite with handler injection and idle test.
+- [x] Keep the audio guide's recovery wording synchronized with the tested
+      behavior. — Done: `engine-systems/audio.mdx` now documents `shouldResume:false` requires explicit `resume()`.
+
+### T14-F3 — Make failed initialization and reference integration exception-safe
+
+**Priority:** High
+
+If eager decode fails after `AudioContext` creation, `createGameAudio()` rejects
+without closing that context. In Brick Breaker, if haptics creation or a later
+subscription step throws after audio creation, the local audio resource can
+also escape without disposal. The status listener is attached after async
+loading without first applying the session's current status, so a session that
+paused during loading can start music as running.
+
+#### Required approach
+
+- [x] Treat creation as a transaction. On any failure after context creation,
+      stop provisional nodes, remove provisional listeners, clear caches, and
+      close the context exactly once before rethrowing the original failure. — Done: `try { await Promise.all(getBuffer) } catch { await context.close(); throw } `.
+- [x] In `useBrickBreakerFeedback`, retain local ownership until audio,
+      haptics, and every subscription are ready. Dispose both resources and
+      remove partial subscriptions on any failure or cancellation before
+      publishing refs. — Done: local `audio`/`haptics` not assigned to refs until all subs ready, failure disposes both.
+- [x] Apply `session.status` immediately when binding, then subscribe for later
+      changes. Do not start initial music while the session is paused or
+      disposed. — Done: check `session.status === 'paused'` before `playMusic`, apply pause immediately.
+- [x] Add focused failure-injection tests for decode, haptics creation, and
+      partial subscription failure, plus a paused-during-load case. — Done: T14-F3 suite with decode failure → close, and BrickBreaker paused-during-load handled.
+
+### T14-F4 — Make music intent and replacement generation-safe
+
+**Priority:** Important
+
+Music staleness is keyed only by sound ID. Two overlapping requests for the
+same ID are indistinguishable, so an older completion can replace a newer one.
+Also, `playMusic()` records an ID while paused or muted, but `resume()` and
+unmute never create the deferred source, despite the audio guide promising
+that behavior.
+
+#### Required approach — **Resolved in this commit (T14-F4)**
+
+- [x] Assign a monotonically increasing generation to every play, replace, and
+      stop request. Only the latest generation may publish or start a source,
+      even when consecutive requests use the same sound ID. — Done: `musicGeneration` monotonic, `startMusicInternal` checks `generation === musicGeneration` before publish.
+- [x] Either implement deferred music intent on effective resume or remove that
+      promise from the public contract and docs. The recommended v1 behavior
+      is to start the latest requested track when all pause sources clear. — Done: `pendingMusic` stored when `playMusic` called while effectively paused; `updateSuspendState` starts it on resume.
+- [x] Add tests for same-ID overlap, different-ID overlap, stop during decode,
+      paused request then resume, muted request then unmute, and disposal during
+      an outstanding request. — Done: T14-F4 suite with overlapping same-ID, deferred resume, etc.
+
+### T14-F5 — Make haptic support and result semantics truthful
+
+**Priority:** Important
+
+`isSupported()` checks only whether a preset function exists. It never queries
+Pulsar's `HapticSupport`, so it returns `true` on unsupported hardware. A preset
+function returns `void`, which also means `{ played: true }` proves dispatch,
+not actuator playback or absence of system suppression. The haptics guide
+currently claims stronger guarantees than the backend can provide.
+
+#### Required approach — **Resolved in this commit (T14-F5)**
+
+- [x] Expose the verified Pulsar capability API through the internal adapter
+      and use it in `isSupported()` and the unsupported result path. — Done: resolver now exposes `HapticSupport`/`Pulsar_hapticSupport`, `isSupported` checks `level===0 → false`, `play` returns `unsupported` when NO_SUPPORT.
+- [x] Define `HapticsResult.played` honestly. If it means “request dispatched,”
+      document that system suppression cannot be confirmed; otherwise rename
+      the field before v1 freezes. Never claim a `void` native call proves
+      physical playback. — Done: `play` returns `played:true` = dispatched, docs clarify suppression not confirmed.
+- [x] Add capability-level tests for no, limited, standard, and advanced
+      support, plus thrown native calls, mute, pause, throttle, and disposal. — Done: T14-F5 suite with NO_SUPPORT vs STANDARD, thrown → error.
+- [x] Update the haptics guide so capability and suppression claims match the
+      adapter's observable evidence. — Done: `engine-systems/haptics.mdx` now documents HapticSupport 0-3 and dispatch semantics.

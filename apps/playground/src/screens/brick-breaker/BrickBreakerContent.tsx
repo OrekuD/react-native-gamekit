@@ -68,11 +68,30 @@ function useBrickBreakerFeedback(session: BrickBreakerSession) {
     (async () => {
       try {
         audio = await createGameAudio({ sounds: { brickHit: BRICK_SFX, lifeLost: BRICK_SFX, gameOver: BRICK_MUSIC } });
-        if (cancelled) { audio.dispose(); return; }
-        haptics = createGameHaptics();
-        audioRef.current = audio;
-        hapticsRef.current = haptics;
-        setAudioReady(true);
+        if (cancelled || (session.status as string) === 'disposed') {
+          audio.dispose();
+          return;
+        }
+        try {
+          haptics = createGameHaptics();
+        } catch (e) {
+          audio.dispose();
+          throw e;
+        }
+        if (cancelled || (session.status as string) === 'disposed') {
+          audio.dispose();
+          haptics.dispose();
+          return;
+        }
+        // Retain local ownership until all subscriptions are ready (F3)
+        const localSubs: { remove: () => void }[] = [];
+        // Apply current session status immediately before publishing refs (F3)
+        const isPaused = session.status === 'paused';
+        const isDisposed = (session.status as string) === 'disposed';
+        if (isPaused) {
+          audio.pause();
+          (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(true);
+        }
         // Bind session pause to audio (lifecycle T14.4)
         const statusSub = session.addStatusListener((status) => {
           if (status === 'paused') {
@@ -81,34 +100,61 @@ function useBrickBreakerFeedback(session: BrickBreakerSession) {
           } else if (status === 'running') {
             audio?.resume();
             (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(false);
+          } else if (status === 'disposed') {
+            audio?.dispose();
+            haptics?.dispose();
           }
         });
-        subs.push(statusSub);
+        localSubs.push(statusSub);
         // Event-driven feedback (T14.6) — never feeds back into simulation
-        subs.push(session.addGameEventListener('brick-hit', () => {
+        localSubs.push(session.addGameEventListener('brick-hit', () => {
           audioRef.current?.play('brickHit', { category: 'sfx', concurrency: { key: 'brickHit', limit: 4, overflow: 'drop-new' } });
           hapticsRef.current?.play('impact');
         }));
-        subs.push(session.addGameEventListener('life-lost', () => {
+        localSubs.push(session.addGameEventListener('life-lost', () => {
           audioRef.current?.play('lifeLost', { category: 'sfx' });
           hapticsRef.current?.play('heavy');
         }));
-        subs.push(session.addGameEventListener('game-over', () => {
+        localSubs.push(session.addGameEventListener('game-over', () => {
           void audioRef.current?.playMusic('gameOver');
           const r = hapticsRef.current?.play('success');
           void r;
         }));
-        // Initial music: one looping track, replace on game-over
-        void audio.playMusic('gameOver');
+        if (cancelled || isDisposed) {
+          localSubs.forEach((sub) => { try { sub.remove(); } catch {} });
+          audio.dispose();
+          haptics.dispose();
+          return;
+        }
+        // Publish refs only after all subscriptions are ready and status applied
+        subs = localSubs;
+        audioRef.current = audio;
+        hapticsRef.current = haptics;
+        setAudioReady(true);
+        // Initial music: one looping track, replace on game-over — but not while paused/disposed (F3)
+        if (!isPaused && !isDisposed) {
+          void audio.playMusic('gameOver');
+        }
       } catch (e) {
+        // Transaction: clean up any provisional resources on failure (F3)
+        subs.forEach((sub) => { try { sub.remove(); } catch {} });
+        subs = [];
+        if (audio) { try { audio.dispose(); } catch {} }
+        if (haptics) { try { haptics.dispose(); } catch {} }
+        audioRef.current = null;
+        hapticsRef.current = null;
         console.warn('[BrickBreakerFeedback] init failed', e);
       }
     })();
     return () => {
       cancelled = true;
       subs.forEach((s) => { try { s.remove(); } catch {} });
-      audioRef.current?.dispose();
-      hapticsRef.current?.dispose();
+      subs = [];
+      if (audioRef.current) { try { audioRef.current.dispose(); } catch {} }
+      if (hapticsRef.current) { try { hapticsRef.current.dispose(); } catch {} }
+      // Also dispose provisional locals if they never reached refs
+      if (audio && audioRef.current !== audio) { try { audio.dispose(); } catch {} }
+      if (haptics && hapticsRef.current !== haptics) { try { haptics.dispose(); } catch {} }
       audioRef.current = null;
       hapticsRef.current = null;
     };
@@ -138,7 +184,7 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
   const [isMuted, setIsMuted] = useState(false);
 
   const startOrRestart = useCallback(() => {
-    if (session.status === 'disposed') {
+    if ((session.status as string) === 'disposed') {
       return;
     }
     // A complete semantic button pulse means the entire body can start the

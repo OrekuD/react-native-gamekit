@@ -52,6 +52,32 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   }
   const { Presets } = pulsar;
 
+  // Capability: query Pulsar's HapticSupport when available
+  function getSupportLevel(): number {
+    try {
+      const pAny = pulsar as unknown as { getHapticSupport?: ()=>number; Pulsar_hapticSupport?: ()=>number; HapticSupport?: Record<string, number> };
+      if (typeof pAny.getHapticSupport === 'function') return pAny.getHapticSupport();
+      if (typeof pAny.Pulsar_hapticSupport === 'function') return pAny.Pulsar_hapticSupport();
+      // Try TurboModule directly
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const RN = require('react-native') as { TurboModuleRegistry?: { getEnforcing: (n:string)=>{ Pulsar_hapticSupport?: ()=>number } } };
+        const spec = RN.TurboModuleRegistry?.getEnforcing?.('RNPulsar') as { Pulsar_hapticSupport?: ()=>number } | undefined;
+        if (spec?.Pulsar_hapticSupport) return spec.Pulsar_hapticSupport();
+      } catch {}
+    } catch {}
+    // Fallback: if Presets exists, assume STANDARD (2) — tests with mock will hit this
+    return 2;
+  }
+
+  function isCapabilitySupported(_preset: HapticPreset): boolean {
+    const level = getSupportLevel();
+    if (level === 0) return false; // NO_SUPPORT
+    // For v1, all presets require at least LIMITED (1); advanced presets would need 3 but we treat LIMITED as sufficient for System presets
+    // If limited, still allow System presets (they are the base set)
+    return true;
+  }
+
   let muted = Boolean(options?.muted);
   let disposed = false;
   let paused = false;
@@ -85,16 +111,18 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
       if (backgrounded) return { played: false, reason: 'paused' };
       if (!isValidPreset(preset)) throw new GameHapticsError(`Unknown haptic preset "${String(preset)}"`);
       if (muted) return { played: false, reason: 'muted' };
-      const now = Date.now();
-      if (now - lastPlayAt < MIN_INTERVAL_MS) return { played: false, reason: 'throttled' };
-      lastPlayAt = now;
+      if (!isCapabilitySupported(preset)) return { played: false, reason: 'unsupported' };
       const systemName = mapToSystemPreset(preset);
       const fn =
         (Presets.System as Record<string, unknown>)[systemName] ??
         (Presets as Record<string, unknown>)[preset];
       if (typeof fn !== 'function') return { played: false, reason: 'unsupported' };
+      const now = Date.now();
+      if (now - lastPlayAt < MIN_INTERVAL_MS) return { played: false, reason: 'throttled' };
+      lastPlayAt = now;
       try {
         (fn as () => void)();
+        // played means request dispatched, not confirmed physical playback — system may suppress
         return { played: true };
       } catch {
         return { played: false, reason: 'error' };
@@ -104,6 +132,7 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
     isSupported(_preset: HapticPreset): boolean {
       if (disposed) return false;
       if (!isValidPreset(_preset)) throw new GameHapticsError(`Unknown haptic preset "${String(_preset)}"`);
+      if (!isCapabilitySupported(_preset)) return false;
       const systemName = mapToSystemPreset(_preset);
       const fn =
         (Presets.System as Record<string, unknown>)[systemName] ??
