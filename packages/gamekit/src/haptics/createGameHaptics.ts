@@ -1,4 +1,5 @@
 import { createHapticsInstallationError, GameHapticsError } from './errors';
+import { loadPulsar } from './resolver';
 import type { CreateGameHapticsOptions, GameHaptics, HapticPreset, HapticsResult } from './types';
 
 const PRESETS: readonly HapticPreset[] = [
@@ -16,20 +17,26 @@ function isValidPreset(preset: HapticPreset): boolean {
   return (PRESETS as readonly string[]).includes(preset);
 }
 
-function resolvePulsar(): unknown | null {
-  try {
-    // Use require so the optional peer can be resolved synchronously and so
-    // tests can inject a backend via mock.module (which intercepts ESM import
-    // but not this require). In production the peer is installed and this
-    // succeeds; when missing it returns null and the factory throws the
-    // actionable installation error. Tests that need a missing-peer path
-    // should mock the resolver (see test/audioHaptics.test.tsx) rather than
-    // relying on a fallback object.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('react-native-pulsar');
-    return (mod as unknown) ?? null;
-  } catch {
-    return null;
+function mapToSystemPreset(preset: HapticPreset): string {
+  switch (preset) {
+    case 'impact':
+      return 'impactMedium';
+    case 'light':
+      return 'impactLight';
+    case 'medium':
+      return 'impactMedium';
+    case 'heavy':
+      return 'impactHeavy';
+    case 'selection':
+      return 'selection';
+    case 'success':
+      return 'notificationSuccess';
+    case 'warning':
+      return 'notificationWarning';
+    case 'error':
+      return 'notificationError';
+    default:
+      return preset;
   }
 }
 
@@ -41,10 +48,16 @@ function resolvePulsar(): unknown | null {
  * Throws a clear installation error only when called without the optional peer.
  */
 export function createGameHaptics(options?: CreateGameHapticsOptions): GameHaptics {
-  const api = resolvePulsar();
-  if (!api) {
+  let pulsar: ReturnType<typeof loadPulsar>;
+  try {
+    pulsar = loadPulsar();
+  } catch {
     throw createHapticsInstallationError();
   }
+  if (!pulsar || !pulsar.Presets) {
+    throw createHapticsInstallationError();
+  }
+  const { Presets } = pulsar;
 
   let muted = Boolean(options?.muted);
   let disposed = false;
@@ -67,10 +80,19 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
         return { played: false, reason: 'throttled' };
       }
       lastPlayAt = now;
-      // T14.5 will call the verified Pulsar preset (e.g. Presets.System.impactMedium)
-      // and handle capability/suppression. Until then, fail closed with an
-      // explicit unavailable result rather than reporting a successful no-op.
-      return { played: false, reason: 'error' };
+      const systemName = mapToSystemPreset(preset);
+      const fn =
+        (Presets.System as Record<string, unknown>)[systemName] ??
+        (Presets as Record<string, unknown>)[preset];
+      if (typeof fn !== 'function') {
+        return { played: false, reason: 'unsupported' };
+      }
+      try {
+        (fn as () => void)();
+        return { played: true };
+      } catch {
+        return { played: false, reason: 'error' };
+      }
     },
 
     isSupported(_preset: HapticPreset): boolean {
@@ -78,8 +100,11 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
       if (!isValidPreset(_preset)) {
         throw new GameHapticsError(`Unknown haptic preset "${String(_preset)}"`);
       }
-      // In T14.5 this will query Pulsar's capability API per preset/platform.
-      return true;
+      const systemName = mapToSystemPreset(_preset);
+      const fn =
+        (Presets.System as Record<string, unknown>)[systemName] ??
+        (Presets as Record<string, unknown>)[_preset];
+      return typeof fn === 'function';
     },
 
     setMuted(next: boolean): void {
@@ -99,7 +124,6 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      // In T14.5 this will cancel any pending pattern and remove listeners.
     },
   };
 

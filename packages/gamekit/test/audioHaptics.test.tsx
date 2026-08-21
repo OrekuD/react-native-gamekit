@@ -40,18 +40,34 @@ describe('T14.0 root isolation', () => {
 });
 
 describe('T14.0 audio installation error', () => {
-  it('createGameAudio is constructible in node (peer stub)', async () => {
+  it('createGameAudio is constructible in node (peer mocked)', async () => {
     const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
     const audio = await createGameAudio({ sounds: { sfx: 1, music: 2 } });
     assert.ok(audio);
     audio.dispose();
   });
 
-  it('factory without peer gives actionable installation error (injected resolver)', async () => {
-    const { createAudioInstallationError } = await import('../src/audio/errors.ts');
-    const err = createAudioInstallationError();
-    assert.match(err.message, /react-native-audio-api is not installed/);
-    assert.match(err.message, /npx expo install/);
+  it('factory without peer gives actionable installation error (via injectable seam)', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    // Inject a loader that simulates missing peer
+    __setAudioApiLoader(async () => {
+      throw new Error('missing');
+    });
+    await assert.rejects(
+      () => createGameAudio({ sounds: { sfx: 1 } }),
+      (err: unknown) => {
+        assert.match((err as Error).message, /react-native-audio-api is not installed/);
+        assert.match((err as Error).message, /npx expo install/);
+        return true;
+      },
+    );
+    // Restore
+    __setAudioApiLoader(null);
+    // Verify it works again with mock
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    assert.ok(audio);
+    audio.dispose();
   });
 });
 
@@ -85,8 +101,8 @@ describe('T14.0 audio volume/mute contract', () => {
   it('dispose is idempotent and rejects new work', async () => {
     const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
     const audio = await createGameAudio({ sounds: { sfx: 1 } });
-    // Until T14.2/3, play is explicit unavailable, not silent no-op
-    assert.throws(() => audio.play('sfx'), /not yet implemented/);
+    // With real implementation, play is fire-and-forget and does not throw when not disposed
+    assert.doesNotThrow(() => audio.play('sfx'));
     audio.dispose();
     audio.dispose();
     assert.throws(() => audio.play('sfx'), /disposed/);
@@ -94,11 +110,25 @@ describe('T14.0 audio volume/mute contract', () => {
 });
 
 describe('T14.0 haptics installation error', () => {
-  it('factory without peer would give actionable error', async () => {
-    const { createHapticsInstallationError } = await import('../src/haptics/errors.ts');
-    const err = createHapticsInstallationError();
-    assert.match(err.message, /react-native-pulsar is not installed/);
-    assert.match(err.message, /npx expo install/);
+  it('factory without peer gives actionable error via seam', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(() => {
+      throw new Error('missing');
+    });
+    assert.throws(
+      () => createGameHaptics(),
+      (err: unknown) => {
+        assert.match((err as Error).message, /react-native-pulsar is not installed/);
+        assert.match((err as Error).message, /npx expo install/);
+        return true;
+      },
+    );
+    __setPulsarLoader(null);
+    // Verify it works again with mock
+    const haptics = createGameHaptics();
+    assert.ok(haptics);
+    haptics.dispose();
   });
 });
 
@@ -107,9 +137,8 @@ describe('T14.0 haptics preset, mute, throttling', () => {
     const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
     const haptics = createGameHaptics();
     const first = haptics.play('impact');
-    // T14.0 stub must not report successful playback — fail closed until T14.5
-    assert.equal(first.played, false);
-    assert.equal(first.reason, 'error');
+    // With real Presets.System.impactMedium (mocked as jest.fn), first play succeeds
+    assert.equal(first.played, true);
     const throttled = haptics.play('impact');
     assert.equal(throttled.played, false);
     assert.equal(throttled.reason, 'throttled');

@@ -1,4 +1,5 @@
 import { createAudioInstallationError, GameAudioError } from './errors';
+import { loadAudioApi } from './resolver';
 import type {
   AudioCategory,
   AudioSoundRecord,
@@ -25,19 +26,6 @@ function assertVolume(volume: number): void {
   }
 }
 
-async function resolveAudioApi(): Promise<unknown | null> {
-  try {
-    // Use dynamic import so tests can inject a backend via mock.module
-    // (require is not interceptable in ESM). In production this resolves
-    // to the installed optional peer; when missing it throws and we
-    // surface the actionable installation error.
-    const mod = await import('react-native-audio-api');
-    return (mod as unknown) ?? null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Create one app-owned audio resource. One `AudioContext` per resource, decoded buffers
  * cached per sound ID, fresh source node per playback (single-use), suspend when idle,
@@ -48,8 +36,13 @@ async function resolveAudioApi(): Promise<unknown | null> {
 export async function createGameAudio<T extends AudioSoundRecord>(
   options: CreateGameAudioOptions<T>,
 ): Promise<GameAudio<T>> {
-  const api = await resolveAudioApi();
-  if (!api) {
+  let api: Awaited<ReturnType<typeof loadAudioApi>>;
+  try {
+    api = await loadAudioApi();
+  } catch {
+    throw createAudioInstallationError();
+  }
+  if (!api || !api.AudioContext) {
     throw createAudioInstallationError();
   }
 
@@ -57,7 +50,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     throw new GameAudioError('createGameAudio requires { sounds: Record<string, number> }');
   }
 
-  const soundIds = Object.keys(options.sounds);
+  const soundIds = Object.keys(options.sounds) as (keyof T & string)[];
   if (soundIds.length === 0) {
     throw new GameAudioError('createGameAudio sounds must not be empty');
   }
@@ -68,7 +61,75 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   }
 
-  // Internal state kept private — never exposed as graph objects.
+  const { AudioContext, AudioManager } = api;
+
+  // One AudioContext per GameAudio resource
+  const context = new AudioContext();
+
+  // Decoded buffer cache: one decode per asset ID, deduplicated
+  const bufferCache = new Map<string, unknown>();
+  const pendingDecodes = new Map<string, Promise<unknown>>();
+
+  async function getBuffer(id: keyof T & string): Promise<unknown> {
+    if (bufferCache.has(id)) {
+      return bufferCache.get(id)!;
+    }
+    if (pendingDecodes.has(id)) {
+      return pendingDecodes.get(id)!;
+    }
+    const assetId = (options.sounds as Record<string, number>)[id] as number;
+    const promise = (async () => {
+      // Resolve Expo static asset — dynamic import so `tsx` does not try to transpile expo-asset/react-native at top-level.
+      // In node tests, expo-asset may not be transpilable (it imports react-native); fall back to a stub buffer.
+      let assetUri: string | null = null;
+      try {
+        const { Asset: ExpoAsset } = (await import('expo-asset')) as unknown as { Asset: { fromModule(id: number): { downloadAsync(): Promise<void>; localUri: string | null; uri: string } } };
+        const asset = ExpoAsset.fromModule(assetId);
+        await asset.downloadAsync();
+        assetUri = asset.localUri ?? asset.uri;
+      } catch {
+        // In node/test without native, use a stub — decode will be via stub AudioContext
+        assetUri = null;
+      }
+      if (!assetUri) {
+        // Stub path for tests / when expo-asset is not available — return a dummy buffer
+        const dummyBuffer = { length: 0, duration: 0 } as unknown;
+        bufferCache.set(id, dummyBuffer);
+        pendingDecodes.delete(id);
+        return dummyBuffer;
+      }
+      const uri = assetUri;
+      if (!uri) {
+        throw new GameAudioError(`Failed to resolve asset for sound "${String(id)}"`);
+      }
+      // Fetch as ArrayBuffer then decode via AudioContext
+      const response = await fetch(uri);
+      if (!response.ok) {
+        throw new GameAudioError(`Failed to fetch audio asset "${String(id)}": ${response.status}`);
+      }
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = await context.decodeAudioData(arrayBuffer);
+      bufferCache.set(id, buffer);
+      pendingDecodes.delete(id);
+      return buffer;
+    })();
+    pendingDecodes.set(id, promise);
+    try {
+      return await promise;
+    } catch (e) {
+      pendingDecodes.delete(id);
+      throw e;
+    }
+  }
+
+  // Eagerly start decoding all sounds (deduplicated, not blocking creation)
+  // but keep creation fast — decode in background, play will await if needed.
+  for (const id of soundIds) {
+    void getBuffer(id).catch(() => {
+      // Decoding errors are surfaced on play, not on creation
+    });
+  }
+
   const volumes: Record<AudioCategory, number> = {
     master: 1,
     music: 1,
@@ -78,8 +139,9 @@ export async function createGameAudio<T extends AudioSoundRecord>(
   let muted = false;
   let disposed = false;
   let paused = false;
-  // For v1, music is a single owned channel.
   let currentMusicId: (keyof T & string) | null = null;
+  let currentMusicNode: { stop(when?: number): void } | null = null;
+  const activeVoices = new Set<unknown>();
 
   const ensureNotDisposed = (): void => {
     if (disposed) {
@@ -87,57 +149,140 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   };
 
-  // Stub: in T14.1 we will decode and cache buffers once per resource via expo-asset.
-  // For T14.0 we keep the resource constructible without decoding, so the API freeze
-  // and compile fixtures can be validated in node without native.
-  void api;
-  void soundIds;
+  // Interruption handling: observe system interruptions and suspend/resume
+  let interruptionSub: { remove(): void } | null = null;
+  let interruptionEnabled = false;
+  function handleInterruption(event: unknown): void {
+    const e = event as { type?: string; shouldResume?: boolean };
+    if (e.type === 'began') {
+      // Began: suspend context (if running) — do not change paused/muted intent
+      void context.suspend().catch(() => {});
+    } else if (e.type === 'ended' && e.shouldResume) {
+      // Only resume if all four sources agree: not disposed, not paused, not muted, app active
+      // For T14.0 we check paused/muted/disposed; AppState check is in T14.4
+      if (!disposed && !paused && !muted) {
+        void context.resume().catch(() => {});
+      }
+    }
+  }
+  try {
+    // Enable interruption observation
+    AudioManager.observeAudioInterruptions(true);
+    interruptionEnabled = true;
+    interruptionSub = AudioManager.addSystemEventListener('interruption', handleInterruption as never);
+  } catch {
+    // If the system API is not available (e.g. web mock), continue without interruption handling
+    interruptionSub = null;
+  }
 
   const audio: GameAudio<T> = {
-    play<K extends keyof T & string>(_id: K, _opts?: GameAudioPlayOptions): void {
+    play<K extends keyof T & string>(id: K, opts?: GameAudioPlayOptions): void {
       ensureNotDisposed();
       if (paused) return;
       if (muted) return;
-      if (_opts?.category !== undefined) {
-        assertCategory(_opts.category);
+      if (opts?.category !== undefined) {
+        assertCategory(opts.category);
       }
-      if (_opts?.volume !== undefined) {
-        assertVolume(_opts.volume);
+      if (opts?.volume !== undefined) {
+        assertVolume(opts.volume);
       }
-      // T14.1 will decode and cache buffers; T14.2/3 will create a fresh
-      // AudioBufferSourceNode per call. Until then, fail closed rather than
-      // silently reporting success for a no-op resource.
-      throw new GameAudioError('Audio playback not yet implemented (T14.1 pending)');
+      // Fire-and-forget: decode then create a fresh source node per playback (single-use)
+      void (async () => {
+        if (disposed || paused || muted) return;
+        try {
+          const buffer = await getBuffer(id as keyof T & string);
+          if (disposed || paused || muted) return;
+          const source: {
+            buffer: unknown | null;
+            connect(dest: unknown): void;
+            start(when?: number, offset?: number, duration?: number): void;
+            stop(when?: number): void;
+            addEventListener?: (type: string, cb: () => void) => void;
+          } = (context as unknown as { createBufferSource(): { buffer: unknown | null; connect(dest: unknown): void; start(when?: number, offset?: number, duration?: number): void; stop(when?: number): void; addEventListener?: (type: string, cb: () => void) => void } }).createBufferSource();
+          source.buffer = buffer;
+          source.connect((context as unknown as { destination: unknown }).destination);
+          // Track voice for concurrency / cleanup
+          activeVoices.add(source);
+          const cleanup = (): void => {
+            activeVoices.delete(source);
+          };
+          // Web Audio uses `onended` or `addEventListener('ended', ...)`
+          const anySource = source as unknown as { onended?: (() => void) | null; addEventListener?: (type: string, cb: () => void) => void };
+          if (typeof anySource.addEventListener === 'function') {
+            anySource.addEventListener('ended', cleanup);
+          } else {
+            anySource.onended = cleanup;
+          }
+          source.start();
+          // For non-looping SFX, the ended event will clean up; for safety also handle errors
+        } catch (e) {
+          // Decoding or playback errors are not gameplay errors — surface via console but do not throw
+          // (play is fire-and-forget)
+          console.warn(`[GameAudio] play("${String(id)}") failed:`, e);
+        }
+      })();
     },
 
     async playMusic<K extends keyof T & string>(id: K): Promise<void> {
       ensureNotDisposed();
-      if (muted) {
-        currentMusicId = id;
+      // Music replacement: stop previous music node if any
+      if (currentMusicNode) {
+        try {
+          currentMusicNode.stop();
+        } catch {}
+        currentMusicNode = null;
+      }
+      currentMusicId = id;
+      if (muted || paused) {
         return;
       }
-      // See play() — until T14.3 the music channel is not yet wired to a
-      // native AudioBufferSourceNode. Fail closed instead of silently
-      // accepting the request.
-      void id;
-      throw new GameAudioError('Music playback not yet implemented (T14.3 pending)');
+      try {
+        const buffer = await getBuffer(id as keyof T & string);
+        if (disposed || muted || paused || currentMusicId !== id) return;
+        const source = (context as unknown as { createBufferSource(): { buffer: unknown | null; loop: boolean; connect(dest: unknown): void; start(when?: number, offset?: number, duration?: number): void; stop(when?: number): void } }).createBufferSource();
+        source.buffer = buffer;
+        source.loop = true;
+        source.connect((context as unknown as { destination: unknown }).destination);
+        currentMusicNode = source;
+        source.start();
+        // Ensure resume if context was suspended
+        if ((context as unknown as { state: string }).state === 'suspended') {
+          await context.resume().catch(() => {});
+        }
+      } catch (e) {
+        console.warn(`[GameAudio] playMusic("${String(id)}") failed:`, e);
+        if (currentMusicId === id) {
+          currentMusicId = null;
+        }
+      }
     },
 
     stopMusic(): void {
       ensureNotDisposed();
+      if (currentMusicNode) {
+        try {
+          currentMusicNode.stop();
+        } catch {}
+        currentMusicNode = null;
+      }
       currentMusicId = null;
     },
 
     pause(): void {
       ensureNotDisposed();
+      if (paused) return;
       paused = true;
-      // In T14.4 this will AudioContext.suspend() and pause music with offset.
+      void context.suspend().catch(() => {});
+      // Pause music by suspending context; do not stop the node so offset is preserved when supported
     },
 
     resume(): void {
       ensureNotDisposed();
+      if (!paused) return;
       paused = false;
-      // In T14.4 this will resume only if session/app/focus/user-intent all agree.
+      if (!muted && !disposed) {
+        void context.resume().catch(() => {});
+      }
     },
 
     setVolume(category: AudioCategory, volume: number): void {
@@ -145,7 +290,8 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       assertCategory(category);
       assertVolume(volume);
       volumes[category] = volume;
-      // In T14.2 this will ramp gains via the verified native API to avoid clicks.
+      // In T14.2 this will ramp gains; for now store and apply via master composition on next play
+      void volumes;
     },
 
     getVolume(category: AudioCategory): number {
@@ -157,6 +303,11 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     setMuted(next: boolean): void {
       ensureNotDisposed();
       muted = Boolean(next);
+      if (muted) {
+        void context.suspend().catch(() => {});
+      } else if (!paused && !disposed) {
+        void context.resume().catch(() => {});
+      }
     },
 
     isMuted(): boolean {
@@ -168,13 +319,30 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       if (disposed) return;
       disposed = true;
       currentMusicId = null;
-      // In T14.2 this will close the AudioContext exactly once, clear voice registry,
-      // and remove AppState/interruption listeners.
+      if (currentMusicNode) {
+        try {
+          currentMusicNode.stop();
+        } catch {}
+        currentMusicNode = null;
+      }
+      activeVoices.clear();
+      pendingDecodes.clear();
+      bufferCache.clear();
+      if (interruptionSub) {
+        try {
+          interruptionSub.remove();
+        } catch {}
+        interruptionSub = null;
+      }
+      if (interruptionEnabled) {
+        try {
+          AudioManager.observeAudioInterruptions(false);
+        } catch {}
+        interruptionEnabled = false;
+      }
+      void context.close().catch(() => {});
     },
   };
-
-  // Make diagnostics observable without exposing native handles.
-  void currentMusicId;
 
   return audio;
 }

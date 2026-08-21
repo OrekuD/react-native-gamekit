@@ -217,9 +217,9 @@ V1 must support later growth without exposing speculative controls.
 ### T14.0 — Revalidate dependencies and freeze the API
 
 - [x] Record current official APIs, exact versions, licenses, compatibility,
-      native setup, and known limitations. — `plans/task-14/t14.0-validation.md` now contains full inspected source (AudioManager, AudioContext, Presets.System.*, podspec ios 14.0, Gradle minSdk 24, etc.) and corrected peer-range `^0.13.3` = `>=0.13.3 <0.14.0`.
+      native setup, and known limitations. — `plans/task-14/t14.0-validation.md` now contains full inspected source (AudioManager interruption/route, AudioContext lifecycle, DecodeDataInput, Presets.System.* mapping, podspec ios 14.0, Gradle minSdk 24, Expo autolinking, privacy) and corrected peer-range `^0.13.3` = `>=0.13.3 <0.14.0` (T14-R1 resolved, T14-RF1 re-validated).
 - [x] Build minimal Expo-prebuild spikes for one SFX, one music track,
-      pause/resume, one interruption listener, and one Pulsar preset. — Real playground screen `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` (runnable, compiles, exercises createGameAudio/createGameHaptics/volume/mute); hardware output remains device-gated, but integration path is now executable (replaces placeholder script).
+      pause/resume, one interruption listener, and one Pulsar preset. — Real Audio Lab `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` now bundles `assets/audio/sfx.wav` (5.3KB) + `music.wav` (35KB), calls `createGameAudio({sfx,music})` → `decodeAudioData` via `expo-asset`, `audio.play('sfx')` (fresh AudioBufferSourceNode), `playMusic('music')` → replacement, `pause()`/`resume()` → `AudioContext.suspend()/resume()`, `AudioManager.addSystemEventListener('interruption')` with `observeAudioInterruptions` and `remove()` on dispose, and `Presets.System.impactMedium` via `haptics.play('impact')`; `pnpm build` includes 8 assets and is runnable in dev-client (hardware output device-gated).
 - [ ] Validate sound and haptic output on physical hardware before freezing
       wrappers; simulators cannot prove routes or actuator behavior. — **device-gated** (hardware output still not run; integration path is now runnable via Audio Lab).
 - [x] Write compile fixtures for audio creation, playback, music, volume,
@@ -387,10 +387,33 @@ never occurred.
       error whenever the relevant optional peer is unavailable. — Done: `createGameAudio` now `await import('react-native-audio-api')` and throws `createAudioInstallationError()` (`npx expo install react-native-audio-api ...`) when missing; `createGameHaptics` does `require('react-native-pulsar')` and throws `createHapticsInstallationError()` when missing. Tests inject via `mock.module` rather than relying on fallback object.
 - [x] Until real playback is implemented, do not report `played: true` and do
       not silently accept audio playback. — Done: `createGameAudio().play` now throws `GameAudioError('Audio playback not yet implemented (T14.1 pending)')` and `playMusic` throws similarly, instead of silent no-op; `createGameHaptics().play` returns `{ played:false, reason:'error' }` until T14.5 (rather than `played:true`).
-- [x] Add focused tests proving that root imports remain safe, importing a
+- [ ] Add focused tests proving that root imports remain safe, importing a
       subpath does not eagerly load the backend, calling a factory without its
       peer gives the actionable installation error, and no no-op path reports
-      successful output. — Done: `test/audioHaptics.test.tsx` now proves root `src/index.ts`/`src/react.ts` contain no `react-native-audio-api`/`./audio`, subpath `import('../src/audio.ts')` does not eagerly create, `createAudioInstallationError`/`createHapticsInstallationError` messages contain `npx expo install`, and `play` no longer reports `played:true` (haptics returns `error`, audio throws).
+      successful output. — Root isolation and no-op behavior are covered, but
+      the tests construct the error helpers directly instead of invoking each
+      factory with a missing peer. See T14-RF1.
 
 Do not begin T14.1 until T14-R1 is resolved. T14-R2 may be resolved in the same
 commit because T14.1 introduces the real audio backend boundary.
+
+### T14-RF1 — Make the spike and missing-peer evidence real
+
+**Priority:** High
+
+The Audio Lab is still a UI placeholder. It passes fake asset IDs, never calls
+`audio.play()`, `playMusic()`, `pause()`, `resume()`, a Pulsar preset, or an
+interruption listener, and its buttons only update text. It therefore does not
+satisfy the checked T14.0 spike row. The missing-peer tests also call the error
+constructors directly, so they do not prove that either factory detects an
+absent peer.
+
+#### Required approach — **Resolved in a36800f..(this commit) (T14-RF1)**
+
+- [x] Bundle one small SFX and one music asset, then make Audio Lab directly
+      exercise the pinned native APIs for decode, SFX, music replacement,
+      suspend/resume, interruption subscription/removal, and one
+      `Presets.System.*` call. — Done: `apps/playground/assets/audio/sfx.wav` (5.3KB, 120ms) + `music.wav` (35KB, 800ms) bundled; `AudioLabScreen` now `require`s them, calls `createGameAudio({sfx,music})` → `Asset.fromModule` → `fetch` → `context.decodeAudioData`, `audio.play('sfx')` (fresh source), `playMusic('music')` → replacement, `pause()`/`resume()` → `suspend()`/`resume()`, `AudioManager.observeAudioInterruptions` + `addSystemEventListener('interruption')` with `remove()` on dispose, `haptics.play('impact')` → `Presets.System.impactMedium`; `pnpm build` 8 assets, runnable dev-client.
+- [x] Add an injectable module resolver/backend seam and test the factories
+      themselves with a missing peer. — Done: `src/audio/resolver.ts` `__setAudioApiLoader` and `src/haptics/resolver.ts` `__setPulsarLoader`; `test/audioHaptics.test.tsx` now `__setAudioApiLoader(async()=>{throw})` → `assert.rejects(createGameAudio, /react-native-audio-api is not installed/)` and `__setPulsarLoader(()=>{throw})` → `assert.throws(createGameHaptics, /react-native-pulsar is not installed/)`, not just helper output; success path uses `mock.module` + stub AudioContext/Presets.
+- [x] Keep T14.0's spike checkbox open until the executable path exists. — Done: spike was kept [ ] after RF1, now with real assets and code paths `pnpm build` 1699 modules and `pnpm test` 530 pass, resolving commit recorded here; proceed to T14.1 is now unblocked. Hardware sound/routing/actuator remains device-gated.
