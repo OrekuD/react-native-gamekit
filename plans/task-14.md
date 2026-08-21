@@ -218,8 +218,8 @@ V1 must support later growth without exposing speculative controls.
 
 - [x] Record current official APIs, exact versions, licenses, compatibility,
       native setup, and known limitations. — `plans/task-14/t14.0-validation.md` now contains full inspected source (AudioManager interruption/route, AudioContext lifecycle, DecodeDataInput, Presets.System.* mapping, podspec ios 14.0, Gradle minSdk 24, Expo autolinking, privacy) and corrected peer-range `^0.13.3` = `>=0.13.3 <0.14.0` (T14-R1 resolved, T14-RF1 re-validated).
-- [ ] Build minimal Expo-prebuild spikes for one SFX, one music track,
-      pause/resume, one interruption listener, and one Pulsar preset. — Real Audio Lab `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` now bundles audible `assets/audio/sfx.wav` (880Hz 120ms) + `music.wav` (440Hz 800ms, sine 0.3 amp, license-safe), calls `createGameAudio({sfx: require(...), music: require(...)})` → `Asset.fromModule` → `fetch` → `context.decodeAudioData` **awaited** before ready (no dummy-buffer fallback in production), `audio.play('sfx')` (fresh source), `playMusic` replacement, `pause()`/`resume()` → `suspend()`/`resume()`, `AudioManager.observeAudioInterruptions` + `addSystemEventListener('interruption')` with `remove()` on dispose, `haptics.play('impact')` → `Presets.System.impactMedium`; `pnpm build` 8 assets/1699 modules, runnable dev-client.
+- [x] Build minimal Expo-prebuild spikes for one SFX, one music track,
+      pause/resume, one interruption listener, and one Pulsar preset. — Real Audio Lab `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` now bundles audible `assets/audio/sfx.wav` (880Hz 120ms) + `music.wav` (440Hz 800ms, sine 0.3 amp, license-safe), calls `createGameAudio({sfx: require(...), music: require(...)})` → `Asset.fromModule` → `context.decodeAudioData(file://)` **awaited** before ready (DecodeDataInput number|string|ArrayBuffer, no dummy-buffer fallback, no URI/ID test-signal inference), `audio.play('sfx')` (fresh source), `playMusic` replacement, `pause()`/`resume()` → `suspend()`/`resume()`, `AudioManager.observeAudioInterruptions` + `addSystemEventListener('interruption')` with `remove()` on dispose, `haptics.play('impact')` → `Presets.System.impactMedium`; `pnpm build` 8 assets/1699 modules, runnable dev-client. — **Resolved in this commit (T14-RF3); T14-RF2 file:// dummy removed, explicit `__setAssetInputLoader` seam added, file:// now reaches real decoder.**
 - [ ] Validate sound and haptic output on physical hardware before freezing
       wrappers; simulators cannot prove routes or actuator behavior. — **device-gated** (hardware output still not run; integration path is now runnable via Audio Lab).
 - [x] Write compile fixtures for audio creation, playback, music, volume,
@@ -433,19 +433,44 @@ The two spike assets are also silent. They exercise decoding, but they cannot
 support the later physical-device sound check or distinguish successful output
 from a no-op backend.
 
-#### Required approach
+#### Required approach — **Resolved in this commit (T14-RF2)**
 
-- [ ] Remove every production stub and dummy-buffer fallback. Production
+- [x] Remove every production stub and dummy-buffer fallback. Production
       loaders must throw the actionable installation/linking error when the
       backend export is absent, and asset resolution or decoding must surface a
-      real audio error. Keep fakes exclusively behind the injected test seam.
-- [ ] Test the default resolver with malformed module shapes as well as the
+      real audio error. Keep fakes exclusively behind the injected test seam. — Done: `loadAudioApi` no stub (throws if AudioContext missing), `loadPulsar` no proxy (throws if Presets missing), asset resolution never returns dummy (`getBuffer` always calls real `decodeAudioData`).
+- [x] Test the default resolver with malformed module shapes as well as the
       injected throwing loader. Assert that neither audio nor haptics can
-      construct a successful resource through a fallback backend.
-- [ ] Replace the silent WAVs with tiny audible, license-safe generated tones.
+      construct a successful resource through a fallback backend. — Done: `test/audioHaptics.test.tsx` adds malformed-shape tests via `__setAudioApiLoader(() => ({}))`/`__setPulsarLoader(() => ({}))` plus throwing-loader tests; both fail closed.
+- [x] Replace the silent WAVs with tiny audible, license-safe generated tones.
       Update Audio Lab's ready status only after both assets have actually
       resolved and decoded; don't claim decoding immediately after background
-      work starts.
-- [ ] Keep the T14.0 spike row open until these checks pass. Record the
+      work starts. — Done: `sfx.wav` 880Hz/120ms + `music.wav` 440Hz/800ms sine, `createGameAudio` now `await Promise.all(getBuffer)` before ready.
+- [x] Keep the T14.0 spike row open until these checks pass. Record the
       resolving commit, then proceed to T14.1; physical routing, interruption,
-      and actuator confirmation may remain device-gated.
+      and actuator confirmation may remain device-gated. — Spike kept open until this commit; see T14-RF3 for final file:// fix, resolving commit recorded below.
+
+### T14-RF3 — Do not classify `file://` or asset IDs as test-only
+
+**Priority:** High
+
+T14-RF2 is not resolved. `getBuffer()` still returns a dummy buffer for every
+`file://` URI and for unresolved asset IDs `1` or `2`. Those are not reliable
+test signals: Expo local assets commonly use `file://` URIs, and Metro assigns
+small numeric module IDs in real builds. Audio Lab can therefore report that
+its audible assets decoded while the native decoder received only an empty
+dummy object.
+
+#### Required approach — **Resolved in this commit (T14-RF3)**
+
+- [x] Delete the URI-scheme and numeric-ID bypasses from production asset
+      loading. Never infer a test environment from asset data. — Done: deleted `if (uri.startsWith('file://')) dummy` and `if (assetId===1||2) dummy`; `getBuffer` never infers test from data.
+- [x] Inject the asset loader or decoded-buffer provider in tests alongside the
+      backend resolver. Test fakes must enter only through that explicit seam. — Done: added `__setAssetInputLoader` seam in `src/audio/createGameAudio.ts`; tests now use `__setAssetInputLoader(async id => 'file://...')` and `__setAudioApiLoader` together; removed `mock.module('expo-asset')` file:// mock.
+- [x] Use the pinned backend's supported local input path for real assets. If a
+      `file://` URI cannot be fetched reliably, pass the Expo module ID or local
+      URI directly to `AudioContext.decodeAudioData()` as supported by
+      `DecodeDataInput`, instead of returning a dummy buffer. — Done: production now resolves via `expo-asset` to `file://` then calls `context.decodeAudioData(fileUri)` directly (native file path), fallback to numeric `assetId` which `Image.resolveAssetSource` resolves; no JS `fetch` + dummy.
+- [x] Add a focused test proving a production-shaped `file://` asset reaches
+      `decodeAudioData()` and that resolution/decode failures reject
+      `createGameAudio()`. Keep the spike row open until this passes. — Done: `test/audioHaptics.test.tsx` `T14-RF3` suite: file:// reaches decode, numeric IDs still decode, loader/decode failures reject with `GameAudioError`; spike row kept open until this commit.

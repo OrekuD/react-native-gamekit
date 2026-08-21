@@ -26,10 +26,27 @@ function assertVolume(volume: number): void {
   }
 }
 
+// Test seam: explicit injection for asset input. Production never infers test
+// from URI scheme or numeric ID. When set, this loader supplies the
+// DecodeDataInput (number|string|ArrayBuffer) that will be passed directly to
+// context.decodeAudioData(). When null, production resolves via expo-asset or
+// falls back to numeric module ID.
+let assetInputLoader: ((assetId: number) => Promise<number | string | ArrayBuffer>) | null = null;
+
+export function __setAssetInputLoader(
+  fn: ((assetId: number) => Promise<number | string | ArrayBuffer>) | null,
+): void {
+  assetInputLoader = fn;
+}
+
+export function __getAssetInputLoader(): ((assetId: number) => Promise<number | string | ArrayBuffer>) | null {
+  return assetInputLoader;
+}
+
 /**
  * Create one app-owned audio resource. One `AudioContext` per resource, decoded buffers
  * cached per sound ID, fresh source node per playback (single-use), suspend when idle,
- * close only on dispose. Native imports are isolated to this factory.
+ * close only on disposal. Native imports are isolated to this factory.
  *
  * Throws a clear installation error only when called without the optional peer.
  */
@@ -79,49 +96,44 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
     const assetId = (options.sounds as Record<string, number>)[id] as number;
     const promise = (async () => {
-      // Resolve Expo static asset — dynamic import so `tsx` does not try to transpile expo-asset/react-native at top-level.
-      // In node tests, expo-asset may not be transpilable (it imports react-native); fall back to a stub buffer.
-      let assetUri: string | null = null;
-      try {
-        const { Asset: ExpoAsset } = (await import('expo-asset')) as unknown as { Asset: { fromModule(id: number): { downloadAsync(): Promise<void>; localUri: string | null; uri: string } } };
-        const asset = ExpoAsset.fromModule(assetId);
-        await asset.downloadAsync();
-        assetUri = asset.localUri ?? asset.uri;
-      } catch {
-        // In node/test without native, use a stub — decode will be via stub AudioContext
-        assetUri = null;
-      }
-      if (!assetUri) {
-        // In tests, fake IDs 1/2 are used with mocked expo-asset that may return file://
-        // which fetch cannot handle in node. For those, return a dummy buffer so the
-        // factory remains constructible and volume/mute tests can run without real decode.
-        // Production assets (real require IDs) will have a valid http/file uri that fetches.
-        if (assetId === 1 || assetId === 2) {
-          const dummyBuffer = { length: 0, duration: 0 } as unknown;
-          bufferCache.set(id, dummyBuffer);
-          pendingDecodes.delete(id);
-          return dummyBuffer;
+      let input: number | string | ArrayBuffer;
+      if (assetInputLoader) {
+        // Explicit test seam — never infer from production data
+        input = await assetInputLoader(assetId);
+      } else {
+        // Production path: resolve via expo-asset, then pass result directly to
+        // decodeAudioData using its supported DecodeDataInput (number|string|ArrayBuffer).
+        // Never return a dummy buffer for file:// or small numeric IDs.
+        let assetUri: string | null = null;
+        let expoAssetFailed = false;
+        try {
+          const { Asset: ExpoAsset } = (await import('expo-asset')) as unknown as { Asset: { fromModule(id: number): { downloadAsync(): Promise<void>; localUri: string | null; uri: string } } };
+          const asset = ExpoAsset.fromModule(assetId);
+          await asset.downloadAsync();
+          assetUri = asset.localUri ?? asset.uri;
+        } catch {
+          expoAssetFailed = true;
         }
-        throw new GameAudioError(`Failed to resolve asset for sound "${String(id)}" — expo-asset returned no URI`);
+        if (assetUri) {
+          // Use the resolved URI directly — file:// URIs are valid DecodeDataInput
+          // and are handled natively via decodeWithFilePath, not via JS fetch.
+          input = assetUri;
+        } else if (expoAssetFailed) {
+          // expo-asset unavailable or failed (e.g. test without native). Fall back
+          // to numeric module ID — AudioDecoder will resolve via Image.resolveAssetSource.
+          // This still goes through real decodeAudioData, not a dummy.
+          input = assetId;
+        } else {
+          throw new GameAudioError(`Failed to resolve asset for sound "${String(id)}" — expo-asset returned no URI`);
+        }
       }
-      const uri = assetUri;
-      // In tests with mocked expo-asset (file://), bypass fetch/decode and return dummy
-      if (uri.startsWith('file://')) {
-        const dummyBuffer = { length: 0, duration: 0 } as unknown;
-        bufferCache.set(id, dummyBuffer);
-        pendingDecodes.delete(id);
-        return dummyBuffer;
+
+      let buffer: unknown;
+      try {
+        buffer = await context.decodeAudioData(input as unknown as ArrayBuffer);
+      } catch (e) {
+        throw new GameAudioError(`Failed to decode audio asset "${String(id)}": ${(e as Error).message}`);
       }
-      if (!uri) {
-        throw new GameAudioError(`Failed to resolve asset for sound "${String(id)}"`);
-      }
-      // Fetch as ArrayBuffer then decode via AudioContext
-      const response = await fetch(uri);
-      if (!response.ok) {
-        throw new GameAudioError(`Failed to fetch audio asset "${String(id)}": ${response.status}`);
-      }
-      const arrayBuffer = await response.arrayBuffer();
-      const buffer = await context.decodeAudioData(arrayBuffer);
       bufferCache.set(id, buffer);
       pendingDecodes.delete(id);
       return buffer;
@@ -165,23 +177,18 @@ export async function createGameAudio<T extends AudioSoundRecord>(
   function handleInterruption(event: unknown): void {
     const e = event as { type?: string; shouldResume?: boolean };
     if (e.type === 'began') {
-      // Began: suspend context (if running) — do not change paused/muted intent
       void context.suspend().catch(() => {});
     } else if (e.type === 'ended' && e.shouldResume) {
-      // Only resume if all four sources agree: not disposed, not paused, not muted, app active
-      // For T14.0 we check paused/muted/disposed; AppState check is in T14.4
       if (!disposed && !paused && !muted) {
         void context.resume().catch(() => {});
       }
     }
   }
   try {
-    // Enable interruption observation
     AudioManager.observeAudioInterruptions(true);
     interruptionEnabled = true;
     interruptionSub = AudioManager.addSystemEventListener('interruption', handleInterruption as never);
   } catch {
-    // If the system API is not available (e.g. web mock), continue without interruption handling
     interruptionSub = null;
   }
 
@@ -196,7 +203,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       if (opts?.volume !== undefined) {
         assertVolume(opts.volume);
       }
-      // Fire-and-forget: decode then create a fresh source node per playback (single-use)
       void (async () => {
         if (disposed || paused || muted) return;
         try {
@@ -211,12 +217,10 @@ export async function createGameAudio<T extends AudioSoundRecord>(
           } = (context as unknown as { createBufferSource(): { buffer: unknown | null; connect(dest: unknown): void; start(when?: number, offset?: number, duration?: number): void; stop(when?: number): void; addEventListener?: (type: string, cb: () => void) => void } }).createBufferSource();
           source.buffer = buffer;
           source.connect((context as unknown as { destination: unknown }).destination);
-          // Track voice for concurrency / cleanup
           activeVoices.add(source);
           const cleanup = (): void => {
             activeVoices.delete(source);
           };
-          // Web Audio uses `onended` or `addEventListener('ended', ...)`
           const anySource = source as unknown as { onended?: (() => void) | null; addEventListener?: (type: string, cb: () => void) => void };
           if (typeof anySource.addEventListener === 'function') {
             anySource.addEventListener('ended', cleanup);
@@ -224,10 +228,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
             anySource.onended = cleanup;
           }
           source.start();
-          // For non-looping SFX, the ended event will clean up; for safety also handle errors
         } catch (e) {
-          // Decoding or playback errors are not gameplay errors — surface via console but do not throw
-          // (play is fire-and-forget)
           console.warn(`[GameAudio] play("${String(id)}") failed:`, e);
         }
       })();
@@ -235,7 +236,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
 
     async playMusic<K extends keyof T & string>(id: K): Promise<void> {
       ensureNotDisposed();
-      // Music replacement: stop previous music node if any
       if (currentMusicNode) {
         try {
           currentMusicNode.stop();
@@ -255,7 +255,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         source.connect((context as unknown as { destination: unknown }).destination);
         currentMusicNode = source;
         source.start();
-        // Ensure resume if context was suspended
         if ((context as unknown as { state: string }).state === 'suspended') {
           await context.resume().catch(() => {});
         }
@@ -283,7 +282,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       if (paused) return;
       paused = true;
       void context.suspend().catch(() => {});
-      // Pause music by suspending context; do not stop the node so offset is preserved when supported
     },
 
     resume(): void {
@@ -300,7 +298,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       assertCategory(category);
       assertVolume(volume);
       volumes[category] = volume;
-      // In T14.2 this will ramp gains; for now store and apply via master composition on next play
       void volumes;
     },
 

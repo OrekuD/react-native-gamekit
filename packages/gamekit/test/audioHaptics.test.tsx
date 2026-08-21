@@ -70,18 +70,9 @@ mock.module('react-native-pulsar', {
     },
   },
 });
-mock.module('expo-asset', {
-  defaultExport: {},
-  namedExports: {
-    Asset: {
-      fromModule: () => ({
-        downloadAsync: async () => {},
-        localUri: 'file:///tmp/test.wav',
-        uri: 'file:///tmp/test.wav',
-      }),
-    },
-  },
-});
+// expo-asset is not mocked via mock.module — production code resolves via
+// explicit asset-input seam (__setAssetInputLoader). This keeps file:// and
+// numeric IDs from being treated as test signals.
 
 // This file verifies the T14.0 isolation and error contract without requiring
 // native hardware. Native backends are mocked via node --experimental-test-module-mocks.
@@ -269,3 +260,135 @@ describe('T14.0 haptics preset, mute, throttling', () => {
     haptics.dispose();
   });
 });
+describe('T14-RF3 asset loader seam and file:// handling', () => {
+  it('production-shaped file:// asset reaches decodeAudioData via explicit seam', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    const decodedInputs: unknown[] = [];
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state: 'running' | 'suspended' | 'closed' = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData(input: unknown) {
+          decodedInputs.push(input);
+          return { length: 1, duration: 0.01 } as never;
+        }
+        createBufferSource() {
+          return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never;
+        }
+        createGain() { return {} as never; }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    } as never));
+    __setAssetInputLoader(async (assetId: number) => `file:///tmp/production-${assetId}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 42, music: 7 } });
+    // Both file:// URIs must have been passed directly to decodeAudioData, not swallowed as dummy buffers
+    assert.equal(decodedInputs.length, 2);
+    assert.ok(decodedInputs.includes('file:///tmp/production-42.wav'));
+    assert.ok(decodedInputs.includes('file:///tmp/production-7.wav'));
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+
+  it('numeric asset IDs are not treated as test signals and still decode via seam', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    const decodedInputs: unknown[] = [];
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state: 'running' | 'suspended' | 'closed' = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData(input: unknown) {
+          decodedInputs.push(input);
+          return { length: 2, duration: 0.02 } as never;
+        }
+        createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
+        createGain() { return {} as never; }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    } as never));
+    // Simulate Metro small numeric IDs (1, 2) but via explicit seam — must still reach decoder
+    __setAssetInputLoader(async (assetId: number) => assetId);
+    const audio = await createGameAudio({ sounds: { sfx: 1, music: 2 } });
+    assert.equal(decodedInputs.length, 2);
+    assert.ok(decodedInputs.includes(1));
+    assert.ok(decodedInputs.includes(2));
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+
+  it('resolution and decode failures reject createGameAudio (no dummy fallback)', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    // Resolver success but loader throws
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state: 'running' | 'suspended' | 'closed' = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData() { return { length: 0, duration: 0 } as never; }
+        createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
+        createGain() { return {} as never; }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    } as never));
+    __setAssetInputLoader(async () => { throw new Error('resolve boom'); });
+    await assert.rejects(() => createGameAudio({ sounds: { sfx: 1 } }), /resolve boom/);
+    // Loader succeeds but decode fails
+    __setAssetInputLoader(async (id: number) => `file:///tmp/fail-${id}.wav`);
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state: 'running' | 'suspended' | 'closed' = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData() { throw new Error('decode boom'); }
+        createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
+        createGain() { return {} as never; }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    } as never));
+    await assert.rejects(() => createGameAudio({ sounds: { sfx: 1 } }), /Failed to decode audio asset "sfx": decode boom/);
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+});
+
