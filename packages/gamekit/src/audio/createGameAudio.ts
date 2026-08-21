@@ -499,10 +499,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       userPaused = true;
       void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
-      // Explicit user pause clears interruption denied flag (F2)
-      if (interruptionRequiresExplicitResume) {
-        interruptionRequiresExplicitResume = false;
-      }
+      // FF1: keep denied-interruption flag intact; only explicit resume() clears it
     },
 
     resume(): void {
@@ -535,13 +532,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
 
     setMuted(next: boolean): void {
       ensureNotDisposed();
-      const wasMuted = muted;
       muted = Boolean(next);
-      // Explicit unmute also clears denied interruption if needed
-      if (wasMuted && !muted && interruptionRequiresExplicitResume) {
-        interruptionPaused = false;
-        interruptionRequiresExplicitResume = false;
-      }
       updateSuspendState();
     },
 

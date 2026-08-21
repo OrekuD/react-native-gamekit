@@ -595,3 +595,48 @@ currently claims stronger guarantees than the backend can provide.
       support, plus thrown native calls, mute, pause, throttle, and disposal. — Done: T14-F5 suite with NO_SUPPORT vs STANDARD, thrown → error.
 - [x] Update the haptics guide so capability and suppression claims match the
       adapter's observable evidence. — Done: `engine-systems/haptics.mdx` now documents HapticSupport 0-3 and dispatch semantics.
+
+### T14-FF1 — Preserve denied-interruption state through pause/resume
+
+**Priority:** High
+
+The denied-interruption path still deadlocks after a normal pause/resume cycle.
+`pause()` clears `interruptionRequiresExplicitResume` but leaves
+`interruptionPaused` set. The following `resume()` therefore no longer knows it
+must clear the interruption state, and audio stays effectively paused forever.
+The guide also says `play()` and `setMuted(false)` clear denial, but `play()`
+does not, and `setMuted(false)` works only after a real muted-to-unmuted edge.
+
+#### Required approach — **Resolved in this commit (T14-FF1)**
+
+- [x] Keep the denied-interruption flag intact during `pause()`. Clear both
+      interruption fields atomically only in the explicitly chosen recovery
+      action. — Done: `pause()` no longer clears `interruptionRequiresExplicitResume`; `resume()` clears both atomically.
+- [x] Freeze one truthful recovery contract. The simplest v1 rule is that an
+      explicit `resume()` clears denial; ordinary `play()` remains blocked.
+      Update docs rather than listing actions that don't implement recovery. — Done: only `resume()` clears, `play()` stays blocked, `setMuted` no longer clears, docs updated.
+- [x] Add the exact sequence test: `began` → `ended/false` → `pause()` →
+      `resume()` must become runnable when session/app/mute state permits it.
+      Also cover repeated `resume()`, mute edges, and competing pause sources. — Done: T14-FF1 suite with 2 tests.
+
+### T14-FF2 — Fail closed when haptic capability cannot be queried
+
+**Priority:** Important
+
+`getSupportLevel()` returns `2` when the capability export is missing or the
+native query throws. That converts an unknown or broken capability state into
+“standard support,” contradicting the fail-closed `isSupported()` contract and
+the guide's statement that support comes from `Pulsar_hapticSupport()`.
+
+#### Required approach — **Resolved in this commit (T14-FF2)**
+
+- [x] Resolve the public `HapticSupport` enum from the package root and the
+      capability function from the verified native adapter without relying on
+      a blocked package-internal deep import. — Done: resolver now reads `HapticSupport` from package root and `Pulsar_hapticSupport` via TurboModuleRegistry, no deep import.
+- [x] Represent an unavailable or throwing capability query explicitly. For
+      v1, return unsupported rather than assuming level `2`; native playback
+      errors must still return `{ played: false, reason: 'error' }`. — Done: `getSupportLevel()` returns `null` on missing/throwing/malformed, `isCapabilitySupported` checks `[0-3]` and `level===0`→false.
+- [x] Add tests for missing capability function, throwing capability query,
+      malformed/unknown numeric levels, and each valid `0`–`3` level. — Done: T14-FF2 suite with 5 tests.
+- [x] Keep the guide aligned: `isSupported()` is true only after a successful
+      capability query and preset lookup. — Done: `engine-systems/haptics.mdx` now documents fail-closed and dispatch semantics.

@@ -55,6 +55,9 @@ mock.module('react-native-pulsar', {
         notificationError: () => {},
       },
     },
+    HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
+    Pulsar_hapticSupport: () => 2,
+    getHapticSupport: () => 2,
   },
   namedExports: {
     Presets: {
@@ -68,6 +71,9 @@ mock.module('react-native-pulsar', {
         notificationError: () => {},
       },
     },
+    HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
+    Pulsar_hapticSupport: () => 2,
+    getHapticSupport: () => 2,
   },
 });
 // expo-asset is not mocked via mock.module — production code resolves via
@@ -856,6 +862,218 @@ describe('T14-F5 haptic capability truthful', () => {
     const h=createGameHaptics();
     const r=h.play('impact');
     assert.equal(r.played, false);
+    assert.equal(r.reason, 'error');
+    h.dispose();
+    __setPulsarLoader(null);
+  });
+});
+
+describe('T14-FF1 denied interruption through pause/resume', () => {
+  it('began -> ended/false -> pause -> resume becomes runnable', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    let suspended=false;
+    let handler: (e: unknown)=>void = ()=>{};
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state = 'running';
+        currentTime=0;
+        destination={};
+        sampleRate=44100;
+        async decodeAudioData(){ return { length: 1, duration: 0.01 } as never; }
+        createBufferSource(){ return { buffer:null, loop:false, connect(){}, start(){}, stop(){} } as never; }
+        createGain(){ return { gain:{value:1}, connect(){} } as never; }
+        async suspend(){ suspended=true; (this as unknown as { state:string }).state='suspended'; }
+        async resume(){ suspended=false; (this as unknown as { state:string }).state='running'; }
+        async close(){}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate:()=>44100,
+        addSystemEventListener:(_n:string, cb:(e:unknown)=>void)=>{ handler=cb; return { remove(){} }; },
+        observeAudioInterruptions:()=>{},
+      },
+    } as never));
+    __setAssetInputLoader(async (id)=>`file:///tmp/${id}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    handler({ type: 'began' });
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    handler({ type: 'ended', shouldResume: false });
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    audio.pause();
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    // resume must clear denied and become runnable
+    audio.resume();
+    await new Promise((r)=>setTimeout(r, 10));
+    assert.equal(suspended, false);
+    // repeated resume is idempotent
+    audio.resume();
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, false);
+    // play() should not clear denial - test by re-triggering denial and trying play
+    handler({ type: 'began' });
+    await new Promise((r)=>setTimeout(r, 5));
+    handler({ type: 'ended', shouldResume: false });
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    // play while denied should remain suspended (play is blocked)
+    audio.play('sfx');
+    await new Promise((r)=>setTimeout(r, 10));
+    assert.equal(suspended, true);
+    // mute edge should not clear denial per new contract (only resume)
+    audio.setMuted(true);
+    audio.setMuted(false);
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    // explicit resume clears
+    audio.resume();
+    await new Promise((r)=>setTimeout(r, 10));
+    assert.equal(suspended, false);
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+
+  it('competing pause sources keep suspended until all clear', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    let suspended=false;
+    let handler: (e: unknown)=>void = ()=>{};
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state = 'running';
+        currentTime=0;
+        destination={};
+        sampleRate=44100;
+        async decodeAudioData(){ return { length: 1, duration: 0.01 } as never; }
+        createBufferSource(){ return { buffer:null, loop:false, connect(){}, start(){}, stop(){} } as never; }
+        createGain(){ return { gain:{value:1}, connect(){} } as never; }
+        async suspend(){ suspended=true; (this as unknown as { state:string }).state='suspended'; }
+        async resume(){ suspended=false; (this as unknown as { state:string }).state='running'; }
+        async close(){}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate:()=>44100,
+        addSystemEventListener:(_n:string, cb:(e:unknown)=>void)=>{ handler=cb; return { remove(){} }; },
+        observeAudioInterruptions:()=>{},
+      },
+    } as never));
+    __setAssetInputLoader(async (id)=>`file:///tmp/${id}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    // Denied interruption
+    handler({ type: 'began' });
+    handler({ type: 'ended', shouldResume: false });
+    await new Promise((r)=>setTimeout(r, 5));
+    // User pause as well
+    audio.pause();
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    audio.resume();
+    await new Promise((r)=>setTimeout(r, 5));
+    // Still suspended because interruption denied still requires explicit resume? Actually resume cleared it, so should be false now
+    // But we had competing: after resume, denied cleared, userPaused false, so should be false
+    assert.equal(suspended, false);
+    // Re-deny and test session pause competing
+    handler({ type: 'began' });
+    handler({ type: 'ended', shouldResume: false });
+    await new Promise((r)=>setTimeout(r, 5));
+    (audio as unknown as { _setSessionPaused: (p:boolean)=>void })._setSessionPaused(true);
+    await new Promise((r)=>setTimeout(r, 5));
+    assert.equal(suspended, true);
+    audio.resume();
+    await new Promise((r)=>setTimeout(r, 5));
+    // Still suspended because sessionPaused true
+    assert.equal(suspended, true);
+    (audio as unknown as { _setSessionPaused: (p:boolean)=>void })._setSessionPaused(false);
+    await new Promise((r)=>setTimeout(r, 5));
+    // Still suspended because denied still needs explicit? Actually resume already cleared denied, so after session false, should be false
+    // But we already cleared denied on previous resume, so now should be false
+    assert.equal(suspended, false);
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+});
+
+describe('T14-FF2 haptic capability fail-closed', () => {
+  it('missing capability function is unsupported not standard', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(()=>({
+      Presets: { System: { impactMedium: () => {} } },
+    } as never));
+    const h=createGameHaptics();
+    assert.equal(h.isSupported('impact'), false);
+    assert.equal(h.play('impact').reason, 'unsupported');
+    h.dispose();
+    __setPulsarLoader(null);
+  });
+
+  it('throwing capability query is unsupported and play is unsupported', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(()=>({
+      Presets: { System: { impactMedium: () => {} } },
+      Pulsar_hapticSupport: () => { throw new Error('boom'); },
+    } as never));
+    const h=createGameHaptics();
+    assert.equal(h.isSupported('impact'), false);
+    const r=h.play('impact');
+    assert.equal(r.played, false);
+    assert.equal(r.reason, 'unsupported');
+    h.dispose();
+    __setPulsarLoader(null);
+  });
+
+  it('malformed numeric levels are unsupported', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    for (const lvl of [99, -1, NaN, Infinity as unknown as number]) {
+      __setPulsarLoader(()=>({
+        Presets: { System: { impactMedium: () => {} } },
+        Pulsar_hapticSupport: () => lvl,
+      } as never));
+      const h=createGameHaptics();
+      assert.equal(h.isSupported('impact'), false, `lvl ${String(lvl)}`);
+      assert.equal(h.play('impact').reason, 'unsupported');
+      h.dispose();
+    }
+    __setPulsarLoader(null);
+  });
+
+  it('each valid level 0-3 has correct support', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const cases: [number, boolean][] = [[0,false],[1,true],[2,true],[3,true]];
+    for (const [lvl, expected] of cases) {
+      __setPulsarLoader(()=>({
+        Presets: { System: { impactMedium: () => {} } },
+        Pulsar_hapticSupport: () => lvl,
+        HapticSupport: { NO_SUPPORT:0, LIMITED_SUPPORT:1, STANDARD_SUPPORT:2, ADVANCED_SUPPORT:3 },
+      } as never));
+      const h=createGameHaptics();
+      assert.equal(h.isSupported('impact'), expected, `lvl ${lvl}`);
+      const r=h.play('impact');
+      if (expected) assert.equal(r.played, true);
+      else assert.equal(r.reason, 'unsupported');
+      h.dispose();
+    }
+    __setPulsarLoader(null);
+  });
+
+  it('thrown native preset still returns error not throw', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(()=>({
+      Presets: { System: { impactMedium: () => { throw new Error('native'); } } },
+      Pulsar_hapticSupport: () => 2,
+    } as never));
+    const h=createGameHaptics();
+    const r=h.play('impact');
     assert.equal(r.reason, 'error');
     h.dispose();
     __setPulsarLoader(null);

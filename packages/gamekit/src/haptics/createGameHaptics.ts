@@ -52,29 +52,36 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   }
   const { Presets } = pulsar;
 
-  // Capability: query Pulsar's HapticSupport when available
-  function getSupportLevel(): number {
+  // Capability: query Pulsar's HapticSupport when available — fail closed (FF2)
+  function getSupportLevel(): number | null {
     try {
-      const pAny = pulsar as unknown as { getHapticSupport?: ()=>number; Pulsar_hapticSupport?: ()=>number; HapticSupport?: Record<string, number> };
-      if (typeof pAny.getHapticSupport === 'function') return pAny.getHapticSupport();
-      if (typeof pAny.Pulsar_hapticSupport === 'function') return pAny.Pulsar_hapticSupport();
-      // Try TurboModule directly
+      const pAny = pulsar as unknown as { getHapticSupport?: ()=>number; Pulsar_hapticSupport?: ()=>number };
+      if (typeof pAny.getHapticSupport === 'function') {
+        const v = pAny.getHapticSupport();
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+      }
+      if (typeof pAny.Pulsar_hapticSupport === 'function') {
+        const v = pAny.Pulsar_hapticSupport();
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+      }
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const RN = require('react-native') as { TurboModuleRegistry?: { getEnforcing: (n:string)=>{ Pulsar_hapticSupport?: ()=>number } } };
         const spec = RN.TurboModuleRegistry?.getEnforcing?.('RNPulsar') as { Pulsar_hapticSupport?: ()=>number } | undefined;
-        if (spec?.Pulsar_hapticSupport) return spec.Pulsar_hapticSupport();
+        if (spec?.Pulsar_hapticSupport) {
+          const v = spec.Pulsar_hapticSupport();
+          if (typeof v === 'number' && Number.isFinite(v)) return v;
+        }
       } catch {}
     } catch {}
-    // Fallback: if Presets exists, assume STANDARD (2) — tests with mock will hit this
-    return 2;
+    return null;
   }
 
   function isCapabilitySupported(_preset: HapticPreset): boolean {
     const level = getSupportLevel();
+    if (level === null) return false;
+    if (![0, 1, 2, 3].includes(level)) return false;
     if (level === 0) return false; // NO_SUPPORT
-    // For v1, all presets require at least LIMITED (1); advanced presets would need 3 but we treat LIMITED as sufficient for System presets
-    // If limited, still allow System presets (they are the base set)
     return true;
   }
 
