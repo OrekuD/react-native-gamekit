@@ -29,6 +29,8 @@
     "engine-systems/collision2d",
     "engine-systems/camera2d",
     "engine-systems/events",
+    "engine-systems/audio",
+    "engine-systems/haptics",
     "---React---",
     "react/how-gamekit-uses-react",
     "react/components",

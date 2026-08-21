@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 mock.module('react-native-audio-api', {
   defaultExport: {
     AudioContext: class {
-      state: 'running' | 'suspended' | 'closed' = 'running';
+      state = 'running';
       currentTime = 0;
       destination = {};
       sampleRate = 44100;
@@ -24,7 +24,7 @@ mock.module('react-native-audio-api', {
   },
   namedExports: {
     AudioContext: class {
-      state: 'running' | 'suspended' | 'closed' = 'running';
+      state = 'running';
       currentTime = 0;
       destination = {};
       sampleRate = 44100;
@@ -268,7 +268,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
     const decodedInputs: unknown[] = [];
     __setAudioApiLoader(async () => ({
       AudioContext: class {
-        state: 'running' | 'suspended' | 'closed' = 'running';
+        state = 'running';
         currentTime = 0;
         destination = {};
         sampleRate = 44100;
@@ -308,7 +308,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
     const decodedInputs: unknown[] = [];
     __setAudioApiLoader(async () => ({
       AudioContext: class {
-        state: 'running' | 'suspended' | 'closed' = 'running';
+        state = 'running';
         currentTime = 0;
         destination = {};
         sampleRate = 44100;
@@ -346,7 +346,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
     // Resolver success but loader throws
     __setAudioApiLoader(async () => ({
       AudioContext: class {
-        state: 'running' | 'suspended' | 'closed' = 'running';
+        state = 'running';
         currentTime = 0;
         destination = {};
         sampleRate = 44100;
@@ -369,7 +369,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
     __setAssetInputLoader(async (id: number) => `file:///tmp/fail-${id}.wav`);
     __setAudioApiLoader(async () => ({
       AudioContext: class {
-        state: 'running' | 'suspended' | 'closed' = 'running';
+        state = 'running';
         currentTime = 0;
         destination = {};
         sampleRate = 44100;
@@ -392,3 +392,156 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
   });
 });
 
+describe('T14.2 audio concurrency and gains', () => {
+  it('enforces per-key concurrency with drop-new (stable order)', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    let _decodeCount=0;
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state = 'running';
+        currentTime=0;
+        destination={};
+        sampleRate=44100;
+        async decodeAudioData(){ _decodeCount++; return { length: 1, duration: 0.01 } as never; }
+        createBufferSource(){ return { buffer:null, loop:false, connect(){}, start(){}, stop(){}, addEventListener(){} } as never; }
+        createGain(){ return { gain: { value:1, cancelScheduledValues(){}, setValueAtTime(){}, linearRampToValueAtTime(){} }, connect(){} } as never; }
+        async suspend(){}
+        async resume(){}
+        async close(){}
+      },
+      AudioManager: { getDevicePreferredSampleRate:()=>44100, addSystemEventListener:()=>({remove(){}}), observeAudioInterruptions:()=>{} },
+    } as never));
+    __setAssetInputLoader(async (id)=>`file:///tmp/${id}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    // Play 5 times with limit 2, drop-new => only 2 should be admitted
+    for(let i=0;i<5;i++) audio.play('sfx', { concurrency: { key: 'k', limit: 2, overflow: 'drop-new' } });
+    // Give async play a tick to register voices
+    await new Promise((r)=>setTimeout(r, 20));
+    const count = (audio as unknown as { _getConcurrencyCount: (k:string)=>number })._getConcurrencyCount('k');
+    assert.equal(count, 2);
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+
+  it('stop-oldest replaces oldest voice', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state = 'running';
+        currentTime=0;
+        destination={};
+        sampleRate=44100;
+        async decodeAudioData(){ return { length: 1, duration: 0.01 } as never; }
+        createBufferSource(){ return { buffer:null, loop:false, connect(){}, start(){}, stop(){}, addEventListener(){} } as never; }
+        createGain(){ return { gain: { value:1, cancelScheduledValues(){}, setValueAtTime(){}, linearRampToValueAtTime(){} }, connect(){} } as never; }
+        async suspend(){}
+        async resume(){}
+        async close(){}
+      },
+      AudioManager: { getDevicePreferredSampleRate:()=>44100, addSystemEventListener:()=>({remove(){}}), observeAudioInterruptions:()=>{} },
+    } as never));
+    __setAssetInputLoader(async (id)=>`file:///tmp/${id}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    for(let i=0;i<3;i++) audio.play('sfx', { concurrency: { key: 'k2', limit: 2, overflow: 'stop-oldest' } });
+    await new Promise((r)=>setTimeout(r, 20));
+    const count = (audio as unknown as { _getConcurrencyCount: (k:string)=>number })._getConcurrencyCount('k2');
+    assert.equal(count, 2);
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+
+  it('setVolume validates and composes master * category via gains', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state = 'running';
+        currentTime=0;
+        destination={};
+        sampleRate=44100;
+        async decodeAudioData(){ return { length: 1, duration: 0.01 } as never; }
+        createBufferSource(){ return { buffer:null, loop:false, connect(){}, start(){}, stop(){} } as never; }
+        createGain(){ return { gain: { value:1, cancelScheduledValues(){}, setValueAtTime(){}, linearRampToValueAtTime(){} }, connect(){} } as never; }
+        async suspend(){}
+        async resume(){}
+        async close(){}
+      },
+      AudioManager: { getDevicePreferredSampleRate:()=>44100, addSystemEventListener:()=>({remove(){}}), observeAudioInterruptions:()=>{} },
+    } as never));
+    __setAssetInputLoader(async (id)=>`file:///tmp/${id}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    audio.setVolume('sfx', 0.5);
+    assert.equal(audio.getVolume('sfx'), 0.5);
+    audio.setVolume('master', 0.8);
+    assert.equal(audio.getVolume('master'), 0.8);
+    // master * sfx composes, but stored volumes are independent
+    assert.throws(()=>audio.setVolume('sfx', 2), /Volume must be a finite number in \[0, 1\]/);
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+});
+
+describe('T14.4 audio lifecycle and interruptions', () => {
+  it('session pause suspends and resume restores when other sources agree', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { __setAssetInputLoader } = await import('../src/audio/createGameAudio.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    let suspended=false;
+    __setAudioApiLoader(async () => ({
+      AudioContext: class {
+        state = 'running';
+        currentTime=0;
+        destination={};
+        sampleRate=44100;
+        async decodeAudioData(){ return { length: 1, duration: 0.01 } as never; }
+        createBufferSource(){ return { buffer:null, loop:false, connect(){}, start(){}, stop(){} } as never; }
+        createGain(){ return { gain: { value:1 }, connect(){} } as never; }
+        async suspend(){ suspended=true; (this as unknown as { state:string }).state='suspended'; }
+        async resume(){ suspended=false; (this as unknown as { state:string }).state='running'; }
+        async close(){}
+      },
+      AudioManager: { getDevicePreferredSampleRate:()=>44100, addSystemEventListener:()=>({remove(){}}), observeAudioInterruptions:()=>{} },
+    } as never));
+    __setAssetInputLoader(async (id)=>`file:///tmp/${id}.wav`);
+    const audio = await createGameAudio({ sounds: { sfx: 1 } });
+    // Initially not suspended
+    (audio as unknown as { _setSessionPaused: (p:boolean)=>void })._setSessionPaused(true);
+    // allow suspend tick
+    await new Promise((r)=>setTimeout(r, 10));
+    assert.equal(suspended, true);
+    (audio as unknown as { _setSessionPaused: (p:boolean)=>void })._setSessionPaused(false);
+    await new Promise((r)=>setTimeout(r, 10));
+    assert.equal(suspended, false);
+    audio.dispose();
+    __setAssetInputLoader(null);
+    __setAudioApiLoader(null);
+  });
+});
+
+describe('T14.5 haptics paused and background', () => {
+  it('drops haptics while paused or backgrounded', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    (h as unknown as { _setPaused: (p:boolean)=>void })._setPaused(true);
+    let r=h.play('impact');
+    assert.equal(r.played, false);
+    assert.equal(r.reason, 'paused');
+    (h as unknown as { _setPaused: (p:boolean)=>void })._setPaused(false);
+    (h as unknown as { _setBackgrounded: (b:boolean)=>void })._setBackgrounded(true);
+    r=h.play('impact');
+    assert.equal(r.played, false);
+    assert.equal(r.reason, 'paused');
+    (h as unknown as { _setBackgrounded: (b:boolean)=>void })._setBackgrounded(false);
+    r=h.play('impact');
+    assert.equal(r.played, true);
+    h.dispose();
+  });
+});

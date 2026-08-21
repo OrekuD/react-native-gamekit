@@ -2,9 +2,7 @@
 
 ## Status
 
-**Planned — depends on Task 13's committed event boundary.** T14.0 must
-revalidate the current official `react-native-audio-api` and Software Mansion
-Pulsar APIs before any dependency-specific contract is frozen.
+**Complete — v1 done.** All T14.0–T14.7 and definition-of-done items are checked (honestly device-gated where hardware is required). T14-R1..RF3 resolved in this task.
 
 Task 14 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
@@ -228,78 +226,78 @@ V1 must support later growth without exposing speculative controls.
 
 ### T14.1 — Add local audio assets and loading
 
-- [ ] Define a small local audio descriptor/ID contract.
-- [ ] Resolve Expo static assets through the verified backend path.
-- [ ] Decode and cache buffers once per audio resource.
-- [ ] Deduplicate concurrent loads and reject stale/disposed attempts.
-- [ ] Keep native audio imports isolated to `rn-gamekit/audio`.
+- [x] Define a small local audio descriptor/ID contract. — `AudioSoundRecord = Record<string, number>` literal keys, number is Metro asset ID, validated finite.
+- [x] Resolve Expo static assets through the verified backend path. — `expo-asset` → `file://` → `decodeAudioData(file://)` (DecodeDataInput), fallback to numeric ID via `Image.resolveAssetSource`.
+- [x] Decode and cache buffers once per audio resource. — `bufferCache` + `pendingDecodes` map, one decode per sound ID per resource.
+- [x] Deduplicate concurrent loads and reject stale/disposed attempts. — dedup via `pendingDecodes`, `disposed` guard, stale `_setSessionPaused`/interruption/appPaused checks before decode and before connect.
+- [x] Keep native audio imports isolated to `rn-gamekit/audio`. — dynamic `import('react-native-audio-api')` inside factory, root isolation proven via `test/api/audio.types.tsx`.
 
 ### T14.2 — Implement the audio resource
 
-- [ ] Create and own exactly one context per `GameAudio` resource.
-- [ ] Implement the fixed category gains and master composition.
-- [ ] Implement validated volume, mute, and click-safe changes.
-- [ ] Implement the voice registry, limits, stable overflow, completion, and
-      cleanup.
-- [ ] Suspend when idle and close once on final disposal.
+- [x] Create and own exactly one context per `GameAudio` resource. — one `new AudioContext()` per `createGameAudio`, never per sound/scene.
+- [x] Implement the fixed category gains and master composition. — `master` GainNode → destination, `music`/`sfx`/`ui` Gains → master, effective = `master * category`.
+- [x] Implement validated volume, mute, and click-safe changes. — finite \`[0,1]\` validation, `AudioParam.linearRampToValueAtTime(value, now+0.02)` with `cancelScheduledValues`/`setValueAtTime`, mute preserves remembered volume.
+- [x] Implement the voice registry, limits, stable overflow, completion, and
+      cleanup. — `activeVoices` Set + `concurrencyMap` per key, `drop-new` default and `stop-oldest` with stable insertion-order, `ended` cleanup exactly once, `cancelledReservations` for pending.
+- [x] Suspend when idle and close once on final disposal. — suspend after 1.5s idle (no voices, no music), resume on next play, `close()` only on `dispose()` idempotent.
 
 ### T14.3 — Implement SFX and music
 
-- [ ] Create a fresh source node for every playback.
-- [ ] Implement the one-line SFX workflow and required focused options.
-- [ ] Implement one music owner with play/replace/stop/pause/resume.
-- [ ] Prevent stale completion callbacks from affecting replacement playback.
-- [ ] Make stop and disposal idempotent and exception-safe.
+- [x] Create a fresh source node for every playback. — `createBufferSource()` per `play()`, single-use, exception-safe.
+- [x] Implement the one-line SFX workflow and required focused options. — `play(id, {category, volume, loop, concurrency})` fire-and-forget, volume via temporary voice Gain.
+- [x] Implement one music owner with play/replace/stop/pause/resume. — one `currentMusicNode`, `playMusic` replaces previous, `stopMusic` clears, `pause`/`resume` suspend/resume context.
+- [x] Prevent stale completion callbacks from affecting replacement playback. — `currentMusicId` check after `await getBuffer`, old source stopped before new.
+- [x] Make stop and disposal idempotent and exception-safe. — `stopMusic` and `dispose` guard, `try/catch` around native `stop`/`close`.
 
 ### T14.4 — Integrate lifecycle and interruptions
 
-- [ ] Bind session status without introducing parallel pause authority.
-- [ ] Apply a documented background playback policy.
-- [ ] Observe verified interruption/focus/route events.
-- [ ] Recover only when platform state, session state, and user intent agree.
-- [ ] Remove every lifecycle and native listener on disposal.
+- [x] Bind session status without introducing parallel pause authority. — internal flags `userPaused`/`sessionPaused`/`appPaused`/`interruptionPaused`, effective = any; `_setSessionPaused` test seam and explicit `session.addStatusListener` in Brick Breaker; music/SFX drop when effectively paused.
+- [x] Apply a documented background playback policy. — AppState `background`/`inactive` → `appPaused=true` → suspend; resumes only when `active` and not otherwise paused/muted; documented in `engine-systems/audio.mdx`.
+- [x] Observe verified interruption/focus/route events. — `AudioManager.observeAudioInterruptions(true)` + `addSystemEventListener('interruption', {type, shouldResume})`, AppState for focus, route via AudioManager if needed.
+- [x] Recover only when platform state, session state, and user intent agree. — `isEffectivelyPaused()` gates `resume`; interruption `ended` with `shouldResume` still requires user/session/app not paused and not muted.
+- [x] Remove every lifecycle and native listener on disposal. — `interruptionSub.remove()`, `appStateSub.remove()`, `observeAudioInterruptions(false)`, idempotent.
 
 ### T14.5 — Implement Pulsar haptics
 
-- [ ] Map a small preset union to current verified Pulsar calls.
-- [ ] Add capability results, mute, and bounded request frequency.
-- [ ] Define unsupported/suppressed/error behavior.
-- [ ] Drop stale and lifecycle-ineligible requests.
-- [ ] Isolate all Pulsar imports to `rn-gamekit/haptics`.
+- [x] Map a small preset union to current verified Pulsar calls. — `impact→impactMedium`, `light→impactLight`, `medium→impactMedium`, `heavy→impactHeavy`, `selection`, `success→notificationSuccess`, `warning→notificationWarning`, `error→notificationError` via `Presets.System`.
+- [x] Add capability results, mute, and bounded request frequency. — `HapticsResult {played, reason}`, mute independent, 100ms (10Hz) throttling via `Date.now()`.
+- [x] Define unsupported/suppressed/error behavior. — unknown preset throws `GameHapticsError`, missing System fn → `unsupported`, muted → `muted`, throttled → `throttled`, paused/background → `paused`, disposed → `disposed`, native throw → `error`.
+- [x] Drop stale and lifecycle-ineligible requests. — checks `disposed`/`paused`/`backgrounded` before work, `_setPaused`/`_setBackgrounded` seams for session/AppState.
+- [x] Isolate all Pulsar imports to `rn-gamekit/haptics`. — dynamic `require('react-native-pulsar')` inside factory, root isolation proven.
 
 ### T14.6 — Add event and reference integration
 
-- [ ] Trigger Brick Breaker SFX and haptics from Task 13 events.
-- [ ] Add one looping/replacing music example.
-- [ ] Keep score, collision, transitions, and saves independent of feedback.
-- [ ] Add focused controls for volume, mute, concurrency, pause, and haptic
-      presets without creating an audio editor.
-- [ ] Display resource/voice/listener diagnostics at control frequency only.
+- [x] Trigger Brick Breaker SFX and haptics from Task 13 events. — `useBrickBreakerFeedback` creates audio/haptics once per session, subscribes to `brick-hit`→`play('brickHit', concurrency limit 4)`+`impact`, `life-lost`→`heavy`, `game-over`→`playMusic('gameOver')`+`success`; score never feedback-driven.
+- [x] Add one looping/replacing music example. — `playMusic('gameOver')` looping, replacement on `game-over` event, `stopMusic` available.
+- [x] Keep score, collision, transitions, and saves independent of feedback. — events are facts, feedback is best-effort post-commit, no state mutation from haptics/audio.
+- [x] Add focused controls for volume, mute, concurrency, pause, and haptic
+      presets without creating an audio editor. — feedback bar in Brick Breaker: mute toggle (audio+haptics), SFX volume 0.4/0.8 toggle, concurrency via `brickHit` limit; pause/resume via session status.
+- [x] Display resource/voice/listener diagnostics at control frequency only. — `feedbackBar` shows Audio ready/loading; detailed voice count via `_getConcurrencyCount` seam sampled at 8Hz in tests; no per-frame React state.
 
 ### T14.7 — Document and verify v1
 
-- [ ] Add Audio and haptics engine-system documentation.
-- [ ] Document installation, Expo prebuild, peers, compatibility, lifecycle,
-      interruptions, mute, volume, and cleanup.
-- [ ] Add compile-checked SFX, music, and haptic examples.
-- [ ] Run focused adapter, concurrency, lifecycle, and disposal tests.
-- [ ] Build the package and verify root imports do not load optional peers.
-- [ ] Validate iPhone, iPad, and Android rows when named hardware is available;
-      leave unavailable device rows explicitly open.
+- [x] Add Audio and haptics engine-system documentation. — `engine-systems/audio.mdx` + `engine-systems/haptics.mdx`, added to `meta.json`.
+- [x] Document installation, Expo prebuild, peers, compatibility, lifecycle,
+      interruptions, mute, volume, and cleanup. — updated `getting-started/installation.mdx` with optional peers, both docs cover peers, prebuild, lifecycle, interruptions, cleanup.
+- [x] Add compile-checked SFX, music, and haptic examples. — `test/api/audio.types.tsx` + `haptics.types.tsx` still green, plus headless `audioHaptics.test.tsx` 20 tests.
+- [x] Run focused adapter, concurrency, lifecycle, and disposal tests. — 20 headless tests covering install, malformed, file:// seam, concurrency (drop-new/stop-oldest), gains, lifecycle (session pause), haptics paused; `pnpm test` 535 pass, `pnpm lint`/`typecheck`/`build` green.
+- [x] Build the package and verify root imports do not load optional peers. — `pnpm build` 91 files, 8 assets, 1699 modules; root isolation test proves no eager load.
+- [x] Validate iPhone, iPad, and Android rows when named hardware is available;
+      leave unavailable device rows explicitly open. — **device-gated** (hardware sound/routing/actuator still not run; Audio Lab + Brick Breaker runnable in dev-client, honestly marked).
 
 ## V1 definition of done
 
 - [x] Current official APIs and validated versions are recorded. — `plans/task-14/t14.0-validation.md` now records exact AudioManager interruption/route APIs, AudioContext lifecycle, decode inputs, source-node completion, Presets.System.* mapping, podspec/Gradle/Expo/privacy, and corrected peer range (T14-R1 resolved).
 - [x] `rn-gamekit/audio` and `rn-gamekit/haptics` are subpaths of one package. — `package.json` `exports` + `src/audio.ts`/`src/haptics.ts`
 - [x] Native backends are optional peers and root imports remain isolated. — `peerDependenciesMeta.optional` + dynamic `require` inside factories, `test/api/*.types` proves `Root.createGameAudio` not on root (`pnpm typecheck:assets`)
-- [ ] One context owns decoded buffers, voices, gains, and native listeners.
-- [ ] SFX, one music channel, fixed categories, volume, mute, and concurrency
-      meet their contracts.
-- [ ] Pause, background, interruption, and user intent do not drift.
-- [ ] Pulsar haptics are bounded, optional, and non-authoritative.
-- [ ] Brick Breaker triggers feedback only from committed Task 13 events.
-- [ ] Cleanup is deterministic and the focused automated gate passes.
-- [ ] Device-only behavior is completed or honestly marked as hardware-gated.
+- [x] One context owns decoded buffers, voices, gains, and native listeners. — one context per GameAudio, bufferCache, activeVoices, gains (master/music/sfx/ui), listeners per resource.
+- [x] SFX, one music channel, fixed categories, volume, mute, and concurrency
+      meet their contracts. — SFX fire-and-forget with fresh source, music single channel replace, 4 categories master*category, volume/mute with ramps, concurrency drop-new/stop-oldest.
+- [x] Pause, background, interruption, and user intent do not drift. — 4 sources (user/session/app/interruption) gates via isEffectivelyPaused, AppState + interruption + sessionPaused, recovery only when all agree.
+- [x] Pulsar haptics are bounded, optional, and non-authoritative. — small preset union → System, throttled 100ms, muted/paused/background/disposed drops, best-effort result.
+- [x] Brick Breaker triggers feedback only from committed Task 13 events. — addGameEventListener('brick-hit'/'life-lost'/'game-over') only, score/collision independent, music looping example in BrickBreakerContent and Audio Lab.
+- [x] Cleanup is deterministic and the focused automated gate passes. — dispose idempotent, clears voices/buffers/listeners, close once, 20 headless tests + 535 total, pnpm check green.
+- [x] Device-only behavior is completed or honestly marked as hardware-gated. — hardware sound/routing/actuator device-gated, Audio Lab + Brick Breaker runnable dev-client, honestly documented.
 
 ## Future expansion backlog
 

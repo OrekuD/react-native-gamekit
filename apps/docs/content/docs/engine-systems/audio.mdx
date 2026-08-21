@@ -1,0 +1,179 @@
+---
+title: Audio
+description: "One AudioContext per GameAudio, fixed category gains, fire-and-forget SFX, one music channel, and lifecycle-aware suspend and resume."
+---
+
+Audio lets you play short effects and one music track without exposing native graph objects or letting feedback become gameplay authority. One `GameAudio` owns its `AudioContext`, decoded buffers, gains, voices, and listeners. Scenes never store native handles.
+
+## Installation and peers
+
+Audio is a subpath export, not a separate package. Importing `rn-gamekit` or `rn-gamekit/react` does not load the native backend.
+
+```ts
+import { createGameAudio } from 'rn-gamekit/audio';
+```
+
+Declare the optional peer and rebuild with Expo prebuild or bare React Native:
+
+```bash
+npx expo install react-native-audio-api react-native-worklets
+npx expo prebuild
+# or
+npx expo run:ios
+npx expo run:android
+```
+
+Peers are optional: `react-native-audio-api ^0.13.3` and `react-native-pulsar ^1.7.0`. If you call `createGameAudio()` without the peer, it throws an actionable error that tells you the install command. Expo Go is not supported.
+
+Compatibility matches the revalidation gate: iOS 14.0, Android `minSdk 24`, New Architecture required, RN 0.86, Expo 57.
+
+## Creating the resource
+
+Create once, at the screen or app level, and reuse it. The factory decodes each asset once and caches the buffer.
+
+```ts
+import { createGameAudio } from 'rn-gamekit/audio';
+
+const audio = await createGameAudio({
+  sounds: {
+    brickHit: require('./audio/brick-hit.wav'),
+    levelMusic: require('./audio/level-music.mp3'),
+  },
+});
+```
+
+`require('./audio/...')` must be a static literal so Metro can bundle the asset. The type preserves literal sound keys, so `audio.play('brickHit')` is checked and `audio.play('unknown')` fails at compile time.
+
+`createGameAudio` takes `DecodeDataInput` (`number | string | ArrayBuffer`). For bundled assets it resolves the Expo module ID to a `file://` URI via `expo-asset` and passes that URI directly to `AudioContext.decodeAudioData()`, which decodes natively via `decodeWithFilePath`. If `expo-asset` is unavailable in a test, it falls back to decoding the numeric ID via `Image.resolveAssetSource`. No `fetch` + dummy buffer is used in production.
+
+Decode is deduplicated. Concurrent requests for the same sound share one promise. A failed decode rejects creation with `GameAudioError` — you will see the error, not silence.
+
+Keep native imports isolated to `rn-gamekit/audio`. The rest of your game never imports `react-native-audio-api`.
+
+## One context
+
+One `GameAudio` owns one `AudioContext`. Never create a context per sound, scene, or render. The context is suspended when idle and closed once on `dispose()`.
+
+```ts
+audio.dispose(); // idempotent, clears voices, listeners, buffers, and closes context
+audio.play('brickHit'); // after dispose, throws GameAudioError
+```
+
+Dispose exactly once when the owning screen unmounts. It removes interruption, route, and AppState listeners and rejects new work.
+
+## Volume categories and mute
+
+Four fixed categories: `master`, `music`, `sfx`, and `ui`.
+
+```ts
+audio.setVolume('sfx', 0.8);
+audio.setVolume('master', 1);
+audio.getVolume('music'); // 1
+audio.setMuted(true);
+audio.isMuted(); // true
+```
+
+Values are finite numbers in `[0, 1]`. Muting does not overwrite the remembered volume. `master` composes with the selected category: effective gain is `master * category`. Changes ramp over ~20ms via `AudioParam.linearRampToValueAtTime` to avoid clicks. For per-play volume, pass `volume` in `play` options — that creates a temporary voice gain that composes with the category.
+
+## Playing sound effects
+
+```ts
+audio.play('brickHit');
+audio.play('brickHit', { category: 'sfx', volume: 0.7 });
+audio.play('brickHit', { loop: true });
+```
+
+Each `play()` creates a fresh `AudioBufferSourceNode` because source nodes are single-use. The node connects to the category gain, then to master, then to destination. Cleanup on `ended` removes the voice exactly once.
+
+Transient SFX do not replay after pause, background, or interruption.
+
+### Concurrency
+
+Limit how many copies of the same sound can overlap:
+
+```ts
+audio.play('brickHit', {
+  concurrency: { key: 'brickHit', limit: 4, overflow: 'drop-new' },
+});
+```
+
+`key` defaults to the sound ID. `limit` must be a positive integer. `overflow` is `drop-new` (default) or `stop-oldest`. `drop-new` ignores a new request when the limit is reached. `stop-oldest` stops the oldest voice in that key and starts the new one. Ordering is stable — insertion order decides oldest.
+
+## Music owns one channel
+
+```ts
+await audio.playMusic('levelMusic');
+await audio.playMusic('otherMusic'); // replaces levelMusic predictably
+audio.stopMusic();
+```
+
+One music channel exists. Starting new music stops the current source and starts a new looping source. Replacement is immediate — v1 does not crossfade. Stale `ended` callbacks from the old source never affect the new one. While muted or paused, `playMusic` records intent and does not start the node; resuming starts it if intent still matches.
+
+## Lifecycle and interruptions
+
+Four sources decide whether audio can run:
+
+1. User intent — `audio.pause()` / `resume()` and `setMuted`
+2. Session status — your game session's `running` / `paused`
+3. AppState — `background` / `inactive` vs `active`
+4. System interruption — `AudioManager` `interruption` with `shouldResume`
+
+`GameAudio` listens to interruptions automatically and suspends on `began`, then resumes only if `ended` carries `shouldResume` and the other three sources agree. AppState is observed best-effort via `react-native`'s `AppState`; when the app backgrounds, audio suspends, and it resumes on `active` only when not otherwise paused or muted.
+
+For session status, subscribe explicitly in your screen — this keeps the two pause authorities separate:
+
+```ts
+const sub = session.addStatusListener((status) => {
+  if (status === 'paused') audio.pause();
+  else if (status === 'running') audio.resume();
+});
+```
+
+Remove every listener on dispose. For quick tests, the audio object exposes an internal helper `_setSessionPaused(boolean)` that you can drive from a mock status — production code uses the explicit listener above.
+
+When idle — no active SFX voices and no music — the context suspends after ~1.5s and resumes on the next `play()`.
+
+## Error handling
+
+- `GameAudioError` for validation, resolution, decode, and disposed usage.
+- Missing peer throws `react-native-audio-api is not installed. Run npx expo install ...`.
+- `play()` is fire-and-forget; native errors surface via `console.warn` but never throw to the caller or affect simulation.
+- `createGameAudio` rejects if any asset fails to resolve or decode.
+
+## Example: brick hit from an event
+
+Keep feedback out of simulation authority — emit a fact and react after it commits:
+
+```ts
+import { createGameAudio } from 'rn-gamekit/audio';
+
+const audio = await createGameAudio({
+  sounds: {
+    brickHit: require('./audio/brick-hit.wav'),
+    levelMusic: require('./audio/level-music.mp3'),
+  },
+});
+
+session.addGameEventListener('brick-hit', () => {
+  audio.play('brickHit', { category: 'sfx' });
+});
+
+session.addGameEventListener('game-over', async () => {
+  await audio.playMusic('levelMusic');
+});
+```
+
+Diagnostics — sample voices at control frequency (~8Hz), not per frame:
+
+```ts
+setInterval(() => {
+  // _getConcurrencyCount is a test seam; in production track via your own counter
+  // or via a derived shared value that mirrors activeVoices.size
+}, 125);
+```
+
+## Next steps
+
+- Configure haptics in [Haptics](/docs/engine-systems/haptics).
+- Emit facts you can react to in [Events](/docs/engine-systems/events).
+- Pause and resume with the game in the [Lifecycle](/docs/core-concepts/lifecycle) guide.

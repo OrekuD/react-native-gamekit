@@ -76,6 +76,35 @@ Use `expo install` so the versions match your SDK:
   </Tab>
 </Tabs>
 
+### Optional audio and haptics peers
+
+Audio and haptics are optional. Only add them if you use `rn-gamekit/audio` or `rn-gamekit/haptics`:
+
+<Tabs items={['npm', 'yarn', 'pnpm', 'bun']} groupId="package-manager" persist>
+  <Tab value="npm">
+    ```sh
+    npx expo install react-native-audio-api@0.13.3 react-native-worklets@0.10.3 react-native-pulsar@1.7.0
+    ```
+  </Tab>
+  <Tab value="yarn">
+    ```sh
+    yarn expo install react-native-audio-api@0.13.3 react-native-worklets@0.10.3 react-native-pulsar@1.7.0
+    ```
+  </Tab>
+  <Tab value="pnpm">
+    ```sh
+    pnpm expo install react-native-audio-api@0.13.3 react-native-worklets@0.10.3 react-native-pulsar@1.7.0
+    ```
+  </Tab>
+  <Tab value="bun">
+    ```sh
+    bunx expo install react-native-audio-api@0.13.3 react-native-worklets@0.10.3 react-native-pulsar@1.7.0
+    ```
+  </Tab>
+</Tabs>
+
+Importing `rn-gamekit` does not load these backends. Calling `createGameAudio()` or `createGameHaptics()` without the peer throws `is not installed — run npx expo install ...`.
+
 {/* prettier-ignore */}
 > [!IMPORTANT]
 > The peer versions in your `package.json` need to match the validated line in the table above. If you're upgrading an existing project, check the [Supported platforms](../introduction/supported-platforms) page before you bump anything.

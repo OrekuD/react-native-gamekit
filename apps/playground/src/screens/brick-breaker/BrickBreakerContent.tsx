@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { createGameAudio } from 'rn-gamekit/audio';
+import { createGameHaptics } from 'rn-gamekit/haptics';
 
 import type { BrickBreakerSession } from './brickBreakerGame';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
@@ -49,6 +51,72 @@ function useBrickHitCount(session: BrickBreakerSession): number {
   return count;
 }
 
+const BRICK_SFX = require('../../../assets/audio/sfx.wav') as number;
+const BRICK_MUSIC = require('../../../assets/audio/music.wav') as number;
+
+function useBrickBreakerFeedback(session: BrickBreakerSession) {
+  const audioRef = useRef<Awaited<ReturnType<typeof createGameAudio>> | null>(null);
+  const hapticsRef = useRef<ReturnType<typeof createGameHaptics> | null>(null);
+  const [audioReady, setAudioReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let audio: Awaited<ReturnType<typeof createGameAudio>> | null = null;
+    let haptics: ReturnType<typeof createGameHaptics> | null = null;
+    let subs: { remove: () => void }[] = [];
+
+    (async () => {
+      try {
+        audio = await createGameAudio({ sounds: { brickHit: BRICK_SFX, lifeLost: BRICK_SFX, gameOver: BRICK_MUSIC } });
+        if (cancelled) { audio.dispose(); return; }
+        haptics = createGameHaptics();
+        audioRef.current = audio;
+        hapticsRef.current = haptics;
+        setAudioReady(true);
+        // Bind session pause to audio (lifecycle T14.4)
+        const statusSub = session.addStatusListener((status) => {
+          if (status === 'paused') {
+            audio?.pause();
+            (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(true);
+          } else if (status === 'running') {
+            audio?.resume();
+            (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(false);
+          }
+        });
+        subs.push(statusSub);
+        // Event-driven feedback (T14.6) — never feeds back into simulation
+        subs.push(session.addGameEventListener('brick-hit', () => {
+          audioRef.current?.play('brickHit', { category: 'sfx', concurrency: { key: 'brickHit', limit: 4, overflow: 'drop-new' } });
+          hapticsRef.current?.play('impact');
+        }));
+        subs.push(session.addGameEventListener('life-lost', () => {
+          audioRef.current?.play('lifeLost', { category: 'sfx' });
+          hapticsRef.current?.play('heavy');
+        }));
+        subs.push(session.addGameEventListener('game-over', () => {
+          void audioRef.current?.playMusic('gameOver');
+          const r = hapticsRef.current?.play('success');
+          void r;
+        }));
+        // Initial music: one looping track, replace on game-over
+        void audio.playMusic('gameOver');
+      } catch (e) {
+        console.warn('[BrickBreakerFeedback] init failed', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      subs.forEach((s) => { try { s.remove(); } catch {} });
+      audioRef.current?.dispose();
+      hapticsRef.current?.dispose();
+      audioRef.current = null;
+      hapticsRef.current = null;
+    };
+  }, [session]);
+
+  return { audioRef, hapticsRef, audioReady } as const;
+}
+
 /**
  * Brick Breaker content (T8.1): two sibling interaction regions.
  *
@@ -65,6 +133,9 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
   const session = game as BrickBreakerSession;
   const hud = useHudValue(session);
   const hitCount = useBrickHitCount(session);
+  const { audioRef, hapticsRef, audioReady } = useBrickBreakerFeedback(session);
+  const [sfxVolume, setSfxVolume] = useState(0.8);
+  const [isMuted, setIsMuted] = useState(false);
 
   const startOrRestart = useCallback(() => {
     if (session.status === 'disposed') {
@@ -104,6 +175,30 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
         testID={BRICK_BREAKER_LAYOUT.stage.testID}
       >
         <GameHud hud={hud} hitCount={hitCount} />
+        <View pointerEvents="box-none" style={styles.feedbackBar}>
+          <Text style={styles.feedbackText}>Audio {audioReady ? 'ready' : 'loading'}</Text>
+          <Pressable
+            onPress={() => {
+              const next = !isMuted;
+              setIsMuted(next);
+              audioRef.current?.setMuted(next);
+              hapticsRef.current?.setMuted(next);
+            }}
+            style={styles.miniButton}
+          >
+            <Text style={styles.miniButtonText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              const next = sfxVolume >= 0.8 ? 0.4 : 0.8;
+              setSfxVolume(next);
+              audioRef.current?.setVolume('sfx', next);
+            }}
+            style={styles.miniButton}
+          >
+            <Text style={styles.miniButtonText}>SFX {Math.round(sfxVolume * 100)}%</Text>
+          </Pressable>
+        </View>
 
         {hud.awaitingStart ? (
           <Pressable
@@ -221,6 +316,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowRadius: 8,
+  },
+  feedbackBar: {
+    position: 'absolute',
+    bottom: 12,
+    left: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    padding: 8,
+    borderRadius: 8,
+  },
+  feedbackText: {
+    color: '#e2e8f0',
+    fontSize: 11,
+    flex: 1,
+  },
+  miniButton: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  miniButtonText: {
+    color: 'white',
+    fontSize: 11,
+    fontWeight: '600',
   },
   startSurfacePressed: {
     backgroundColor: 'rgba(255, 255, 255, 0.08)',

@@ -1,0 +1,146 @@
+---
+title: Haptics
+description: "Bounded, best-effort haptics via Pulsar. Presets map to verified System calls, with mute, capability checks, and rate limits."
+---
+
+Haptics are best-effort. They never block simulation, never throw as a gameplay error, and return an observable result so you can branch if needed.
+
+## Installation and peers
+
+```ts
+import { createGameHaptics } from 'rn-gamekit/haptics';
+```
+
+Install the optional peer and rebuild:
+
+```bash
+npx expo install react-native-pulsar react-native-worklets
+npx expo prebuild
+```
+
+If you call `createGameHaptics()` without the peer, it throws `react-native-pulsar is not installed. Run npx expo install ...`. Importing `rn-gamekit` does not load the backend.
+
+Pulsar requires the New Architecture and iOS 14 / Android `minSdk 24`. Expo Go is not supported.
+
+## Creating the resource
+
+```ts
+const haptics = createGameHaptics();
+const hapticsMuted = createGameHaptics({ muted: true });
+```
+
+Haptics are app-owned. Keep one instance per screen and dispose it on unmount. `dispose()` is idempotent and clears the AppState listener.
+
+## Presets
+
+A small GameKit union maps to verified Pulsar `Presets.System.*` calls:
+
+- `impact` → `impactMedium`
+- `light` → `impactLight`
+- `medium` → `impactMedium`
+- `heavy` → `impactHeavy`
+- `selection` → `selection`
+- `success` → `notificationSuccess`
+- `warning` → `notificationWarning`
+- `error` → `notificationError`
+
+```ts
+haptics.play('impact');
+haptics.play('selection');
+```
+
+An unknown preset throws `GameHapticsError` before any native work. `isSupported(preset)` checks availability without triggering the actuator:
+
+```ts
+if (haptics.isSupported('impact')) {
+  haptics.play('impact');
+}
+```
+
+## Result, not exception
+
+```ts
+const result: HapticsResult = haptics.play('impact');
+// { played: true } or { played: false, reason: 'muted' | 'throttled' | 'paused' | 'disposed' | 'unsupported' | 'error' }
+```
+
+Unsupported or system-suppressed playback returns `{ played: false, reason: 'unsupported' }`. It never throws as a gameplay error.
+
+## Mute
+
+Independent from audio:
+
+```ts
+haptics.setMuted(true);
+haptics.isMuted(); // true
+haptics.setMuted(false);
+```
+
+Muting does not overwrite any other state.
+
+## Rate bounds
+
+Rapid collision bursts cannot saturate the actuator. Repeated calls faster than ~100ms (10Hz) return `{ played: false, reason: 'throttled' }`. The check uses monotonic `Date.now()`.
+
+```ts
+haptics.play('impact'); // played:true
+haptics.play('impact'); // throttled
+await new Promise((r) => setTimeout(r, 100));
+haptics.play('impact'); // played:true
+```
+
+## Lifecycle
+
+Haptics drop transient requests while `paused`, `backgrounded`, `disposed`, or `muted`.
+
+- `disposed` → `{ reason: 'disposed' }`
+- `muted` → `{ reason: 'muted' }`
+- `paused` or `backgrounded` (AppState or explicit `_setPaused`) → `{ reason: 'paused' }`
+- `throttled` → `{ reason: 'throttled' }`
+
+AppState is observed best-effort. When the app backgrounds, haptics are suppressed and resume on `active`. For session lifecycle, drive a helper explicitly:
+
+```ts
+const statusSub = session.addStatusListener((status) => {
+  (haptics as unknown as { _setPaused: (p:boolean)=>void })._setPaused(status === 'paused');
+});
+```
+
+In production code prefer an explicit wrapper around `haptics.play` that checks your game state before calling.
+
+## Example: brick hit
+
+```ts
+import { createGameHaptics } from 'rn-gamekit/haptics';
+
+const haptics = createGameHaptics();
+
+session.addGameEventListener('brick-hit', () => {
+  haptics.play('impact');
+});
+
+session.addGameEventListener('life-lost', () => {
+  haptics.play('heavy');
+});
+
+// Diagnostics — sample at control frequency, not per frame
+setInterval(() => {
+  console.log(haptics.isSupported('impact'));
+}, 125);
+```
+
+## Cleanup
+
+```ts
+haptics.dispose(); // idempotent
+haptics.play('impact'); // after dispose → { played:false, reason:'disposed' }
+haptics.setMuted(true); // after dispose → throws GameHapticsError
+```
+
+Dispose removes the AppState listener and prevents new work.
+
+## Next steps
+
+- Mix audio with game in [Audio](/docs/engine-systems/audio).
+- Emit facts in [Events](/docs/engine-systems/events).
+- See the playground's Audio Lab for a runnable spike with one SFX, one music track, and one haptic preset.

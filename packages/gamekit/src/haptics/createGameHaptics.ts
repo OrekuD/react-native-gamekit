@@ -40,13 +40,6 @@ function mapToSystemPreset(preset: HapticPreset): string {
   }
 }
 
-/**
- * Create one app-owned haptics resource. Maps the small GameKit preset union to
- * verified Pulsar operations. Best-effort, never blocks simulation, observable
- * non-played result instead of throw for unsupported/suppressed.
- *
- * Throws a clear installation error only when called without the optional peer.
- */
 export function createGameHaptics(options?: CreateGameHapticsOptions): GameHaptics {
   let pulsar: ReturnType<typeof loadPulsar>;
   try {
@@ -61,32 +54,45 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
 
   let muted = Boolean(options?.muted);
   let disposed = false;
+  let paused = false;
+  let backgrounded = false;
   let lastPlayAt = 0;
-  const MIN_INTERVAL_MS = 100; // bound rapid repeated requests (10 Hz)
+  const MIN_INTERVAL_MS = 100;
 
-  const haptics: GameHaptics = {
+  // AppState integration (best-effort)
+  let appStateSub: { remove(): void } | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const RN = require('react-native') as { AppState?: { currentState?: string; addEventListener: (t:string, cb:(s:string)=>void)=>{ remove:()=>void } } };
+    const AppState = RN?.AppState;
+    if (AppState?.addEventListener) {
+      const isInactive = (s: string | null | undefined) => s === 'inactive' || s === 'background';
+      if (isInactive(AppState.currentState)) backgrounded = true;
+      appStateSub = AppState.addEventListener('change', (next: string) => {
+        if (isInactive(next)) backgrounded = true;
+        else if (next === 'active') backgrounded = false;
+      });
+    }
+  } catch {}
+
+  const haptics: GameHaptics & {
+    _setPaused?: (p:boolean)=>void;
+    _setBackgrounded?: (b:boolean)=>void;
+  } = {
     play(preset: HapticPreset): HapticsResult {
-      if (disposed) {
-        return { played: false, reason: 'disposed' };
-      }
-      if (!isValidPreset(preset)) {
-        throw new GameHapticsError(`Unknown haptic preset "${String(preset)}"`);
-      }
-      if (muted) {
-        return { played: false, reason: 'muted' };
-      }
+      if (disposed) return { played: false, reason: 'disposed' };
+      if (paused) return { played: false, reason: 'paused' };
+      if (backgrounded) return { played: false, reason: 'paused' };
+      if (!isValidPreset(preset)) throw new GameHapticsError(`Unknown haptic preset "${String(preset)}"`);
+      if (muted) return { played: false, reason: 'muted' };
       const now = Date.now();
-      if (now - lastPlayAt < MIN_INTERVAL_MS) {
-        return { played: false, reason: 'throttled' };
-      }
+      if (now - lastPlayAt < MIN_INTERVAL_MS) return { played: false, reason: 'throttled' };
       lastPlayAt = now;
       const systemName = mapToSystemPreset(preset);
       const fn =
         (Presets.System as Record<string, unknown>)[systemName] ??
         (Presets as Record<string, unknown>)[preset];
-      if (typeof fn !== 'function') {
-        return { played: false, reason: 'unsupported' };
-      }
+      if (typeof fn !== 'function') return { played: false, reason: 'unsupported' };
       try {
         (fn as () => void)();
         return { played: true };
@@ -97,9 +103,7 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
 
     isSupported(_preset: HapticPreset): boolean {
       if (disposed) return false;
-      if (!isValidPreset(_preset)) {
-        throw new GameHapticsError(`Unknown haptic preset "${String(_preset)}"`);
-      }
+      if (!isValidPreset(_preset)) throw new GameHapticsError(`Unknown haptic preset "${String(_preset)}"`);
       const systemName = mapToSystemPreset(_preset);
       const fn =
         (Presets.System as Record<string, unknown>)[systemName] ??
@@ -108,24 +112,24 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
     },
 
     setMuted(next: boolean): void {
-      if (disposed) {
-        throw new GameHapticsError('GameHaptics is disposed');
-      }
+      if (disposed) throw new GameHapticsError('GameHaptics is disposed');
       muted = Boolean(next);
     },
 
     isMuted(): boolean {
-      if (disposed) {
-        throw new GameHapticsError('GameHaptics is disposed');
-      }
+      if (disposed) throw new GameHapticsError('GameHaptics is disposed');
       return muted;
     },
 
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      if (appStateSub) { try { appStateSub.remove(); } catch {} appStateSub=null; }
     },
   };
+
+  (haptics as unknown as { _setPaused: (p:boolean)=>void })._setPaused = (p:boolean)=>{ paused = p; };
+  (haptics as unknown as { _setBackgrounded: (b:boolean)=>void })._setBackgrounded = (b:boolean)=>{ backgrounded = b; };
 
   return haptics;
 }
