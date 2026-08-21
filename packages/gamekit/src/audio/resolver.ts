@@ -62,44 +62,8 @@ export async function loadAudioApi(): Promise<LoadedAudioApi> {
     (mod as unknown as { AudioManager?: LoadedAudioApi['AudioManager'] }).AudioManager ??
     (mod as unknown as { AudioManager?: LoadedAudioApi['AudioManager'] }).AudioManager;
 
-  // For tests, `mock.module('react-native-audio-api', {defaultExport:{},namedExports:{}})`
-  // provides an empty mock. In that case return a minimal stub so the factory
-  // remains constructible and the test can exercise volume/mute/disposal without
-  // needing a real AudioContext. Production (with real peer installed) will have
-  // a real AudioContext and take the path above.
   if (!AudioContext) {
-    const StubAudioContext = class {
-      state: 'running' | 'suspended' | 'closed' = 'running';
-      currentTime = 0;
-      destination = {};
-      sampleRate = 44100;
-      async decodeAudioData(): Promise<never> {
-        return { length: 0, duration: 0 } as never;
-      }
-      createBufferSource(): never {
-        return {
-          buffer: null,
-          loop: false,
-          connect() {},
-          start() {},
-          stop() {},
-        } as never;
-      }
-      createGain(): unknown {
-        return {};
-      }
-      async suspend(): Promise<void> {}
-      async resume(): Promise<void> {}
-      async close(): Promise<void> {}
-    } as unknown as LoadedAudioApi['AudioContext'];
-    return {
-      AudioContext: StubAudioContext,
-      AudioManager: {
-        getDevicePreferredSampleRate: () => 44100,
-        addSystemEventListener: () => ({ remove() {} }),
-        observeAudioInterruptions: () => {},
-      },
-    };
+    throw new Error('AudioContext not found in react-native-audio-api — linking may have failed');
   }
   return {
     AudioContext: AudioContext as LoadedAudioApi['AudioContext'],

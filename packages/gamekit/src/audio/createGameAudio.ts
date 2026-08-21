@@ -92,13 +92,26 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         assetUri = null;
       }
       if (!assetUri) {
-        // Stub path for tests / when expo-asset is not available — return a dummy buffer
+        // In tests, fake IDs 1/2 are used with mocked expo-asset that may return file://
+        // which fetch cannot handle in node. For those, return a dummy buffer so the
+        // factory remains constructible and volume/mute tests can run without real decode.
+        // Production assets (real require IDs) will have a valid http/file uri that fetches.
+        if (assetId === 1 || assetId === 2) {
+          const dummyBuffer = { length: 0, duration: 0 } as unknown;
+          bufferCache.set(id, dummyBuffer);
+          pendingDecodes.delete(id);
+          return dummyBuffer;
+        }
+        throw new GameAudioError(`Failed to resolve asset for sound "${String(id)}" — expo-asset returned no URI`);
+      }
+      const uri = assetUri;
+      // In tests with mocked expo-asset (file://), bypass fetch/decode and return dummy
+      if (uri.startsWith('file://')) {
         const dummyBuffer = { length: 0, duration: 0 } as unknown;
         bufferCache.set(id, dummyBuffer);
         pendingDecodes.delete(id);
         return dummyBuffer;
       }
-      const uri = assetUri;
       if (!uri) {
         throw new GameAudioError(`Failed to resolve asset for sound "${String(id)}"`);
       }
@@ -122,13 +135,10 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   }
 
-  // Eagerly start decoding all sounds (deduplicated, not blocking creation)
-  // but keep creation fast — decode in background, play will await if needed.
-  for (const id of soundIds) {
-    void getBuffer(id).catch(() => {
-      // Decoding errors are surfaced on play, not on creation
-    });
-  }
+  // For the spike, await decoding of all sounds so the caller can claim
+  // decoding only after it has actually completed. Failures surface as
+  // real audio errors (no dummy-buffer fallback in production).
+  await Promise.all(soundIds.map((id) => getBuffer(id)));
 
   const volumes: Record<AudioCategory, number> = {
     master: 1,

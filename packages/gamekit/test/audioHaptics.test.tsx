@@ -2,8 +2,86 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 // Mock optional peers once — tests inject via this mock rather than relying on fallback
-mock.module('react-native-audio-api', { defaultExport: {}, namedExports: {} });
-mock.module('react-native-pulsar', { defaultExport: {}, namedExports: {} });
+mock.module('react-native-audio-api', {
+  defaultExport: {
+    AudioContext: class {
+      state: 'running' | 'suspended' | 'closed' = 'running';
+      currentTime = 0;
+      destination = {};
+      sampleRate = 44100;
+      async decodeAudioData() { return { length: 0, duration: 0 } as never; }
+      createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
+      createGain() { return {} as never; }
+      async suspend() {}
+      async resume() {}
+      async close() {}
+    },
+    AudioManager: {
+      getDevicePreferredSampleRate: () => 44100,
+      addSystemEventListener: () => ({ remove() {} }),
+      observeAudioInterruptions: () => {},
+    },
+  },
+  namedExports: {
+    AudioContext: class {
+      state: 'running' | 'suspended' | 'closed' = 'running';
+      currentTime = 0;
+      destination = {};
+      sampleRate = 44100;
+      async decodeAudioData() { return { length: 0, duration: 0 } as never; }
+      createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
+      createGain() { return {} as never; }
+      async suspend() {}
+      async resume() {}
+      async close() {}
+    },
+    AudioManager: {
+      getDevicePreferredSampleRate: () => 44100,
+      addSystemEventListener: () => ({ remove() {} }),
+      observeAudioInterruptions: () => {},
+    },
+  },
+});
+mock.module('react-native-pulsar', {
+  defaultExport: {
+    Presets: {
+      System: {
+        impactLight: () => {},
+        impactMedium: () => {},
+        impactHeavy: () => {},
+        selection: () => {},
+        notificationSuccess: () => {},
+        notificationWarning: () => {},
+        notificationError: () => {},
+      },
+    },
+  },
+  namedExports: {
+    Presets: {
+      System: {
+        impactLight: () => {},
+        impactMedium: () => {},
+        impactHeavy: () => {},
+        selection: () => {},
+        notificationSuccess: () => {},
+        notificationWarning: () => {},
+        notificationError: () => {},
+      },
+    },
+  },
+});
+mock.module('expo-asset', {
+  defaultExport: {},
+  namedExports: {
+    Asset: {
+      fromModule: () => ({
+        downloadAsync: async () => {},
+        localUri: 'file:///tmp/test.wav',
+        uri: 'file:///tmp/test.wav',
+      }),
+    },
+  },
+});
 
 // This file verifies the T14.0 isolation and error contract without requiring
 // native hardware. Native backends are mocked via node --experimental-test-module-mocks.
@@ -69,6 +147,21 @@ describe('T14.0 audio installation error', () => {
     assert.ok(audio);
     audio.dispose();
   });
+
+  it('default resolver with malformed module shape fails closed', async () => {
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    // Mock the peer to a malformed shape (no AudioContext) via the resolver seam
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    __setAudioApiLoader(async () => ({} as never));
+    await assert.rejects(
+      () => createGameAudio({ sounds: { sfx: 1 } }),
+      (err: unknown) => {
+        assert.match((err as Error).message, /react-native-audio-api is not installed/);
+        return true;
+      },
+    );
+    __setAudioApiLoader(null);
+  });
 });
 
 describe('T14.0 audio volume/mute contract', () => {
@@ -129,6 +222,20 @@ describe('T14.0 haptics installation error', () => {
     const haptics = createGameHaptics();
     assert.ok(haptics);
     haptics.dispose();
+  });
+
+  it('default resolver with malformed module shape fails closed', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(() => ({} as never));
+    assert.throws(
+      () => createGameHaptics(),
+      (err: unknown) => {
+        assert.match((err as Error).message, /react-native-pulsar is not installed/);
+        return true;
+      },
+    );
+    __setPulsarLoader(null);
   });
 });
 

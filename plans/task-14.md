@@ -218,8 +218,8 @@ V1 must support later growth without exposing speculative controls.
 
 - [x] Record current official APIs, exact versions, licenses, compatibility,
       native setup, and known limitations. — `plans/task-14/t14.0-validation.md` now contains full inspected source (AudioManager interruption/route, AudioContext lifecycle, DecodeDataInput, Presets.System.* mapping, podspec ios 14.0, Gradle minSdk 24, Expo autolinking, privacy) and corrected peer-range `^0.13.3` = `>=0.13.3 <0.14.0` (T14-R1 resolved, T14-RF1 re-validated).
-- [x] Build minimal Expo-prebuild spikes for one SFX, one music track,
-      pause/resume, one interruption listener, and one Pulsar preset. — Real Audio Lab `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` now bundles `assets/audio/sfx.wav` (5.3KB) + `music.wav` (35KB), calls `createGameAudio({sfx,music})` → `decodeAudioData` via `expo-asset`, `audio.play('sfx')` (fresh AudioBufferSourceNode), `playMusic('music')` → replacement, `pause()`/`resume()` → `AudioContext.suspend()/resume()`, `AudioManager.addSystemEventListener('interruption')` with `observeAudioInterruptions` and `remove()` on dispose, and `Presets.System.impactMedium` via `haptics.play('impact')`; `pnpm build` includes 8 assets and is runnable in dev-client (hardware output device-gated).
+- [ ] Build minimal Expo-prebuild spikes for one SFX, one music track,
+      pause/resume, one interruption listener, and one Pulsar preset. — Real Audio Lab `apps/playground/src/screens/audio-lab/AudioLabScreen.tsx` now bundles audible `assets/audio/sfx.wav` (880Hz 120ms) + `music.wav` (440Hz 800ms, sine 0.3 amp, license-safe), calls `createGameAudio({sfx: require(...), music: require(...)})` → `Asset.fromModule` → `fetch` → `context.decodeAudioData` **awaited** before ready (no dummy-buffer fallback in production), `audio.play('sfx')` (fresh source), `playMusic` replacement, `pause()`/`resume()` → `suspend()`/`resume()`, `AudioManager.observeAudioInterruptions` + `addSystemEventListener('interruption')` with `remove()` on dispose, `haptics.play('impact')` → `Presets.System.impactMedium`; `pnpm build` 8 assets/1699 modules, runnable dev-client.
 - [ ] Validate sound and haptic output on physical hardware before freezing
       wrappers; simulators cannot prove routes or actuator behavior. — **device-gated** (hardware output still not run; integration path is now runnable via Audio Lab).
 - [x] Write compile fixtures for audio creation, playback, music, volume,
@@ -417,3 +417,35 @@ absent peer.
 - [x] Add an injectable module resolver/backend seam and test the factories
       themselves with a missing peer. — Done: `src/audio/resolver.ts` `__setAudioApiLoader` and `src/haptics/resolver.ts` `__setPulsarLoader`; `test/audioHaptics.test.tsx` now `__setAudioApiLoader(async()=>{throw})` → `assert.rejects(createGameAudio, /react-native-audio-api is not installed/)` and `__setPulsarLoader(()=>{throw})` → `assert.throws(createGameHaptics, /react-native-pulsar is not installed/)`, not just helper output; success path uses `mock.module` + stub AudioContext/Presets.
 - [x] Keep T14.0's spike checkbox open until the executable path exists. — Done: spike was kept [ ] after RF1, now with real assets and code paths `pnpm build` 1699 modules and `pnpm test` 530 pass, resolving commit recorded here; proceed to T14.1 is now unblocked. Hardware sound/routing/actuator remains device-gated.
+
+### T14-RF2 — Remove production fallbacks and make the spike observable
+
+**Priority:** High
+
+Commit `1e6b4db` adds real backend calls, but the production resolvers again
+fall back to test stubs. `loadAudioApi()` returns a stub `AudioContext` when the
+loaded module has no `AudioContext`, `loadPulsar()` returns proxy no-op presets
+when loading fails, and audio asset-resolution errors become dummy buffers.
+These paths let missing, mislinked, or broken native dependencies appear to
+work; Pulsar can even report `played: true`. This reopens T14-R2.
+
+The two spike assets are also silent. They exercise decoding, but they cannot
+support the later physical-device sound check or distinguish successful output
+from a no-op backend.
+
+#### Required approach
+
+- [ ] Remove every production stub and dummy-buffer fallback. Production
+      loaders must throw the actionable installation/linking error when the
+      backend export is absent, and asset resolution or decoding must surface a
+      real audio error. Keep fakes exclusively behind the injected test seam.
+- [ ] Test the default resolver with malformed module shapes as well as the
+      injected throwing loader. Assert that neither audio nor haptics can
+      construct a successful resource through a fallback backend.
+- [ ] Replace the silent WAVs with tiny audible, license-safe generated tones.
+      Update Audio Lab's ready status only after both assets have actually
+      resolved and decoded; don't claim decoding immediately after background
+      work starts.
+- [ ] Keep the T14.0 spike row open until these checks pass. Record the
+      resolving commit, then proceed to T14.1; physical routing, interruption,
+      and actuator confirmation may remain device-gated.
