@@ -3,6 +3,8 @@ import { defineParticleEffect } from './defineParticleEffect';
 import { createRng, sampleInitialSlot, sampleSlotAtAge } from './sampling';
 import type {
   ParticleDiagnostics,
+  ParticleEmissionRecord,
+  ParticleUiRegistry,
   ParticleDriverHandle,
   ParticleEffectDefinition,
   ParticlePresentationBinding,
@@ -57,6 +59,7 @@ function assertCommand(cmd: unknown): asserts cmd is { position: Point2D; seed: 
 interface MutableSlot {
   active: boolean;
   age: number;
+  bornAt: number;
   lifetime: number;
   originX: number;
   originY: number;
@@ -96,6 +99,11 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
   let status: 'running' | 'paused' | 'disposed' = 'running';
   let generation = 0;
   let spawnSequence = 0;
+  // Accumulated ACTIVE time — freezes while paused (T15-SF3).
+  let activeClock = 0;
+  // Emission registry revision (membership changes only).
+  let registryRevision = 0;
+  const emissionsLog: Map<string, ParticleEmissionRecord[]> = new Map();
 
   const pools = new Map<string, MutableSlot[]>();
   const diagnostics = new Map<string, ParticleDiagnostics>();
@@ -105,6 +113,7 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       Array.from({ length: def.capacity }, () => ({
         active: false,
         age: 0,
+        bornAt: 0,
         lifetime: 1,
         originX: 0,
         originY: 0,
@@ -120,6 +129,7 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       })),
     );
     diagnostics.set(name, { active: 0, emitted: 0, dropped: 0, recycled: 0 });
+    emissionsLog.set(name, []);
   }
 
   function requireEffect(effect: string): ParticleEffectDefinition {
@@ -193,6 +203,7 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       const sampled = sampleInitialSlot(rng, def, command.position, spawnSequence++, effect);
       slot.active = true;
       slot.age = 0;
+      slot.bornAt = activeClock;
       slot.lifetime = sampled.lifetime;
       slot.originX = sampled.origin.x;
       slot.originY = sampled.origin.y;
@@ -205,6 +216,21 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       slot.opacity = sampled.opacity;
       slot.color = sampled.color;
       slot.spawnSequence = sampled.spawnSequence;
+      const log = emissionsLog.get(effect)!;
+      log.push(Object.freeze({
+        bornAt: activeClock,
+        originX: sampled.origin.x,
+        originY: sampled.origin.y,
+        vx: sampled.velocity.x,
+        vy: sampled.velocity.y,
+        rotation: sampled.rotation,
+        rotationSpeed: sampled.rotationSpeed,
+        scaleStart: sampled.scaleStart,
+        scaleEnd: sampled.scaleEnd,
+        lifetime: sampled.lifetime,
+        spawnSequence: sampled.spawnSequence,
+      }));
+      if (log.length > def.capacity * 4) log.splice(0, log.length - def.capacity * 4);
     }
 
     let active = 0;
@@ -216,7 +242,10 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       recycled: diag.recycled + recycled,
     });
     // T15-RF3: an accepted emission may end an idle period — wake the driver.
-    if (emitted > 0 && wakeListener) wakeListener();
+    if (emitted > 0) {
+      registryRevision++;
+      if (wakeListener) wakeListener();
+    }
   }
 
   function update(deltaSeconds: number): void {
@@ -225,6 +254,7 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
     if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) {
       throw new ParticleError('deltaSeconds must be a finite number >= 0');
     }
+    activeClock += deltaSeconds;
     for (const [name, pool] of pools) {
       const def = definitions.get(name)!;
       let active = 0;
@@ -245,69 +275,9 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
     }
   }
 
-  // ----- Presentation binding (T15-F6): typed, no hidden internals -----
-  interface ParticleSlotBuffers {
-    readonly x: Float32Array;
-    readonly y: Float32Array;
-    readonly rotation: Float32Array;
-    readonly scale: Float32Array;
-    readonly opacity: Float32Array;
-    readonly visible: Uint8Array;
-    readonly capacity: number;
-  }
-  const buffers = new Map<string, ParticleSlotBuffers>();
-  for (const [name, def] of definitions) {
-    buffers.set(name, {
-      x: new Float32Array(def.capacity),
-      y: new Float32Array(def.capacity),
-      rotation: new Float32Array(def.capacity),
-      scale: new Float32Array(def.capacity),
-      opacity: new Float32Array(def.capacity),
-      visible: new Uint8Array(def.capacity),
-      capacity: def.capacity,
-    });
-  }
-
-  let revision = 0;
   let driverOwned = false;
   let releaseDriver: (() => void) | null = null;
   let wakeListener: (() => void) | null = null;
-
-  function resample(): void {
-    let changed = false;
-    for (const [name, buf] of buffers) {
-      const def = definitions.get(name)!;
-      const pool = pools.get(name)!;
-      for (let i = 0; i < buf.capacity; i++) {
-        const slot = pool[i]!;
-        if (!slot.active) {
-          if (buf.visible[i] !== 0) {
-            buf.visible[i] = 0;
-            changed = true;
-          }
-          continue;
-        }
-        const s2 = sampleSlotAtAge(ageView(slot), def, slot.age);
-        if (
-          buf.x[i] !== s2.x ||
-          buf.y[i] !== s2.y ||
-          buf.rotation[i] !== s2.rotation ||
-          buf.scale[i] !== s2.scale ||
-          buf.opacity[i] !== s2.opacity ||
-          buf.visible[i] !== 1
-        ) {
-          changed = true;
-        }
-        buf.x[i] = s2.x;
-        buf.y[i] = s2.y;
-        buf.rotation[i] = s2.rotation;
-        buf.scale[i] = s2.scale;
-        buf.opacity[i] = s2.opacity;
-        buf.visible[i] = 1;
-      }
-    }
-    if (changed) revision++;
-  }
 
   function totalActive(): number {
     let n = 0;
@@ -319,7 +289,23 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
 
   function advance(deltaSeconds: number): void {
     update(deltaSeconds);
-    resample();
+  }
+
+  function buildRegistry(): ParticleUiRegistry {
+    const effects: Record<string, { capacity: number; particles: ParticleEmissionRecord[] }> = {};
+    for (const [name, def] of definitions) {
+      const log = emissionsLog.get(name)!;
+      const pool = pools.get(name)!;
+      // Only ACTIVE emissions are shipped; expired entries are pruned here so
+      // the registry stays bounded by live particles.
+      const activeSeqs = new Set<number>();
+      for (const slot of pool) if (slot.active) activeSeqs.add(slot.spawnSequence);
+      effects[name] = {
+        capacity: def.capacity,
+        particles: log.filter((r) => activeSeqs.has(r.spawnSequence)),
+      };
+    }
+    return { registryRevision, activeClock, effects };
   }
 
   const binding: ParticlePresentationBinding = {
@@ -329,8 +315,6 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
     },
     effects: Object.freeze([...definitions.keys()]),
     tick(deltaSeconds: number): void {
-      // T15-RF3: manual ticks are rejected while an exclusive driver owns
-      // the clock, so ad-hoc callers can never double-advance.
       if (driverOwned) {
         throw new ParticleError(
           'presentation clock is owned by an acquired driver — use the driver handle to step',
@@ -378,20 +362,30 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
     get driverOwned() {
       return driverOwned;
     },
-    get revision() {
-      return revision;
+    get registryRevision() {
+      return registryRevision;
+    },
+    get activeClock() {
+      return activeClock;
     },
     get activeCount() {
       return status === 'disposed' ? 0 : totalActive();
     },
-    slots(effect: string) {
+    buildUiRegistry(): ParticleUiRegistry {
+      return Object.freeze(buildRegistry());
+    },
+    emissions(effect: string) {
       requireEffect(effect);
-      const b = buffers.get(effect);
-      if (b === undefined) throw new ParticleError(`unknown particle effect ${JSON.stringify(effect)}`);
-      return b;
+      const log = emissionsLog.get(effect);
+      if (log === undefined) throw new ParticleError(`unknown particle effect ${JSON.stringify(effect)}`);
+      return log.slice();
     },
   };
   Object.freeze(binding);
+
+  // Expose the UI registry builder to the presentation layer without adding
+  // it to the public binding type: the hook receives it via a typed symbol
+  // free accessor defined below.
 
 
   const system: ParticleSystem<TEffects> = {
@@ -424,13 +418,19 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
           slot.spawnSequence = -1;
         }
       }
+      emissionsLog.clear();
+      registryRevision++;
+      for (const pool of pools.values()) {
+        for (const slot of pool) {
+          slot.active = false;
+          slot.age = 0;
+          slot.opacity = 0;
+          slot.spawnSequence = -1;
+        }
+      }
       for (const [name, d] of diagnostics) {
         diagnostics.set(name, { ...d, active: 0 });
       }
-      for (const buf of buffers.values()) {
-        buf.visible.fill(0);
-      }
-      revision++;
     },
     getDiagnostics(effect?: keyof TEffects & string): ParticleDiagnostics {
       if (effect !== undefined) {

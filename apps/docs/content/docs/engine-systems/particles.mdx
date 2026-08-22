@@ -91,7 +91,9 @@ Equal active age produces identical sampled values regardless of how updates wer
 
 ## One clock per system
 
-A system has exactly one presentation owner. `useParticlePresentation(system)` acquires the binding's exclusive driver lease (a second owner throws deterministically) and runs the only rAF loop; while the lease is held, ad-hoc `tick()` calls are rejected so nothing can double-advance age. The loop fully stops when every slot is idle and restarts on the next accepted emission. Two independent pause sources are honored: the session status reader AND an optional `manualPaused` callback — a running session can never cancel a manual pause. Each changed revision is published as fresh plain arrays, so the UI runtime always observes the latest frame.
+A system has exactly one presentation owner. `useParticlePresentation(system)` acquires the binding's exclusive driver lease (a second owner throws deterministically) and runs the only rAF loop; while the lease is held, ad-hoc `tick()` calls are rejected so nothing can double-advance age.
+
+Per-frame boundary traffic is one scalar write: the active-time clock. Emission init records cross only when membership changes (bounded by live particles), and transforms are computed analytically on the UI runtime from `position = origin + v·t + ½·a·t²`. Pause sources are applied reactively — synchronously at bind, on session transitions through the subscribe seam, and via the returned `setManualPaused` control — so an emission accepted after a pause transition follows the paused-drop policy even while the driver was asleep. The scheduler fully stops while paused or idle and restarts only from resume/wake transitions.
 
 ## Lifecycle
 
@@ -109,7 +111,7 @@ Storage is sized from the effect's immutable capacity — never a global maximum
 
 **Shapes** render through ONE immediate `Picture` rebuilt on the UI runtime from the published frame: one React component and one worklet per effect regardless of capacity — no per-slot nodes exist. Circles draw at sampled centers with scaled radii; rectangles translate→rotate→scale around their center.
 
-**Sprites** render through a fixed-capacity `Atlas` batch following the SpriteBatch buffer pattern: source rects resolve once at bind time from the caller-provided decoded sheet, and one UI-runtime derived value writes all transforms — with sampled scale folded into the RSXform (`scos = s·cosθ`) and center-anchor pivot compensation against the authored size. v1 requires the authored size aspect to match the source frame aspect; mismatches throw at bind time. A sprite effect rendered without its resolved `spriteSource` also throws a structured error instead of silently drawing nothing.
+**Sprites** render through a fixed-capacity `Atlas` batch following the SpriteBatch buffer pattern: source rects resolve once at bind time from the caller-provided decoded sheet, and one UI-runtime derived value writes all transforms plus a stable per-slot color buffer. Effective scale includes the authored-to-source ratio (`effectiveScale = sampledScale × drawWidth / frameWidth`), so a 32×32 sheet frame configured at 24×24 draws at 24×24, with sampled fade driving per-slot alpha (inactive and culled slots clear both transform and alpha so reuse never leaves stale ghosts). v1 requires the authored size aspect to match the source frame aspect; mismatches throw at bind time. A sprite effect rendered without its resolved `spriteSource` also throws a structured error instead of silently drawing nothing.
 
 World-space effects must be mounted inside the matching `GameWorld2D` so the presented camera + viewport transform applies exactly once; culling computes conservative world AABB from the camera's actual center/zoom/rotation plus padding (shared by both render paths). Screen-space effects bypass the camera and cull against surface bounds. Culled particles keep aging — visibility never feeds back into the clock.
 

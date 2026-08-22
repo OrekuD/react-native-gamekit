@@ -69,34 +69,48 @@ describe('T15-RF4 sprite RSXform scale and pivot', () => {
     const rotation = Math.PI / 4;
     const cos = Math.cos(rotation);
     const sin = Math.sin(rotation);
-    for (const scale of [0.5, 1, 2]) {
+    // T15-SF2 case: a 32x32 SOURCE drawn at 24x24 authored size.
+    for (const sampledScale of [0.5, 1, 2]) {
       const xf = particleSpriteXform({
         x: 200,
         y: 300,
         rotation,
-        scale,
+        scale: sampledScale,
         drawWidth: 24,
         drawHeight: 24,
+        frameWidth: 32,
+        frameHeight: 32,
       });
-      assert.ok(Math.abs(xf.scos - scale * cos) < 1e-12, `scos at scale ${scale}`);
-      assert.ok(Math.abs(xf.ssin - scale * sin) < 1e-12, `ssin at scale ${scale}`);
-      // Center anchor pivot: px = py = (24/2)*scale
-      const px = 12 * scale;
-      assert.ok(Math.abs(xf.tx - (200 - px * cos + px * sin)) < 1e-9, `tx at scale ${scale}`);
-      assert.ok(Math.abs(xf.ty - (300 - px * sin - px * cos)) < 1e-9, `ty at scale ${scale}`);
-      // The drawn size is preserved: |scos|+|ssin| magnitude scales linearly.
+      // Effective scale includes authored/source ratio: 24/32 = 0.75.
+      const eff = sampledScale * 0.75;
+      assert.ok(Math.abs(xf.scos - eff * cos) < 1e-12, `scos at scale ${sampledScale}`);
+      assert.ok(Math.abs(xf.ssin - eff * sin) < 1e-12, `ssin at scale ${sampledScale}`);
+      // Pivot against the DRAWN extent: half of frame * effScale = 16*eff.
+      const px = 16 * eff;
+      assert.ok(Math.abs(xf.tx - (200 - px * cos + px * sin)) < 1e-9, `tx at scale ${sampledScale}`);
+      assert.ok(Math.abs(xf.ty - (300 - px * sin - px * cos)) < 1e-9, `ty at scale ${sampledScale}`);
       const magnitude = Math.hypot(xf.scos, xf.ssin);
-      assert.ok(Math.abs(magnitude - scale) < 1e-12);
+      assert.ok(Math.abs(magnitude - eff) < 1e-12);
     }
   });
 
   it('zero rotation centers the sprite on the sampled point regardless of scale', () => {
-    for (const scale of [0.5, 2]) {
-      const xf = particleSpriteXform({ x: 40, y: 80, rotation: 0, scale, drawWidth: 20, drawHeight: 10 });
-      assert.ok(Math.abs(xf.scos - scale) < 1e-12);
+    for (const sampledScale of [0.5, 2]) {
+      const xf = particleSpriteXform({
+        x: 40,
+        y: 80,
+        rotation: 0,
+        scale: sampledScale,
+        drawWidth: 20,
+        drawHeight: 10,
+        frameWidth: 40,
+        frameHeight: 20,
+      });
+      const eff = sampledScale * 0.5;
+      assert.ok(Math.abs(xf.scos - eff) < 1e-12);
       assert.equal(xf.ssin, 0);
-      assert.ok(Math.abs(xf.tx - (40 - 10 * scale)) < 1e-12);
-      assert.ok(Math.abs(xf.ty - (80 - 5 * scale)) < 1e-12);
+      assert.ok(Math.abs(xf.tx - (40 - (40 / 2) * eff)) < 1e-12);
+      assert.ok(Math.abs(xf.ty - (80 - (20 / 2) * eff)) < 1e-12);
     }
   });
 

@@ -534,6 +534,104 @@ Required approach:
 - Keep the phone/tablet performance comparison open, but don't mark the v1
   shape-rendering contract complete until the per-slot React topology is gone.
 
+## Second follow-up feedback
+
+Commit `c0d10b0` resolves the stale typed-array identity, camera-bounds math,
+per-slot shape components, and basic driver lease. Four Task 15 issues remain
+before the v1 contract can be closed.
+
+### T15-SF1 — Remove the per-frame bulk allocation and runtime copy (High)
+
+`publish()` now avoids stale Worklets serialization by calling `Array.from()`
+six times for every effect on every changed frame. It then transfers the full
+object graph through one shared-value assignment. This is correct by identity,
+but it allocates and serializes `capacity × six fields` every active frame. At
+the public capacity of 1,024 and with multiple effects, this recreates the
+JavaScript/GC and cross-runtime cost Task 15 was designed to avoid. The emitted
+object and nested arrays also aren't frozen at runtime despite the new
+documentation calling the frame frozen.
+
+Required approach:
+
+- Keep the live render buffers on the UI runtime and update them through a
+  supported mutable shared/Skia buffer path instead of publishing fresh bulk
+  arrays from JavaScript each frame.
+- Cross the runtime boundary with bounded commands or a small revision/control
+  record; don't copy every slot field every frame.
+- Preserve the pure headless controller for deterministic tests, but separate
+  that test/readback surface from the mounted hot presentation buffers.
+- If an immutable frame snapshot remains public, create it only for explicit
+  diagnostics/readback at control frequency and freeze it deeply.
+- Add a structural allocation test proving the active display loop doesn't
+  call `Array.from`, spread full slot buffers, or assign capacity-sized arrays
+  to a shared value. Keep the final device benchmark open separately.
+
+### T15-SF2 — Correct Atlas authored size and sprite opacity (High)
+
+`particleSpriteXform()` uses the sampled scale directly as `scos`/`ssin`.
+It never multiplies by `drawWidth / frameWidth`, so a 32×32 source configured
+to draw at 24×24 still renders at 32×32. Its pivot uses the 24×24 authored
+size while Atlas transforms the 32×32 source, so the center also shifts.
+Additionally, the Atlas path never consumes `slots.opacity`; sprite particles
+don't fade even when `fadeOut` is enabled.
+
+Required approach:
+
+- After validating equal width and height ratios, compute
+  `effectiveScale = sampledScale * drawWidth / frameWidth`.
+- Feed the effective scale and source frame dimensions into the established
+  `computeSpriteRsxform` center-anchor math, or implement the exact equivalent.
+- Add a fixed-capacity Atlas color/alpha buffer and apply each slot's sampled
+  opacity without remounting or rebuilding the batch.
+- Hide inactive and culled slots without leaving stale transform or alpha data
+  visible when they are reused.
+- Add buffer tests using a 32×32 source drawn at 24×24, nonzero rotation,
+  sampled scales 0.5, 1, and 2, plus opacity 1, 0.5, and 0.
+
+### T15-SF3 — Apply pause sources even while the driver is asleep (High)
+
+The hook reads `sessionStatus` and `manualPaused` only inside `stepFrame()`.
+When the driver is idle, no frame is scheduled, so changing either pause source
+doesn't update the system. An emission can therefore be accepted while the UI
+or session is already paused; only the wake frame pauses it afterward. When
+active particles are paused, the opposite problem occurs: `isIdle()` remains
+false, so the RAF keeps running indefinitely just to rediscover the paused
+state.
+
+Required approach:
+
+- Make pause-source transitions explicit and reactive rather than polling
+  callback refs only from animation frames. Bind the session status listener
+  and expose a hook input or control for manual pause changes.
+- Apply the combined pause state synchronously before accepting new emissions.
+  A burst requested after a pause transition must follow the documented paused
+  drop policy even when the driver was idle.
+- Stop scheduling while paused, backgrounded, hidden, disposed, or idle, and
+  restart only from an explicit resume/wake transition.
+- Keep session pause and manual pause independent; resume only when every
+  source permits it.
+- Add mounted tests for pause-while-idle then emit, session-pause-while-idle
+  then emit, active pause with zero additional scheduled frames, and resume
+  continuing from the frozen age.
+
+### T15-SF4 — Complete the world-space reference path (Important)
+
+The new Particle Lab sprite proves the Atlas path, but all three lab effects
+still use `space: 'screen'`. The Camera2D helper has pure tests, yet the planned
+reference flow still doesn't mount a particle effect inside `GameWorld2D` or
+show camera movement affecting only world-space particles.
+
+Required approach:
+
+- Add one world-space effect to Particle Lab and mount it through the real
+  `GameWorld2D` viewport and presented-camera context.
+- Keep a screen-space effect beside it as the control case.
+- Move, zoom, and rotate the camera from lab controls and prove the world
+  effect transforms and culls while the screen effect remains fixed.
+- Add a mounted integration test using the real context and shared values,
+  including a far-from-origin camera case. This implementation proof isn't
+  device-gated; only final performance and visual validation are.
+
 ## Future expansion backlog
 
 These roadmap items remain preserved and non-blocking.

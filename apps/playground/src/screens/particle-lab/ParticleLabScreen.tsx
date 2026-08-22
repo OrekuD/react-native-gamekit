@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Canvas } from '@shopify/react-native-skia';
+import { useSharedValue } from 'react-native-reanimated';
 
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
 import { ParticleView, useParticlePresentation } from 'rn-gamekit/react';
+import { GameWorld2D } from 'rn-gamekit/react';
+import type { CameraCut2D, ResolvedViewport2D } from 'rn-gamekit';
 import { defineAssets, spriteSheet } from 'rn-gamekit';
 import { useGameAssets } from 'rn-gamekit/react';
 
@@ -55,6 +58,18 @@ const particleAssets = defineAssets({
   },
 });
 
+const worldBurst = defineParticleEffect({
+  capacity: 48,
+  space: 'world',
+  overflow: 'recycle-oldest',
+  particle: { kind: 'shape', shape: 'rectangle', width: 6, height: 6, color: '#f472b6' },
+  burst: { count: 12 },
+  lifetimeSeconds: { min: 0.5, max: 1.0 },
+  speed: { min: 60, max: 160 },
+  gravity: { x: 0, y: 80 },
+  fadeOut: true,
+});
+
 const sparks = defineParticleEffect({
   capacity: 64,
   space: 'screen',
@@ -78,7 +93,7 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
   const [paused, setPaused] = useState(false);
   // Created once per mount; disposed exactly once on unmount.
   const [system] = useState<ReturnType<typeof createParticleSystem>>(() =>
-    createParticleSystem({ effects: { burst, drops, sparks } }),
+    createParticleSystem({ effects: { burst, drops, sparks, worldBurst } }),
   );
   const assetsState = useGameAssets(particleAssets, { groups: ['effects'] });
   useEffect(() => () => system.dispose(), [system]);
@@ -91,20 +106,9 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
   void diagTick;
 
   // THE single presentation clock (T15-F1): views never advance the system.
-  // T15-RF3: user pause is an independent source — a running session can
-  // never cancel it.
-  const sessionStatusRef = useRef<'idle' | 'running' | 'paused' | 'disposed'>('running');
-  useEffect(() => {
-    sessionStatusRef.current = session?.status ?? 'running';
-  }, [session]);
-  const manualPausedRef = useRef(false);
-  const statusReader = useMemo(
-    () => ({
-      sessionStatus: () => sessionStatusRef.current,
-      manualPaused: () => manualPausedRef.current,
-    }),
-    [],
-  );
+  // T15-SF3: the imperative setManualPaused control applies reactively — a
+  // running session can never cancel it.
+  const statusReader = useMemo(() => ({ sessionStatus: () => 'running' as const }), []);
   const presentation = useParticlePresentation(system, statusReader);
 
   const emitBurst = (): void => {
@@ -136,14 +140,63 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
 
   const togglePause = (): void => {
     if (!paused) {
-      manualPausedRef.current = true;
+      presentation.setManualPaused(true);
       setPaused(true);
       setStatus('paused — frozen across frames (independent of session)');
     } else {
-      manualPausedRef.current = false;
+      presentation.setManualPaused(false);
       setPaused(false);
       setStatus('resumed');
     }
+  };
+
+  // T15-SF4: world-space row — presented camera the lab can move/zoom/rotate.
+  const cameraSV = useSharedValue<CameraCut2D | undefined>({
+    camera: { center: { x: 160, y: 240 }, zoom: 1, rotationRadians: 0 },
+    cutId: 1,
+  });
+  const viewportSV = useSharedValue<ResolvedViewport2D | undefined>({
+    surfaceSize: { width: 320, height: 480 },
+    logicalBounds: { x: 0, y: 0, width: 320, height: 480 },
+    visibleLogicalBounds: { x: 0, y: 0, width: 320, height: 480 },
+    contentBounds: { x: 0, y: 0, width: 320, height: 480 },
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  });
+
+  const moveCamera = (dx: number, dy: number): void => {
+    const current = cameraSV.value;
+    if (current === undefined) return;
+    const c = current.camera.center;
+    cameraSV.value = {
+      camera: { center: { x: c.x + dx, y: c.y + dy }, zoom: current.camera.zoom, rotationRadians: current.camera.rotationRadians },
+      cutId: current.cutId + 1,
+    };
+    setStatus(`camera (${Math.round(c.x + dx)},${Math.round(c.y + dy)})`);
+  };
+  const zoomCamera = (factor: number): void => {
+    const current = cameraSV.value;
+    if (current === undefined) return;
+    const z = Math.max(0.25, Math.min(4, current.camera.zoom * factor));
+    cameraSV.value = { camera: { ...current.camera, zoom: z }, cutId: current.cutId + 1 };
+    setStatus(`zoom ${z.toFixed(2)}x`);
+  };
+  const rotateCamera = (deltaRad: number): void => {
+    const current = cameraSV.value;
+    if (current === undefined) return;
+    const r = current.camera.rotationRadians + deltaRad;
+    cameraSV.value = { camera: { ...current.camera, rotationRadians: r }, cutId: current.cutId + 1 };
+    setStatus(`rotate ${Math.round((r * 180) / Math.PI)}deg`);
+  };
+
+  const emitWorldBurst = (): void => {
+    if (system.status !== 'running') return;
+    system.emit('worldBurst', {
+      position: { x: 100 + Math.random() * 120, y: 180 + Math.random() * 120 },
+      seed: Math.floor(Date.now() * 13) >>> 0,
+    });
+    setStatus(`world burst — active ${system.getDiagnostics('worldBurst').active}`);
   };
 
   // Diagnostics sampled during render are fine here because forceTick runs at ~8Hz.
@@ -153,21 +206,26 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
   return (
     <View style={styles.screen}>
       <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <ParticleView system={system} effect="burst" width={320} height={480} snapshot={presentation.snapshot} />
-        <ParticleView system={system} effect="drops" width={320} height={480} snapshot={presentation.snapshot} />
+        <ParticleView system={system} effect="burst" width={320} height={480} presentation={presentation} />
+        <ParticleView system={system} effect="drops" width={320} height={480} presentation={presentation} />
         {assetsState.status === 'ready' ? (
           <ParticleView
             system={system}
             effect="sparks"
             width={320}
             height={480}
-            snapshot={presentation.snapshot}
+            presentation={presentation}
             spriteSource={{
               image: assetsState.assets.get(particleAssets.effects.spark).image as never,
               frame: { x: 0, y: 0, width: 32, height: 32 },
             }}
           />
         ) : null}
+        {/* T15-SF4: world-space row inside GameWorld2D — camera transform and
+            culling apply here; the screen effects above stay fixed. */}
+        <GameWorld2D viewport={viewportSV} camera={cameraSV}>
+          <ParticleView system={system} effect="worldBurst" width={320} height={480} presentation={presentation} />
+        </GameWorld2D>
       </Canvas>
 
       <View pointerEvents="box-none" style={styles.hud}>
@@ -185,6 +243,30 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
         </Text>
       </View>
 
+      <View pointerEvents="box-none" style={[styles.controls, styles.cameraControls]}>
+        <Pressable onPress={() => moveCamera(-40, 0)} style={styles.miniCam}>
+          <Text style={styles.camText}>{'\u2190'}</Text>
+        </Pressable>
+        <Pressable onPress={() => moveCamera(40, 0)} style={styles.miniCam}>
+          <Text style={styles.camText}>{'\u2192'}</Text>
+        </Pressable>
+        <Pressable onPress={() => moveCamera(0, -40)} style={styles.miniCam}>
+          <Text style={styles.camText}>{'\u2191'}</Text>
+        </Pressable>
+        <Pressable onPress={() => moveCamera(0, 40)} style={styles.miniCam}>
+          <Text style={styles.camText}>{'\u2193'}</Text>
+        </Pressable>
+        <Pressable onPress={() => zoomCamera(1.25)} style={styles.miniCam}>
+          <Text style={styles.camText}>+</Text>
+        </Pressable>
+        <Pressable onPress={() => zoomCamera(0.8)} style={styles.miniCam}>
+          <Text style={styles.camText}>{'\u2212'}</Text>
+        </Pressable>
+        <Pressable onPress={() => rotateCamera(Math.PI / 12)} style={styles.miniCam}>
+          <Text style={styles.camText}>{'\u21BB'}</Text>
+        </Pressable>
+      </View>
+
       <View pointerEvents="box-none" style={styles.controls}>
         <Pressable onPress={emitBurst} style={styles.button}>
           <Text style={styles.buttonText}>Burst (recycle-oldest)</Text>
@@ -194,6 +276,9 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
         </Pressable>
         <Pressable onPress={emitSparks} style={styles.button}>
           <Text style={styles.buttonText}>Sparks (Atlas)</Text>
+        </Pressable>
+        <Pressable onPress={emitWorldBurst} style={styles.button}>
+          <Text style={styles.buttonText}>World</Text>
         </Pressable>
         <Pressable onPress={togglePause} style={[styles.button, paused && styles.buttonActive]}>
           <Text style={styles.buttonText}>{paused ? 'Resume' : 'Pause'}</Text>
@@ -225,5 +310,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   buttonActive: { backgroundColor: 'rgba(96,165,250,0.35)' },
+  cameraControls: { bottom: 76 },
+  miniCam: {
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  camText: { color: '#e2e8f0', textAlign: 'center', fontSize: 13 },
   buttonText: { color: 'white', textAlign: 'center', fontSize: 11, fontWeight: '600' },
 });

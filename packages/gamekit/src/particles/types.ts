@@ -150,23 +150,27 @@ export interface ParticlePresentationBinding {
   readonly effects: readonly string[];
   /**
    * Manual advance for headless tests and custom drivers. Throws while a
-   * driver owns the clock (T15-RF3); otherwise advances + resamples once.
-   * A true no-op while paused (revision does not move).
+   * driver owns the clock (T15-RF3); otherwise advances the active clock and
+   * expires slots. A no-op while paused.
    */
   tick(deltaSeconds: number): void;
   /** Acquire the exclusive presentation clock. Throws while another owner holds it. */
   acquireDriver(): ParticleDriverHandle;
   /** Whether a driver currently holds the exclusive clock. */
   readonly driverOwned: boolean;
-  /** Monotonic revision bumped only when a resample changed visible state. */
-  readonly revision: number;
+  /** Monotonic revision of the EMISSION REGISTRY (bumped on membership changes). */
+  readonly registryRevision: number;
+  /** Current accumulated ACTIVE time (freezes while paused). */
+  readonly activeClock: number;
   /** Number of active slots summed over all effects (idle probe). */
   readonly activeCount: number;
   /**
-   * Fixed-capacity sample buffers for one effect. Positions follow the
-   * center-anchor convention; `scale` folds into rendered size by the view.
+   * Deeply frozen per-emission init records for one effect — the diagnostics/
+   * readback surface. Positions derive analytically from activeClock.
    */
-  slots(effect: string): ParticleSlotBuffers;
+  emissions(effect: string): readonly ParticleEmissionRecord[];
+  /** Build the bounded UI-runtime registry (frozen). Called on membership changes. */
+  buildUiRegistry(): ParticleUiRegistry;
 }
 
 /**
@@ -200,4 +204,33 @@ export interface ParticleSlotBuffers {
   readonly opacity: Float32Array;
   readonly visible: Uint8Array;
   readonly capacity: number;
+}
+
+/** Initial state for one emitted particle, in ACTIVE-time coordinates. */
+export interface ParticleEmissionRecord {
+  /** ACTIVE-clock time at which this particle was born. */
+  readonly bornAt: number;
+  readonly originX: number;
+  readonly originY: number;
+  readonly vx: number;
+  readonly vy: number;
+  readonly rotation: number;
+  readonly rotationSpeed: number;
+  readonly scaleStart: number;
+  readonly scaleEnd: number;
+  readonly lifetime: number;
+  readonly spawnSequence: number;
+}
+
+/**
+ * What the presentation layer transfers across the runtime boundary
+ * (T15-SF1): bounded per-emission init records plus the scalar clock.
+ * Transforms are computed analytically on the UI runtime.
+ */
+export interface ParticleUiRegistry {
+  readonly registryRevision: number;
+  readonly activeClock: number;
+  readonly effects: Readonly<
+    Record<string, { readonly capacity: number; readonly particles: readonly ParticleEmissionRecord[] }>
+  >;
 }

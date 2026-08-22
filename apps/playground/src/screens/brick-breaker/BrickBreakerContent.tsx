@@ -88,12 +88,20 @@ function useBrickParticles(session: BrickBreakerSession) {
   );
   useEffect(() => () => system.dispose(), [system]);
 
-  // T15-F1: apply current status immediately at bind, then track changes.
-  const statusReader = useMemo(
+  // T15-SF3: reactive pause via subscribe + immediate apply at bind.
+  const sessionStatus = useMemo(
     () => ({ sessionStatus: () => session.status as 'idle' | 'running' | 'paused' | 'disposed' }),
     [session],
   );
-  const presentation = useParticlePresentation(system, statusReader);
+  const sessionSubscribe = useMemo(
+    () => (listener: (status: 'idle' | 'running' | 'paused' | 'disposed') => void) =>
+      session.addStatusListener((s) => listener(s as 'idle' | 'running' | 'paused' | 'disposed')).remove,
+    [session],
+  );
+  const presentation = useParticlePresentation(system, {
+    ...sessionStatus,
+    sessionSubscribe,
+  });
 
   useEffect(() => {
     // Committed events only; seed from stable tick/ordinal identity.
@@ -112,7 +120,7 @@ function useBrickParticles(session: BrickBreakerSession) {
     return () => subs.forEach((x) => { try { x.remove(); } catch {} });
   }, [session, system]);
 
-  return { system, snapshot: presentation.snapshot };
+  return { system, presentation };
 }
 
 function useBrickBreakerFeedback(session: BrickBreakerSession) {
@@ -284,8 +292,8 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
       >
         <GameHud hud={hud} hitCount={hitCount} />
         <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <ParticleView system={particles.system} effect="brickBurst" width={320} height={480} snapshot={particles.snapshot} />
-          <ParticleView system={particles.system} effect="lifeBurst" width={320} height={480} snapshot={particles.snapshot} />
+          <ParticleView system={particles.system} effect="brickBurst" width={320} height={480} presentation={particles.presentation} />
+          <ParticleView system={particles.system} effect="lifeBurst" width={320} height={480} presentation={particles.presentation} />
         </Canvas>
         <View pointerEvents="box-none" style={styles.feedbackBar}>
           <Text style={styles.feedbackText}>Audio {audioReady ? 'ready' : 'loading'}</Text>

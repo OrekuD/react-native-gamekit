@@ -294,13 +294,22 @@ describe('T15-F6 safe controller boundary', () => {
     ps.dispose();
   });
 
-  it('presentation binding exposes buffers without pool internals', () => {
+  it('presentation binding exposes registry + emissions without pool internals', () => {
     const ps = createParticleSystem({ effects: { a: shapeDef } });
+    ps.emit('a', { position: { x: 1, y: 1 }, seed: 21 });
     const binding = ps.bindPresentation();
     assert.equal(binding.systemGeneration >= 0, true);
     assert.deepEqual([...binding.effects], ['a']);
     assert.throws(() => binding.definition('zzz'), /unknown particle effect/);
-    assert.equal(binding.slots('a').capacity, shapeDef.capacity);
+    // Emission records are the bounded readback surface (one per live
+    // particle), not raw pool slots.
+    const em = binding.emissions('a');
+    assert.equal(em.length, 1);
+    assert.equal(em[0]!.originX, 1);
+    assert.ok(Object.isFrozen(em[0]));
+    const reg = binding.buildUiRegistry();
+    assert.equal(reg.effects.a!.particles.length, 1);
+    assert.equal(reg.effects.a!.capacity, shapeDef.capacity);
     // Exactly one clock owner: second acquire throws; release restores.
     const d1 = binding.acquireDriver();
     assert.throws(() => binding.acquireDriver(), /already owned/);
@@ -319,16 +328,16 @@ describe('T15-F1 single clock through one binding', () => {
     const ps = createParticleSystem({ effects: { a: shapeDef } });
     const binding = ps.bindPresentation();
     ps.emit('a', { position: { x: 0, y: 0 }, seed: 3 });
-    // Simulate two views ticking through the SAME binding (the only clock).
+    // Two readers observe the SAME clock; one tick advances once.
+    const clockAfterOne = binding.activeClock;
     binding.tick(0.1);
-    const revAfterOne = binding.revision;
+    const reg1 = binding.buildUiRegistry();
     binding.tick(0.1);
-    const slots = binding.slots('a');
-    const p1x = slots.x[0]!;
-    // A second "view" reading the same buffers sees identical state — there
-    // is no second clock to double-advance.
-    assert.equal(slots.x[0]!, p1x);
-    assert.ok(binding.revision >= revAfterOne);
+    const reg2 = binding.buildUiRegistry();
+    // Registry membership unchanged by time; positions derive from clock.
+    assert.deepEqual(reg2.effects.a!.particles, reg1.effects.a!.particles);
+    assert.equal(reg2.activeClock, reg1.activeClock + 0.1);
+    void clockAfterOne;
     // Age advanced exactly 0.2 total, not 0.4.
     const snap = ps.getActiveParticles('a')[0]!;
     assert.ok(Math.abs(snap.age - 0.2) < 1e-9);
@@ -342,8 +351,9 @@ describe('T15-F1 single clock through one binding', () => {
     assert.equal(ps.getDiagnostics('a').dropped, 1);
     const binding = ps.bindPresentation();
     binding.tick(0.5); // no-op while paused
-    const slots = binding.slots('a');
-    assert.equal(slots.visible[0]!, 0);
+    const reg = binding.buildUiRegistry();
+    assert.equal(reg.effects.a!.particles.length, 0);
+    assert.equal(binding.activeClock, 0);
     ps.resume();
     ps.emit('a', { position: { x: 0, y: 0 }, seed: 5 });
     binding.tick(0.1);

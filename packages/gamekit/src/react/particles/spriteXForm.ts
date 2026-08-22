@@ -17,11 +17,14 @@ export interface ParticleSpriteXformInput {
   readonly y: number;
   /** Sampled rotation in radians. */
   readonly rotation: number;
-  /** Sampled uniform scale. */
+  /** Sampled uniform scale (scaleOverLife domain). */
   readonly scale: number;
   /** Authored draw size (definition particle.size). */
   readonly drawWidth: number;
   readonly drawHeight: number;
+  /** Source frame size in sheet pixels. */
+  readonly frameWidth: number;
+  readonly frameHeight: number;
 }
 
 export interface ParticleSpriteXform {
@@ -32,14 +35,17 @@ export interface ParticleSpriteXform {
 }
 
 export function particleSpriteXform(input: ParticleSpriteXformInput): ParticleSpriteXform {
+  // T15-SF2: Atlas draws the SOURCE rect, so the authored-to-source ratio
+  // must ride in scos/ssin or the drawn size ignores particle.size entirely.
+  const effScale = input.scale * (input.drawWidth / input.frameWidth);
   const cos = Math.cos(input.rotation);
   const sin = Math.sin(input.rotation);
-  // Center anchor: half of the authored draw size.
-  const px = (input.drawWidth / 2) * input.scale;
-  const py = (input.drawHeight / 2) * input.scale;
+  // Center anchor pivot against the DRAWN (scaled source) extent.
+  const px = (input.frameWidth / 2) * effScale;
+  const py = (input.frameHeight / 2) * effScale;
   return {
-    scos: input.scale * cos,
-    ssin: input.scale * sin,
+    scos: effScale * cos,
+    ssin: effScale * sin,
     tx: input.x - px * cos + py * sin,
     ty: input.y - px * sin - py * cos,
   };

@@ -42,6 +42,7 @@ mock.module('@shopify/react-native-skia', {
     Canvas: host('canvas'),
     Group: host('group'),
     Atlas: host('atlas'),
+    Picture: host('picture'),
     Circle: host('circle'),
     Rect: host('rect'),
     Image: host('image'),

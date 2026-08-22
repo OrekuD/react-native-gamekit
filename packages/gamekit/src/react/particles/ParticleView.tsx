@@ -2,15 +2,14 @@ import { useContext, useMemo } from 'react';
 import { Atlas, Picture, Skia } from '@shopify/react-native-skia';
 import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
-import type { SkImage, SkPicture } from '@shopify/react-native-skia';
+import type { SkImage } from '@shopify/react-native-skia';
 
 import { GameWorldContext } from '../sprites/GameWorld2D';
-import type { CameraCut2D } from '../../camera2d/types';
-import type { ResolvedViewport2D } from '../../viewport2d/types';
 import type {
   ParticleEffectDefinition,
-  ParticleFrameSnapshotLike,
+  ParticleEmissionRecord,
   ParticleSystem,
+  ParticleUiRegistry,
 } from '../../particles/types';
 
 import {
@@ -28,10 +27,14 @@ export interface ParticleViewProps {
   readonly width: number;
   readonly height: number;
   /**
-   * The UI snapshot published by `useParticlePresentation`. Views are pure
+   * The presentation handle from `useParticlePresentation`: a scalar
+   * active-time clock plus the bounded emission registry. Views are pure
    * readers and NEVER advance the system clock (T15-F1).
    */
-  readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
+  readonly presentation: {
+    readonly clock: SharedValue<number>;
+    readonly registry: SharedValue<ParticleUiRegistry>;
+  };
   /**
    * Sprite source for `kind: 'sprite'` effects — the decoded sheet resolved
    * once at bind time by the caller. Required for sprite effects; a missing
@@ -46,19 +49,18 @@ export interface ParticleViewProps {
 /**
  * Presentation-only particle renderer.
  *
- * Topology is CONSTANT per effect regardless of capacity (T15-RF5):
- * exactly one React node (`Picture` for shapes, `Atlas` for sprites) plus a
- * single UI-runtime derived worklet that walks the effect's fixed buffers.
- * World-space effects must be mounted inside the matching `GameWorld2D`;
- * culling uses the presented camera's actual center/zoom/rotation through
- * the shared helper so both paths agree (T15-RF2).
+ * Topology is CONSTANT per effect regardless of capacity (T15-RF5): exactly
+ * one React node (`Picture` for shapes, `Atlas` for sprites) plus a single
+ * UI-runtime derived worklet that walks the effect's emission records and
+ * computes analytic transforms from the scalar active-time clock. No per-slot
+ * data crosses the runtime boundary per frame (T15-SF1).
  */
 export function ParticleView({
   system,
   effect,
   width,
   height,
-  snapshot,
+  presentation,
   spriteSource,
 }: ParticleViewProps) {
   const definition = useMemo<ParticleEffectDefinition>(
@@ -66,8 +68,12 @@ export function ParticleView({
     [system, effect],
   );
   const world = useContext(GameWorldContext);
-  const camera = (world?.camera ?? null) as SharedValue<CameraCut2D | undefined> | null;
-  const viewport = (world?.viewport ?? null) as SharedValue<ResolvedViewport2D | undefined> | null;
+  const camera = (world?.camera ?? null) as
+    | { value?: Parameters<typeof cameraVisibleWorldBounds>[0] extends never ? never : { camera?: { center: { x: number; y: number }; zoom: number; rotationRadians: number } } | undefined }
+    | null;
+  const viewport = (world?.viewport ?? null) as
+    | { value?: { visibleLogicalBounds?: { x: number; y: number; width: number; height: number } } | undefined }
+    | null;
 
   if (definition.particle.kind === 'sprite') {
     if (spriteSource === undefined) {
@@ -75,8 +81,6 @@ export function ParticleView({
         `[rn-gamekit/particles] effect "${effect}" declares kind "sprite" but no spriteSource was provided — resolve the sheet via the asset store before rendering`,
       );
     }
-    // v1 requires uniform authored-to-source aspect (RSXform cannot scale
-    // nonuniformly); validated once at bind time.
     assertUniformParticleSpriteRatio(
       definition.particle.size.width,
       definition.particle.size.height,
@@ -85,25 +89,30 @@ export function ParticleView({
     );
     return (
       <SpriteSlots
-        snapshot={snapshot}
+        clock={presentation.clock}
+        registry={presentation.registry}
         effect={effect}
         capacity={definition.capacity}
         image={spriteSource.image}
         frameRect={spriteSource.frame}
         drawWidth={definition.particle.size.width}
         drawHeight={definition.particle.size.height}
+        fadeOut={definition.fadeOut}
+        gravityX={definition.gravity.x}
+        gravityY={definition.gravity.y}
         width={width}
         height={height}
         space={definition.space}
-        camera={camera}
-        viewport={viewport}
+        camera={camera as never}
+        viewport={viewport as never}
       />
     );
   }
 
   return (
     <ShapeBatch
-      snapshot={snapshot}
+      clock={presentation.clock}
+      registry={presentation.registry}
       effect={effect}
       capacity={definition.capacity}
       shape={definition.particle.shape === 'rectangle' ? 'rect' : 'circle'}
@@ -111,29 +120,45 @@ export function ParticleView({
       rectWidth={definition.particle.width ?? 6}
       rectHeight={definition.particle.height ?? 6}
       color={definition.particle.color ?? '#ffffff'}
-      fadeOut={definition.fadeOut}
       gravityX={definition.gravity.x}
       gravityY={definition.gravity.y}
-      lifetimeSeconds={definition.lifetimeSeconds}
-      speed={definition.speed}
-      direction={definition.direction ?? { min: 0, max: Math.PI * 2 }}
-      rotation={definition.rotation ?? { min: 0, max: 0 }}
-      scaleOverLife={definition.scaleOverLife ?? { min: 1, max: 1 }}
       width={width}
       height={height}
       space={definition.space}
-      camera={camera}
-      viewport={viewport}
+      camera={camera as never}
+      viewport={viewport as never}
     />
   );
+}
+
+/** Analytic transform for one emission at the given ACTIVE time. */
+function sampleEmission(
+  e: ParticleEmissionRecord,
+  now: number,
+  gravityX: number,
+  gravityY: number,
+): { x: number; y: number; rotation: number; scale: number; opacity: number; alive: boolean } {
+  'worklet';
+  const age = now - e.bornAt;
+  if (age < 0 || age >= e.lifetime) {
+    return { x: 0, y: 0, rotation: 0, scale: 0, opacity: 0, alive: false };
+  }
+  const t = age / e.lifetime;
+  const x = e.originX + e.vx * age + 0.5 * gravityX * age * age;
+  const y = e.originY + e.vy * age + 0.5 * gravityY * age * age;
+  const rotation = e.rotation + e.rotationSpeed * age;
+  const scale = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
+  const opacity = 1 - t;
+  return { x, y, rotation, scale, opacity, alive: true };
 }
 
 // ---------------------------------------------------------------------------
 // Shapes: ONE immediate Picture built in ONE worklet per effect (T15-RF5).
 // ---------------------------------------------------------------------------
 
-interface ShapeBatchProps {
-  readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
+function ShapeBatch(props: {
+  readonly clock: SharedValue<number>;
+  readonly registry: SharedValue<ParticleUiRegistry>;
   readonly effect: string;
   readonly capacity: number;
   readonly shape: 'circle' | 'rect';
@@ -141,98 +166,86 @@ interface ShapeBatchProps {
   readonly rectWidth: number;
   readonly rectHeight: number;
   readonly color: string;
-  readonly fadeOut: boolean;
   readonly gravityX: number;
   readonly gravityY: number;
-  readonly lifetimeSeconds: { min: number; max: number };
-  readonly speed: { min: number; max: number };
-  readonly direction: { min: number; max: number };
-  readonly rotation: { min: number; max: number };
-  readonly scaleOverLife: { min: number; max: number };
   readonly width: number;
   readonly height: number;
   readonly space: 'world' | 'screen';
-  readonly camera: SharedValue<CameraCut2D | undefined> | null;
-  readonly viewport: SharedValue<ResolvedViewport2D | undefined> | null;
-}
+  readonly camera: unknown;
+  readonly viewport: unknown;
+}) {
+  const { clock, registry, effect, capacity, shape, radius, rectWidth, rectHeight, color, gravityX, gravityY, width, height, space, camera, viewport } =
+    props;
 
-function ShapeBatch(props: ShapeBatchProps) {
-  const {
-    snapshot, effect, capacity, shape, radius, rectWidth, rectHeight, color,
-    width, height, space, camera, viewport,
-  } = props;
-
-  // One worklet rebuilds the picture from the latest published frame; the
-  // component count stays constant as capacity grows — only this buffer walk
-  // scales (and it is plain array reads on the UI runtime).
-  const picture = useDerivedValue<SkPicture>(() => {
+  const picture = useDerivedValue(() => {
     'worklet';
-    const frame = snapshot.value;
-    const slots = frame.effects[effect];
+    const reg = registry.value;
+    const entry = reg.effects[effect];
+    const now = clock.value;
+    // Culling bounds computed ONCE per revision from the presented camera.
+    const bounds =
+      space === 'world'
+        ? cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
+        : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
 
     const recorder = Skia.PictureRecorder();
     const canvas = recorder.beginRecording();
-      if (slots === undefined) return recorder.finishRecordingAsPicture();
-      // Culling bounds computed ONCE per revision from the presented camera.
-      const bounds =
-        space === 'world'
-          ? cameraVisibleWorldBounds(camera, viewport, PARTICLE_CULL_PADDING)
-          : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
+    if (entry === undefined) return recorder.finishRecordingAsPicture();
 
-      const paint = Skia.Paint();
-      paint.setColor(Skia.Color(color));
+    const paint = Skia.Paint();
+    paint.setColor(Skia.Color(color));
 
-      for (let i = 0; i < capacity; i++) {
-        if (slots.visible[i] === undefined || slots.visible[i] === 0) continue;
-        const x = slots.x[i]!;
-        const y = slots.y[i]!;
-        if (!visibleInBounds(x, y, bounds)) continue;
-        const rot = slots.rotation[i]!;
-        const sc = slots.scale[i]!;
-        const op = slots.opacity[i]!;
-        if (op <= 0) continue;
-        paint.setAlphaf(Math.max(0, Math.min(1, op)));
-        if (shape === 'circle') {
-          canvas.drawCircle(x, y, radius * sc, paint);
-        } else {
-          const w = rectWidth * sc;
-          const h = rectHeight * sc;
-          // Canvas transforms go through concat(SkMatrix); Matrix is
-          // chainable: translate -> rotate (radians).
-          const matrix = Skia.Matrix().translate(x, y).rotate(rot);
-          canvas.save();
-          canvas.concat(matrix);
-          canvas.drawRect({ x: -w / 2, y: -h / 2, width: w, height: h }, paint);
-          canvas.restore();
-        }
+    const particles = entry.particles;
+    for (let i = 0; i < particles.length && i < capacity; i++) {
+      const e = particles[i]!;
+      const s = sampleEmission(e, now, gravityX, gravityY);
+      if (!s.alive || s.opacity <= 0) continue;
+      if (!visibleInBounds(s.x, s.y, bounds)) continue;
+      paint.setAlphaf(Math.max(0, Math.min(1, s.opacity)));
+      if (shape === 'circle') {
+        canvas.drawCircle(s.x, s.y, radius * s.scale, paint);
+      } else {
+        const w = rectWidth * s.scale;
+        const h = rectHeight * s.scale;
+        const matrix = Skia.Matrix().translate(s.x, s.y).rotate(s.rotation);
+        canvas.save();
+        canvas.concat(matrix);
+        canvas.drawRect({ x: -w / 2, y: -h / 2, width: w, height: h }, paint);
+        canvas.restore();
       }
-      return recorder.finishRecordingAsPicture();
+    }
+    return recorder.finishRecordingAsPicture();
   });
 
   return <Picture picture={picture} />;
 }
 
 // ---------------------------------------------------------------------------
-// Sprites: fixed-capacity Atlas buffers filled by ONE worklet (T15-F3/R4).
+// Sprites: fixed-capacity Atlas buffers filled by ONE worklet (T15-F3/R4/SF2).
 // ---------------------------------------------------------------------------
 
 function SpriteSlots(props: {
-  readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
+  readonly clock: SharedValue<number>;
+  readonly registry: SharedValue<ParticleUiRegistry>;
   readonly effect: string;
   readonly capacity: number;
   readonly image: SkImage;
   readonly frameRect: { x: number; y: number; width: number; height: number };
   readonly drawWidth: number;
   readonly drawHeight: number;
+  readonly fadeOut: boolean;
+  readonly gravityX: number;
+  readonly gravityY: number;
   readonly width: number;
   readonly height: number;
   readonly space: 'world' | 'screen';
-  readonly camera: SharedValue<CameraCut2D | undefined> | null;
-  readonly viewport: SharedValue<ResolvedViewport2D | undefined> | null;
+  readonly camera: unknown;
+  readonly viewport: unknown;
 }) {
-  const { snapshot, effect, capacity, image, frameRect, drawWidth, drawHeight, width, height, space, camera, viewport } =
+  const { clock, registry, effect, capacity, image, frameRect, drawWidth, drawHeight, fadeOut, gravityX, gravityY, width, height, space, camera, viewport } =
     props;
 
+  // UI-owned buffers created once per mount (T15-SF1).
   const rects = useRectBuffer(capacity, (rect) => {
     'worklet';
     rect.setXYWH(0, 0, 0, 0);
@@ -241,43 +254,67 @@ function SpriteSlots(props: {
     'worklet';
     xform.set(1, 0, 0, 0);
   });
+  // Per-slot alpha lives in ONE stable color buffer allocated on mount and
+  // mutated on the UI runtime — never republished from JS (T15-SF1/SF2).
+  const colors = useMemo<number[]>(() => new Array<number>(capacity).fill(-1), [capacity]);
 
-  // One derived value fills every slot on the UI runtime using the shared
-  // culling helper and the established RSXform math WITH scale (T15-RF4).
   useDerivedValue(() => {
     'worklet';
-    const frame = snapshot.value;
-    const slots = frame.effects[effect];
+    const reg = registry.value;
+    const entry = reg.effects[effect];
+    const now = clock.value;
     const bounds =
       space === 'world'
-        ? cameraVisibleWorldBounds(camera, viewport, PARTICLE_CULL_PADDING)
+        ? cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
         : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
 
     for (let i = 0; i < capacity; i++) {
       const rectSlot = rects.value[i];
       const xformSlot = xforms.value[i];
       if (rectSlot === undefined || xformSlot === undefined) continue;
-      const vis =
-        slots !== undefined &&
-        slots.visible[i] === 1 &&
-        visibleInBounds(slots.x[i]!, slots.y[i]!, bounds);
-      if (!vis || slots === undefined) {
-        rectSlot.setXYWH(0, 0, 0, 0);
-        continue;
+
+      let placed = false;
+      if (entry !== undefined && i < entry.particles.length) {
+        const e = entry.particles[i]!;
+        const age = now - e.bornAt;
+        if (age >= 0 && age < e.lifetime) {
+          const t = age / e.lifetime;
+          const x = e.originX + e.vx * age + 0.5 * gravityX * age * age;
+          const y = e.originY + e.vy * age + 0.5 * gravityY * age * age;
+          if (visibleInBounds(x, y, bounds)) {
+            const op = fadeOut ? 1 - t : 1;
+            const xf = particleSpriteXform({
+              x,
+              y,
+              rotation: e.rotation + e.rotationSpeed * age,
+              scale: e.scaleStart + (e.scaleEnd - e.scaleStart) * t,
+              drawWidth,
+              drawHeight,
+              frameWidth: frameRect.width,
+              frameHeight: frameRect.height,
+            });
+            rectSlot.setXYWH(frameRect.x, frameRect.y, frameRect.width, frameRect.height);
+            xformSlot.set(xf.scos, xf.ssin, xf.tx, xf.ty);
+            colors[i] = packSpriteColor(255, 255, 255, fadeOut ? Math.max(0, Math.min(1, op)) : 1);
+            placed = true;
+          }
+        }
       }
-      const xf = particleSpriteXform({
-        x: slots.x[i]!,
-        y: slots.y[i]!,
-        rotation: slots.rotation[i]!,
-        scale: slots.scale[i]!,
-        drawWidth,
-        drawHeight,
-      });
-      rectSlot.setXYWH(frameRect.x, frameRect.y, frameRect.width, frameRect.height);
-      xformSlot.set(xf.scos, xf.ssin, xf.tx, xf.ty);
+      if (!placed) {
+        // Hide inactive/culled slots AND clear stale alpha (T15-SF2).
+        rectSlot.setXYWH(0, 0, 0, 0);
+        colors[i] = packSpriteColor(255, 255, 255, 0);
+      }
     }
-    return frame.revision;
+    return colors;
   });
 
-  return <Atlas image={image} sprites={rects} transforms={xforms} />;
+  return <Atlas image={image} sprites={rects} transforms={xforms} colors={colors as never} />;
+}
+
+/** Pack RGBA into an Skia-compatible integer with premultiplied-style alpha slot. */
+function packSpriteColor(r: number, g: number, b: number, a: number): number {
+  'worklet';
+  const A = Math.round(Math.max(0, Math.min(1, a)) * 255);
+  return ((A << 24) | (b << 16) | (g << 8) | r) >>> 0;
 }
