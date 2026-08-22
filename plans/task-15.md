@@ -417,6 +417,123 @@ Required approach:
 - Add mutation and malformed-definition tests that fail against the current
   implementation and prove the controller remains unchanged.
 
+## Follow-up feedback
+
+The implementation in `4cef45f` improves the controller boundary and fixes the
+original example's duplicate view clocks, but the following Task 15 issues
+remain. These are automated/runtime correctness gaps, not physical-device
+measurement rows.
+
+### T15-RF1 — Do not republish reused typed arrays through a shared value (High)
+
+`useParticlePresentation` assigns a new wrapper and `Map` to `snapshot.value`,
+but every entry contains the same `Float32Array` and `Uint8Array` objects from
+`binding.slots()`. React Native Worklets caches serialized objects by identity.
+After the first transfer, reusing those array identities can reuse the original
+UI clone instead of transferring later mutations. The UI renderer can therefore
+remain on the first particle frame. The assignment also serializes all effect
+buffers, so it isn't the documented "one small snapshot write."
+
+Required approach:
+
+- Keep the hot presentation buffers UI-owned and mutate them through the
+  supported Reanimated/Skia buffer mechanism, following `SpriteBatch`.
+- If a shared typed-array value remains necessary, update it with the supported
+  shared-value mutation API and prove that the UI runtime observes every
+  revision. Don't mutate a previously serialized JS array and republish the
+  same identity.
+- Keep the revision signal separate from bulk data when possible.
+- Add a native Worklets-runtime or equivalent integration test that publishes
+  at least three distinct positions through the same mounted view and observes
+  all three on the UI side. The current synchronous shared-value mock cannot
+  detect serialization-cache staleness.
+
+### T15-RF2 — Cull against camera-visible world bounds (High)
+
+Both world visibility functions check positions against
+`viewport.visibleLogicalBounds`. That rectangle is the logical viewport, not
+the world region visible through the presented camera. The code checks that a
+camera exists but never uses its center, zoom, or rotation, so a camera moved
+away from the logical origin hides visible particles and can keep invisible
+origin particles alive on screen.
+
+Required approach:
+
+- Reuse the existing worklet-safe camera visibility math from Camera2D or the
+  established `SpriteBatch` culling path.
+- Compute the conservative world bounds from `camera.value.camera` and
+  `viewport.value.visibleLogicalBounds`, then apply padding in world units.
+- Share one culling helper between shape and Atlas paths so their results can't
+  diverge.
+- Add tests with a camera centered far from the logical origin, plus zoomed and
+  rotated cases. Prove an in-view world particle stays visible and an origin
+  particle is hidden.
+- Add the planned world-space row to Particle Lab. A physical device isn't
+  required to prove the camera transform and culling behavior.
+
+### T15-RF3 — Enforce clock ownership and preserve manual pause (High)
+
+`useParticlePresentation` calls `binding.tick()` directly and never acquires
+the binding's `start()` ownership guard. Mounting the hook twice for one system
+still creates two RAF loops and double-advances it. The loop also continues to
+scan every pool when no particles are active, despite the true-idle claim.
+In Particle Lab, the status reader remains `running`; every frame therefore
+resumes a system paused by the **Pause** button.
+
+Required approach:
+
+- Make the hook acquire the binding's exclusive driver through one API and
+  release it on cleanup. A second owner must fail deterministically or share
+  the existing driver without ticking it again.
+- Prevent public manual `tick()` calls from advancing a binding while its
+  automatic driver owns the clock.
+- Stop scheduling while no slots are active, and wake the driver on the next
+  accepted emission. Don't merely run an unchanged revision loop.
+- Model session pause and user/lab pause as independent sources so a running
+  session cannot cancel a manual pause.
+- Add mounted tests for two hooks on one system, idle stop and emission wake,
+  and a Particle Lab pause that remains frozen across multiple frames.
+
+### T15-RF4 — Apply actual sprite scale and center anchoring (High)
+
+The Atlas transform writes `cos` and `sin` directly to `RSXform`. Those fields
+are `scos` and `ssin`, so the sampled scale and configured sprite size affect
+only the pivot calculation; they don't scale the drawn sprite. The center
+offset is also based on `baseWidth` and `baseHeight`, while Atlas draws the
+source rectangle's dimensions.
+
+Required approach:
+
+- Reuse `computeSpriteRsxform` or the exact established `SpriteBatch` math.
+- Include the sampled scale and the ratio between authored draw size and source
+  frame size in `scos`, `ssin`, and pivot compensation.
+- Either require a uniform source-to-authored scale or define and implement how
+  nonuniform `size.width` and `size.height` work with Atlas RSXform.
+- Add buffer-level tests that inspect `scos`, `ssin`, `tx`, and `ty` for scale
+  0.5, 1, and 2 with a nonzero rotation.
+- Add the real sprite effect to Particle Lab using an existing bundled sheet.
+  Hardware performance remains device-gated; rendering the sheet isn't.
+
+### T15-RF5 — Batch the shape renderer instead of mounting one component per slot (Important)
+
+`ShapeSlots` creates one `ShapeSlot` React component per particle, and every
+slot creates several derived worklets. This still violates Task 15's explicit
+"Do not create one React component per particle" requirement and scales poorly
+at the allowed capacity of 1,024.
+
+Required approach:
+
+- Render each shape effect through one stable batched topology, such as one
+  immediate `Picture` worklet or an Atlas texture for the supported shape.
+- Keep the number of React components and derived worklets constant as effect
+  capacity grows; only fixed buffers may scale with capacity.
+- Preserve the center-anchor, rotation, scale, opacity, and culling semantics
+  in the selected batch.
+- Add a structural test comparing capacities 24 and 1,024 and proving the
+  React/worklet node count remains constant.
+- Keep the phone/tablet performance comparison open, but don't mark the v1
+  shape-rendering contract complete until the per-slot React topology is gone.
+
 ## Future expansion backlog
 
 These roadmap items remain preserved and non-blocking.

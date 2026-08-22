@@ -115,13 +115,31 @@ export interface ParticleSystem<
 }
 
 /**
+ * The exclusive presentation-clock lease (T15-RF3).
+ *
+ * Exactly one owner may drive the clock. While a driver is held, public
+ * `tick()` calls are rejected so ad-hoc callers can never double-advance
+ * the system. The driver exposes an idle probe and a wake listener so the
+ * scheduler can fully stop while nothing is active and resume on the next
+ * accepted emission.
+ */
+export interface ParticleDriverHandle {
+  /** Advance + resample. No-op while the owning system is paused/disposed. */
+  step(deltaSeconds: number): void;
+  /** True when every pool slot is inactive (scheduler may stop). */
+  isIdle(): boolean;
+  /** Observe emissions that may end an idle period; pass null to clear. */
+  setWakeListener(listener: (() => void) | null): void;
+  /** Release the exclusive lease; idempotent. */
+  release(): void;
+}
+
+/**
  * The renderer-facing half of a particle system (T15-F1/F2/F6).
  *
- * A binding owns sampled, fixed-capacity buffers per effect and exactly one
- * presentation clock. React views are readers: they never advance the
- * system, and any number of views may observe one binding. Buffers are
- * plain `Float32Array`s so the React layer can mirror them onto the UI
- * runtime with a single small write per revision.
+ * A binding owns sampled, fixed-capacity buffers per effect. React views
+ * are readers: they never advance the system. The clock itself is held by
+ * exactly one driver acquired through `acquireDriver()`.
  */
 export interface ParticlePresentationBinding {
   /** Generation of the owning system at bind time. */
@@ -131,20 +149,19 @@ export interface ParticlePresentationBinding {
   /** All bound effect names (stable order). */
   readonly effects: readonly string[];
   /**
-   * Advance the clock and resample every buffer. One call advances every
-   * effect exactly once regardless of how many views observe them.
-   * A true no-op while paused or when no particle is active (revision does
-   * not move).
+   * Manual advance for headless tests and custom drivers. Throws while a
+   * driver owns the clock (T15-RF3); otherwise advances + resamples once.
+   * A true no-op while paused (revision does not move).
    */
   tick(deltaSeconds: number): void;
-  /** Start the single presentation clock. Throws if already started. */
-  start(schedule: (tick: () => void) => () => void, stepSeconds?: number): void;
-  /** Stop the clock; idempotent. */
-  stop(): void;
-  /** Whether the presentation clock currently runs. */
-  readonly running: boolean;
+  /** Acquire the exclusive presentation clock. Throws while another owner holds it. */
+  acquireDriver(): ParticleDriverHandle;
+  /** Whether a driver currently holds the exclusive clock. */
+  readonly driverOwned: boolean;
   /** Monotonic revision bumped only when a resample changed visible state. */
   readonly revision: number;
+  /** Number of active slots summed over all effects (idle probe). */
+  readonly activeCount: number;
   /**
    * Fixed-capacity sample buffers for one effect. Positions follow the
    * center-anchor convention; `scale` folds into rendered size by the view.
@@ -158,16 +175,19 @@ export interface ParticlePresentationBinding {
  */
 export interface ParticleFrameSnapshotLike {
   readonly revision: number;
-  readonly data: ReadonlyMap<
-    string,
-    {
-      readonly x: Float32Array;
-      readonly y: Float32Array;
-      readonly rotation: Float32Array;
-      readonly scale: Float32Array;
-      readonly opacity: Float32Array;
-      readonly visible: Uint8Array;
-    }
+  readonly effects: Readonly<
+    Record<
+      string,
+      {
+        readonly x: number[];
+        readonly y: number[];
+        readonly rotation: number[];
+        readonly scale: number[];
+        readonly opacity: number[];
+        readonly visible: number[];
+        readonly capacity: number;
+      }
+    >
   >;
 }
 

@@ -3,6 +3,7 @@ import { defineParticleEffect } from './defineParticleEffect';
 import { createRng, sampleInitialSlot, sampleSlotAtAge } from './sampling';
 import type {
   ParticleDiagnostics,
+  ParticleDriverHandle,
   ParticleEffectDefinition,
   ParticlePresentationBinding,
   ParticleSlotSnapshot,
@@ -214,6 +215,8 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       dropped: diag.dropped + dropped,
       recycled: diag.recycled + recycled,
     });
+    // T15-RF3: an accepted emission may end an idle period — wake the driver.
+    if (emitted > 0 && wakeListener) wakeListener();
   }
 
   function update(deltaSeconds: number): void {
@@ -266,16 +269,15 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
   }
 
   let revision = 0;
-  let running = false;
-  let stopScheduled: (() => void) | null = null;
-  let lastTick: (() => void) | null = null;
+  let driverOwned = false;
+  let releaseDriver: (() => void) | null = null;
+  let wakeListener: (() => void) | null = null;
 
   function resample(): void {
     let changed = false;
     for (const [name, buf] of buffers) {
       const def = definitions.get(name)!;
       const pool = pools.get(name)!;
-      let anyActive = false;
       for (let i = 0; i < buf.capacity; i++) {
         const slot = pool[i]!;
         if (!slot.active) {
@@ -285,36 +287,40 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
           }
           continue;
         }
-        anyActive = true;
-        const s = sampleSlotAtAge(ageView(slot), def, slot.age);
+        const s2 = sampleSlotAtAge(ageView(slot), def, slot.age);
         if (
-          buf.x[i] !== s.x ||
-          buf.y[i] !== s.y ||
-          buf.rotation[i] !== s.rotation ||
-          buf.scale[i] !== s.scale ||
-          buf.opacity[i] !== s.opacity ||
+          buf.x[i] !== s2.x ||
+          buf.y[i] !== s2.y ||
+          buf.rotation[i] !== s2.rotation ||
+          buf.scale[i] !== s2.scale ||
+          buf.opacity[i] !== s2.opacity ||
           buf.visible[i] !== 1
         ) {
           changed = true;
         }
-        buf.x[i] = s.x;
-        buf.y[i] = s.y;
-        buf.rotation[i] = s.rotation;
-        buf.scale[i] = s.scale;
-        buf.opacity[i] = s.opacity;
+        buf.x[i] = s2.x;
+        buf.y[i] = s2.y;
+        buf.rotation[i] = s2.rotation;
+        buf.scale[i] = s2.scale;
+        buf.opacity[i] = s2.opacity;
         buf.visible[i] = 1;
       }
-      void anyActive;
     }
     if (changed) revision++;
   }
 
-  function onTick(): void {
-    if (!running || status !== 'running') return;
-    update(stepSeconds);
+  function totalActive(): number {
+    let n = 0;
+    for (const pool of pools.values()) {
+      for (const slot of pool) if (slot.active) n++;
+    }
+    return n;
+  }
+
+  function advance(deltaSeconds: number): void {
+    update(deltaSeconds);
     resample();
   }
-  let stepSeconds = 1 / 60;
 
   const binding: ParticlePresentationBinding = {
     systemGeneration: generation,
@@ -323,40 +329,60 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
     },
     effects: Object.freeze([...definitions.keys()]),
     tick(deltaSeconds: number): void {
-      // Manual/headless entry point: advances even before start() so tests
-      // and custom drivers can drive frames deterministically.
+      // T15-RF3: manual ticks are rejected while an exclusive driver owns
+      // the clock, so ad-hoc callers can never double-advance.
+      if (driverOwned) {
+        throw new ParticleError(
+          'presentation clock is owned by an acquired driver — use the driver handle to step',
+        );
+      }
       if (status === 'disposed') return;
-      update(deltaSeconds);
-      resample();
+      advance(deltaSeconds);
     },
-    start(schedule, step = 1 / 60): void {
-      if (running) {
-        throw new ParticleError('presentation clock already started — one owner per binding');
+    acquireDriver(): ParticleDriverHandle {
+      if (driverOwned) {
+        throw new ParticleError('presentation clock already owned — one driver per system');
       }
       if (status === 'disposed') {
         throw new ParticleError('particle system is disposed');
       }
-      running = true;
-      stepSeconds = step;
-      lastTick = () => onTick();
-      stopScheduled = schedule(() => {
-        if (lastTick) lastTick();
-      });
+      driverOwned = true;
+      let released = false;
+      releaseDriver = () => {
+        driverOwned = false;
+      };
+      const handle: ParticleDriverHandle = {
+        step(deltaSeconds: number): void {
+          if (released || status === 'disposed') return;
+          advance(deltaSeconds);
+        },
+        isIdle(): boolean {
+          return totalActive() === 0;
+        },
+        setWakeListener(listener: (() => void) | null): void {
+          wakeListener = listener;
+        },
+        release(): void {
+          if (released) return;
+          released = true;
+          wakeListener = null;
+          if (releaseDriver) {
+            const r = releaseDriver;
+            releaseDriver = null;
+            r();
+          }
+        },
+      };
+      return handle;
     },
-    stop(): void {
-      running = false;
-      lastTick = null;
-      if (stopScheduled) {
-        const s = stopScheduled;
-        stopScheduled = null;
-        s();
-      }
-    },
-    get running() {
-      return running;
+    get driverOwned() {
+      return driverOwned;
     },
     get revision() {
       return revision;
+    },
+    get activeCount() {
+      return status === 'disposed' ? 0 : totalActive();
     },
     slots(effect: string) {
       requireEffect(effect);
@@ -366,6 +392,7 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
     },
   };
   Object.freeze(binding);
+
 
   const system: ParticleSystem<TEffects> = {
     emit: emit as ParticleSystem<TEffects>['emit'],
@@ -382,7 +409,13 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
       if (status === 'disposed') return;
       status = 'disposed';
       generation++;
-      if (running) binding.stop();
+      if (wakeListener) wakeListener = null;
+      if (releaseDriver) {
+        const r = releaseDriver;
+        releaseDriver = null;
+        driverOwned = false;
+        r();
+      }
       for (const pool of pools.values()) {
         for (const slot of pool) {
           slot.active = false;

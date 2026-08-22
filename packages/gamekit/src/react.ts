@@ -44,3 +44,5 @@ export { ParticleView } from './react/particles/ParticleView';
 export type { ParticleViewProps } from './react/particles/ParticleView';
 export { useParticlePresentation } from './react/particles/useParticlePresentation';
 export type { ParticleFrameSnapshot } from './react/particles/useParticlePresentation';
+export { particleSpriteXform, assertUniformParticleSpriteRatio } from './react/particles/spriteXForm';
+export { cameraVisibleWorldBounds, visibleInBounds, PARTICLE_CULL_PADDING } from './react/particles/culling';

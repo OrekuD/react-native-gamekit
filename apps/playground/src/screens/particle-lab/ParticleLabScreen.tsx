@@ -4,6 +4,8 @@ import { Canvas } from '@shopify/react-native-skia';
 
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
 import { ParticleView, useParticlePresentation } from 'rn-gamekit/react';
+import { defineAssets, spriteSheet } from 'rn-gamekit';
+import { useGameAssets } from 'rn-gamekit/react';
 
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import type { createGameSession } from 'rn-gamekit';
@@ -39,14 +41,46 @@ const drops = defineParticleEffect({
   fadeOut: true,
 });
 
+// T15-RF4: a real bundled sheet drives the Atlas sprite path.
+const particleAssets = defineAssets({
+  effects: {
+    spark: spriteSheet(require('../../../assets/kenney/tiny-farm.png'), {
+      frames: {
+        spark: { x: 0, y: 0, width: 32, height: 32 },
+      },
+      animations: {
+        idle: { frames: ['spark'], frameDurationMs: 100, mode: 'once' },
+      },
+    }),
+  },
+});
+
+const sparks = defineParticleEffect({
+  capacity: 64,
+  space: 'screen',
+  overflow: 'recycle-oldest',
+  particle: {
+    kind: 'sprite',
+    sheet: 'effects',
+    frame: 'spark',
+    size: { width: 24, height: 24 },
+  },
+  burst: { count: 10 },
+  lifetimeSeconds: { min: 0.35, max: 0.8 },
+  speed: { min: 80, max: 180 },
+  gravity: { x: 0, y: 140 },
+  fadeOut: true,
+});
+
 export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) {
   const session = game as ReturnType<typeof createGameSession>;
   const [status, setStatus] = useState('tap to burst');
   const [paused, setPaused] = useState(false);
   // Created once per mount; disposed exactly once on unmount.
   const [system] = useState<ReturnType<typeof createParticleSystem>>(() =>
-    createParticleSystem({ effects: { burst, drops } }),
+    createParticleSystem({ effects: { burst, drops, sparks } }),
   );
+  const assetsState = useGameAssets(particleAssets, { groups: ['effects'] });
   useEffect(() => () => system.dispose(), [system]);
   // Diagnostics HUD sampled at ~8Hz — control frequency only.
   const [diagTick, setDiagTick] = useState(0);
@@ -57,11 +91,20 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
   void diagTick;
 
   // THE single presentation clock (T15-F1): views never advance the system.
+  // T15-RF3: user pause is an independent source — a running session can
+  // never cancel it.
   const sessionStatusRef = useRef<'idle' | 'running' | 'paused' | 'disposed'>('running');
   useEffect(() => {
     sessionStatusRef.current = session?.status ?? 'running';
   }, [session]);
-  const statusReader = useMemo(() => ({ sessionStatus: () => sessionStatusRef.current }), []);
+  const manualPausedRef = useRef(false);
+  const statusReader = useMemo(
+    () => ({
+      sessionStatus: () => sessionStatusRef.current,
+      manualPaused: () => manualPausedRef.current,
+    }),
+    [],
+  );
   const presentation = useParticlePresentation(system, statusReader);
 
   const emitBurst = (): void => {
@@ -82,15 +125,24 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
     setStatus(`drops — dropped ${system.getDiagnostics('drops').dropped}`);
   };
 
+  const emitSparks = (): void => {
+    if (system.status !== 'running') return;
+    system.emit('sparks', {
+      position: { x: 50 + Math.random() * 220, y: 100 + Math.random() * 240 },
+      seed: Math.floor(Date.now() * 7) >>> 0,
+    });
+    setStatus(`sparks — active ${system.getDiagnostics('sparks').active}`);
+  };
+
   const togglePause = (): void => {
-    if (system.status === 'paused') {
-      system.resume();
+    if (!paused) {
+      manualPausedRef.current = true;
+      setPaused(true);
+      setStatus('paused — frozen across frames (independent of session)');
+    } else {
+      manualPausedRef.current = false;
       setPaused(false);
       setStatus('resumed');
-    } else if (system.status === 'running') {
-      system.pause();
-      setPaused(true);
-      setStatus('paused — age frozen');
     }
   };
 
@@ -103,6 +155,19 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
       <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
         <ParticleView system={system} effect="burst" width={320} height={480} snapshot={presentation.snapshot} />
         <ParticleView system={system} effect="drops" width={320} height={480} snapshot={presentation.snapshot} />
+        {assetsState.status === 'ready' ? (
+          <ParticleView
+            system={system}
+            effect="sparks"
+            width={320}
+            height={480}
+            snapshot={presentation.snapshot}
+            spriteSource={{
+              image: assetsState.assets.get(particleAssets.effects.spark).image as never,
+              frame: { x: 0, y: 0, width: 32, height: 32 },
+            }}
+          />
+        ) : null}
       </Canvas>
 
       <View pointerEvents="box-none" style={styles.hud}>
@@ -126,6 +191,9 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
         </Pressable>
         <Pressable onPress={emitDrops} style={styles.button}>
           <Text style={styles.buttonText}>Drops (drop-new)</Text>
+        </Pressable>
+        <Pressable onPress={emitSparks} style={styles.button}>
+          <Text style={styles.buttonText}>Sparks (Atlas)</Text>
         </Pressable>
         <Pressable onPress={togglePause} style={[styles.button, paused && styles.buttonActive]}>
           <Text style={styles.buttonText}>{paused ? 'Resume' : 'Pause'}</Text>

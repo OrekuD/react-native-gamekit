@@ -301,15 +301,15 @@ describe('T15-F6 safe controller boundary', () => {
     assert.deepEqual([...binding.effects], ['a']);
     assert.throws(() => binding.definition('zzz'), /unknown particle effect/);
     assert.equal(binding.slots('a').capacity, shapeDef.capacity);
-    // Double-start throws: exactly one clock owner.
-    const noopSchedule = (tick: () => void) => {
-      tick();
-      return () => {};
-    };
-    binding.start(noopSchedule);
-    assert.throws(() => binding.start(noopSchedule), /already started/);
-    binding.stop();
-    binding.stop(); // idempotent
+    // Exactly one clock owner: second acquire throws; release restores.
+    const d1 = binding.acquireDriver();
+    assert.throws(() => binding.acquireDriver(), /already owned/);
+    // Public tick is rejected while the driver owns the clock.
+    assert.throws(() => binding.tick(0.016), /owned by an acquired driver/);
+    d1.step(0.016); // driver path advances fine
+    d1.release();
+    d1.release(); // idempotent
+    binding.tick(0.016); // manual path works again once released
     ps.dispose();
   });
 });

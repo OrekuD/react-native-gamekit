@@ -1,8 +1,8 @@
 import { useContext, useMemo } from 'react';
-import { Atlas, Circle, Group, Rect } from '@shopify/react-native-skia';
+import { Atlas, Picture, Skia } from '@shopify/react-native-skia';
 import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
-import type { SkImage } from '@shopify/react-native-skia';
+import type { SkImage, SkPicture } from '@shopify/react-native-skia';
 
 import { GameWorldContext } from '../sprites/GameWorld2D';
 import type { CameraCut2D } from '../../camera2d/types';
@@ -13,7 +13,13 @@ import type {
   ParticleSystem,
 } from '../../particles/types';
 
-const CULL_PADDING = 16;
+import {
+  PARTICLE_CULL_PADDING,
+  cameraVisibleWorldBounds,
+  screenVisibleBounds,
+  visibleInBounds,
+} from './culling';
+import { assertUniformParticleSpriteRatio, particleSpriteXform } from './spriteXForm';
 
 export interface ParticleViewProps {
   readonly system: ParticleSystem;
@@ -27,23 +33,25 @@ export interface ParticleViewProps {
    */
   readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
   /**
-   * Sprite source for `kind: 'sprite'` effects — one decoded sheet/image
-   * resolved once at bind time by the caller. Required for sprite effects;
-   * a missing source is a structured render error (T15-F3).
+   * Sprite source for `kind: 'sprite'` effects — the decoded sheet resolved
+   * once at bind time by the caller. Required for sprite effects; a missing
+   * source is a structured render error (T15-F3).
    */
-  readonly spriteSource?: { readonly image: SkImage; readonly frameRect: { x: number; y: number; width: number; height: number } };
+  readonly spriteSource?: {
+    readonly image: SkImage;
+    readonly frame: { x: number; y: number; width: number; height: number };
+  };
 }
 
 /**
  * Presentation-only particle renderer.
  *
- * - Screen space renders in local surface coordinates; world space MUST be
- *   mounted inside the matching `GameWorld2D` so the presented camera +
- *   viewport transform apply exactly once. World culling uses the camera's
- *   visible logical bounds plus padding; culled particles keep aging because
- *   sampling happens in the binding, not here (T15-F4).
- * - Every kind uses the CENTER anchor convention with sampled rotation and
- *   scale applied (T15-F5).
+ * Topology is CONSTANT per effect regardless of capacity (T15-RF5):
+ * exactly one React node (`Picture` for shapes, `Atlas` for sprites) plus a
+ * single UI-runtime derived worklet that walks the effect's fixed buffers.
+ * World-space effects must be mounted inside the matching `GameWorld2D`;
+ * culling uses the presented camera's actual center/zoom/rotation through
+ * the shared helper so both paths agree (T15-RF2).
  */
 export function ParticleView({
   system,
@@ -53,9 +61,13 @@ export function ParticleView({
   snapshot,
   spriteSource,
 }: ParticleViewProps) {
-  const definition = useMemo<ParticleEffectDefinition>(() => system.bindPresentation().definition(effect), [system, effect]);
-  const capacity = definition.capacity;
+  const definition = useMemo<ParticleEffectDefinition>(
+    () => system.bindPresentation().definition(effect),
+    [system, effect],
+  );
   const world = useContext(GameWorldContext);
+  const camera = (world?.camera ?? null) as SharedValue<CameraCut2D | undefined> | null;
+  const viewport = (world?.viewport ?? null) as SharedValue<ResolvedViewport2D | undefined> | null;
 
   if (definition.particle.kind === 'sprite') {
     if (spriteSource === undefined) {
@@ -63,87 +75,64 @@ export function ParticleView({
         `[rn-gamekit/particles] effect "${effect}" declares kind "sprite" but no spriteSource was provided — resolve the sheet via the asset store before rendering`,
       );
     }
+    // v1 requires uniform authored-to-source aspect (RSXform cannot scale
+    // nonuniformly); validated once at bind time.
+    assertUniformParticleSpriteRatio(
+      definition.particle.size.width,
+      definition.particle.size.height,
+      spriteSource.frame.width,
+      spriteSource.frame.height,
+    );
     return (
       <SpriteSlots
         snapshot={snapshot}
         effect={effect}
-        capacity={capacity}
+        capacity={definition.capacity}
         image={spriteSource.image}
-        frame={definition.particle.frame}
-        frameRect={spriteSource.frameRect}
-        baseWidth={definition.particle.size.width}
-        baseHeight={definition.particle.size.height}
+        frameRect={spriteSource.frame}
+        drawWidth={definition.particle.size.width}
+        drawHeight={definition.particle.size.height}
         width={width}
         height={height}
         space={definition.space}
-        camera={world?.camera ?? null}
-        viewport={world?.viewport ?? null}
+        camera={camera}
+        viewport={viewport}
       />
     );
   }
 
   return (
-    <ShapeSlots
+    <ShapeBatch
       snapshot={snapshot}
       effect={effect}
-      capacity={capacity}
+      capacity={definition.capacity}
       shape={definition.particle.shape === 'rectangle' ? 'rect' : 'circle'}
       radius={definition.particle.radius ?? 3}
       rectWidth={definition.particle.width ?? 6}
       rectHeight={definition.particle.height ?? 6}
       color={definition.particle.color ?? '#ffffff'}
+      fadeOut={definition.fadeOut}
+      gravityX={definition.gravity.x}
+      gravityY={definition.gravity.y}
+      lifetimeSeconds={definition.lifetimeSeconds}
+      speed={definition.speed}
+      direction={definition.direction ?? { min: 0, max: Math.PI * 2 }}
+      rotation={definition.rotation ?? { min: 0, max: 0 }}
+      scaleOverLife={definition.scaleOverLife ?? { min: 1, max: 1 }}
       width={width}
       height={height}
       space={definition.space}
-      camera={world?.camera ?? null}
-      viewport={world?.viewport ?? null}
+      camera={camera}
+      viewport={viewport}
     />
   );
 }
 
-interface SlotVisibilityInput {
-  readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
-  readonly effect: string;
-  readonly index: number;
-  readonly width: number;
-  readonly height: number;
-  readonly space: 'world' | 'screen';
-  readonly camera: SharedValue<CameraCut2D | undefined> | null;
-  readonly viewport: SharedValue<ResolvedViewport2D | undefined> | null;
-}
+// ---------------------------------------------------------------------------
+// Shapes: ONE immediate Picture built in ONE worklet per effect (T15-RF5).
+// ---------------------------------------------------------------------------
 
-/** Worklet-safe visibility: screen bounds or camera-aware world bounds. */
-function makeVisibleWorklet(input: SlotVisibilityInput): () => boolean {
-  const { snapshot, effect, index, width, height, space, camera, viewport } = input;
-  return () => {
-    'worklet';
-    const frame = snapshot.value;
-    const slots = frame.data.get(effect);
-    if (slots === undefined || slots.visible[index] === undefined || slots.visible[index] === 0) {
-      return false;
-    }
-    const x = slots.x[index]!;
-    const y = slots.y[index]!;
-    if (space === 'world') {
-      if (camera === null || viewport === null) {
-        // Without camera context we cannot place world particles — hide.
-        return false;
-      }
-      const view = viewport.value?.visibleLogicalBounds;
-      if (view === undefined || camera.value === undefined) return false;
-      const pad = CULL_PADDING;
-      return (
-        x >= view.x - pad &&
-        x <= view.x + view.width + pad &&
-        y >= view.y - pad &&
-        y <= view.y + view.height + pad
-      );
-    }
-    return x >= -CULL_PADDING && x <= width + CULL_PADDING && y >= -CULL_PADDING && y <= height + CULL_PADDING;
-  };
-}
-
-function ShapeSlots(props: {
+interface ShapeBatchProps {
   readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
   readonly effect: string;
   readonly capacity: number;
@@ -152,106 +141,98 @@ function ShapeSlots(props: {
   readonly rectWidth: number;
   readonly rectHeight: number;
   readonly color: string;
+  readonly fadeOut: boolean;
+  readonly gravityX: number;
+  readonly gravityY: number;
+  readonly lifetimeSeconds: { min: number; max: number };
+  readonly speed: { min: number; max: number };
+  readonly direction: { min: number; max: number };
+  readonly rotation: { min: number; max: number };
+  readonly scaleOverLife: { min: number; max: number };
   readonly width: number;
   readonly height: number;
   readonly space: 'world' | 'screen';
   readonly camera: SharedValue<CameraCut2D | undefined> | null;
   readonly viewport: SharedValue<ResolvedViewport2D | undefined> | null;
-}) {
-  const { snapshot, effect, capacity, shape, radius, rectWidth, rectHeight, color, width, height, space, camera, viewport } = props;
-  const nodes = [];
-  for (let i = 0; i < capacity; i++) {
-    nodes.push(<ShapeSlot key={i} index={i} {...{ snapshot, effect, shape, radius, rectWidth, rectHeight, color, width, height, space, camera, viewport }} />);
-  }
-  return <>{nodes}</>;
 }
 
-function ShapeSlot(props: {
-  readonly index: number;
-} & Omit<Parameters<typeof ShapeSlots>[0], 'capacity'>) {
-  const { snapshot, effect, index, shape, radius, rectWidth, rectHeight, color, width, height, space, camera, viewport } = props;
-  const visible = useDerivedValue(makeVisibleWorklet({ snapshot, effect, index, width, height, space, camera, viewport }));
-  const cx = useDerivedValue(() => {
+function ShapeBatch(props: ShapeBatchProps) {
+  const {
+    snapshot, effect, capacity, shape, radius, rectWidth, rectHeight, color,
+    width, height, space, camera, viewport,
+  } = props;
+
+  // One worklet rebuilds the picture from the latest published frame; the
+  // component count stays constant as capacity grows — only this buffer walk
+  // scales (and it is plain array reads on the UI runtime).
+  const picture = useDerivedValue<SkPicture>(() => {
     'worklet';
-    return snapshot.value.data.get(effect)?.x[index] ?? 0;
-  });
-  const cy = useDerivedValue(() => {
-    'worklet';
-    return snapshot.value.data.get(effect)?.y[index] ?? 0;
-  });
-  const rotation = useDerivedValue(() => {
-    'worklet';
-    return snapshot.value.data.get(effect)?.rotation[index] ?? 0;
-  });
-  const scale = useDerivedValue(() => {
-    'worklet';
-    return snapshot.value.data.get(effect)?.scale[index] ?? 1;
-  });
-  const opacity = useDerivedValue(() => {
-    'worklet';
-    return visible.value ? (snapshot.value.data.get(effect)?.opacity[index] ?? 0) : 0;
+    const frame = snapshot.value;
+    const slots = frame.effects[effect];
+
+    const recorder = Skia.PictureRecorder();
+    const canvas = recorder.beginRecording();
+      if (slots === undefined) return recorder.finishRecordingAsPicture();
+      // Culling bounds computed ONCE per revision from the presented camera.
+      const bounds =
+        space === 'world'
+          ? cameraVisibleWorldBounds(camera, viewport, PARTICLE_CULL_PADDING)
+          : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
+
+      const paint = Skia.Paint();
+      paint.setColor(Skia.Color(color));
+
+      for (let i = 0; i < capacity; i++) {
+        if (slots.visible[i] === undefined || slots.visible[i] === 0) continue;
+        const x = slots.x[i]!;
+        const y = slots.y[i]!;
+        if (!visibleInBounds(x, y, bounds)) continue;
+        const rot = slots.rotation[i]!;
+        const sc = slots.scale[i]!;
+        const op = slots.opacity[i]!;
+        if (op <= 0) continue;
+        paint.setAlphaf(Math.max(0, Math.min(1, op)));
+        if (shape === 'circle') {
+          canvas.drawCircle(x, y, radius * sc, paint);
+        } else {
+          const w = rectWidth * sc;
+          const h = rectHeight * sc;
+          // Canvas transforms go through concat(SkMatrix); Matrix is
+          // chainable: translate -> rotate (radians).
+          const matrix = Skia.Matrix().translate(x, y).rotate(rot);
+          canvas.save();
+          canvas.concat(matrix);
+          canvas.drawRect({ x: -w / 2, y: -h / 2, width: w, height: h }, paint);
+          canvas.restore();
+        }
+      }
+      return recorder.finishRecordingAsPicture();
   });
 
-  // Center-anchor convention (T15-F5): translate to the sampled center,
-  // rotate around it, scale around it; geometry stays statically centered so
-  // circles and rectangles share one anchor rule.
-  const transform = useDerivedValue(() => {
-    'worklet';
-    const vis = visible.value;
-    return [
-      { translateX: vis ? cx.value : 0 },
-      { translateY: vis ? cy.value : 0 },
-      { rotate: rotation.value },
-      { scaleX: scale.value },
-      { scaleY: scale.value },
-    ];
-  });
-  const slotOpacity = useDerivedValue(() => {
-    'worklet';
-    return visible.value ? opacity.value : 0;
-  });
-
-  if (shape === 'circle') {
-    return (
-      <Group transform={transform}>
-        <Circle cx={0} cy={0} r={radius} color={color} opacity={slotOpacity} />
-      </Group>
-    );
-  }
-  return (
-    <Group transform={transform}>
-      <Rect
-        x={-rectWidth / 2}
-        y={-rectHeight / 2}
-        width={rectWidth}
-        height={rectHeight}
-        color={color}
-        opacity={slotOpacity}
-      />
-    </Group>
-  );
+  return <Picture picture={picture} />;
 }
+
+// ---------------------------------------------------------------------------
+// Sprites: fixed-capacity Atlas buffers filled by ONE worklet (T15-F3/R4).
+// ---------------------------------------------------------------------------
 
 function SpriteSlots(props: {
   readonly snapshot: SharedValue<ParticleFrameSnapshotLike>;
   readonly effect: string;
   readonly capacity: number;
   readonly image: SkImage;
-  readonly frame: string;
   readonly frameRect: { x: number; y: number; width: number; height: number };
-  readonly baseWidth: number;
-  readonly baseHeight: number;
+  readonly drawWidth: number;
+  readonly drawHeight: number;
   readonly width: number;
   readonly height: number;
   readonly space: 'world' | 'screen';
   readonly camera: SharedValue<CameraCut2D | undefined> | null;
   readonly viewport: SharedValue<ResolvedViewport2D | undefined> | null;
 }) {
-  const { snapshot, effect, capacity, image, frameRect, baseWidth, baseHeight, width, height, space, camera, viewport } = props;
+  const { snapshot, effect, capacity, image, frameRect, drawWidth, drawHeight, width, height, space, camera, viewport } =
+    props;
 
-  // T15-F3: fixed-capacity Atlas buffers filled by ONE derived value that
-  // loops the effect's fixed slots on the UI runtime — the same pattern as
-  // SpriteBatch, with zero per-slot JS writes.
   const rects = useRectBuffer(capacity, (rect) => {
     'worklet';
     rect.setXYWH(0, 0, 0, 0);
@@ -261,60 +242,42 @@ function SpriteSlots(props: {
     xform.set(1, 0, 0, 0);
   });
 
-  const colors = useMemo(
-    () => Array.from({ length: capacity }, () => undefined),
-    [capacity],
-  );
-  void colors;
-
+  // One derived value fills every slot on the UI runtime using the shared
+  // culling helper and the established RSXform math WITH scale (T15-RF4).
   useDerivedValue(() => {
     'worklet';
     const frame = snapshot.value;
-    const slots = frame.data.get(effect);
+    const slots = frame.effects[effect];
+    const bounds =
+      space === 'world'
+        ? cameraVisibleWorldBounds(camera, viewport, PARTICLE_CULL_PADDING)
+        : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
+
     for (let i = 0; i < capacity; i++) {
       const rectSlot = rects.value[i];
       const xformSlot = xforms.value[i];
       if (rectSlot === undefined || xformSlot === undefined) continue;
       const vis =
-        slots !== undefined && slots.visible[i] === 1 && slotInBounds(slots.x[i]!, slots.y[i]!, space, camera, viewport, width, height);
-      if (!vis) {
+        slots !== undefined &&
+        slots.visible[i] === 1 &&
+        visibleInBounds(slots.x[i]!, slots.y[i]!, bounds);
+      if (!vis || slots === undefined) {
         rectSlot.setXYWH(0, 0, 0, 0);
         continue;
       }
-      const scale = slots!.scale[i]!;
-      const w = baseWidth * scale;
-      const h = baseHeight * scale;
+      const xf = particleSpriteXform({
+        x: slots.x[i]!,
+        y: slots.y[i]!,
+        rotation: slots.rotation[i]!,
+        scale: slots.scale[i]!,
+        drawWidth,
+        drawHeight,
+      });
       rectSlot.setXYWH(frameRect.x, frameRect.y, frameRect.width, frameRect.height);
-      const rot = slots!.rotation[i]!;
-      const cos = Math.cos(rot);
-      const sin = Math.sin(rot);
-      const px = slots!.x[i]!;
-      const py = slots!.y[i]!;
-      // Center anchor: pivot compensation for w/h around the center point.
-      xformSlot.set(cos, sin, px - (w / 2) * cos + (h / 2) * sin, py - (w / 2) * sin - (h / 2) * cos);
+      xformSlot.set(xf.scos, xf.ssin, xf.tx, xf.ty);
     }
     return frame.revision;
   });
 
   return <Atlas image={image} sprites={rects} transforms={xforms} />;
-}
-
-function slotInBounds(
-  x: number,
-  y: number,
-  space: 'world' | 'screen',
-  camera: SharedValue<CameraCut2D | undefined> | null,
-  viewport: SharedValue<ResolvedViewport2D | undefined> | null,
-  width: number,
-  height: number,
-): boolean {
-  'worklet';
-  if (space === 'world') {
-    if (camera === null || viewport === null) return false;
-    const view = viewport.value?.visibleLogicalBounds;
-    if (view === undefined || camera.value === undefined) return false;
-    const pad = CULL_PADDING;
-    return x >= view.x - pad && x <= view.x + view.width + pad && y >= view.y - pad && y <= view.y + view.height + pad;
-  }
-  return x >= -CULL_PADDING && x <= width + CULL_PADDING && y >= -CULL_PADDING && y <= height + CULL_PADDING;
 }

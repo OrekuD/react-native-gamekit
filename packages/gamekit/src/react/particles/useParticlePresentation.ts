@@ -1,122 +1,168 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
-import { GameWorldContext } from '../sprites/GameWorld2D';
-import type { ParticlePresentationBinding, ParticleSystem } from '../../particles/types';
+
+import type { ParticleFrameSnapshotLike, ParticleSystem } from '../../particles/types';
 
 /**
- * The UI-runtime mirror of one presentation revision: a fresh frozen object
- * per changed revision (one small allocation per frame at most), consumed by
- * worklets through a single shared value — never per-slot JS→UI writes.
+ * One UI-runtime frame of sampled particle data (T15-RF1).
+ *
+ * Every publish creates FRESH plain arrays — reused typed-array identities
+ * are never republished, so the Worklets serialization cache cannot serve a
+ * stale first-frame clone. The revision rides inside the same object so a
+ * worklet reading bulk data also observes the revision.
  */
 export interface ParticleFrameSnapshot {
   readonly revision: number;
-  readonly data: ReadonlyMap<
-    string,
-    {
-      readonly x: Float32Array;
-      readonly y: Float32Array;
-      readonly rotation: Float32Array;
-      readonly scale: Float32Array;
-      readonly opacity: Float32Array;
-      readonly visible: Uint8Array;
-    }
+  readonly effects: Readonly<
+    Record<
+      string,
+      {
+        readonly x: number[];
+        readonly y: number[];
+        readonly rotation: number[];
+        readonly scale: number[];
+        readonly opacity: number[];
+        readonly visible: number[];
+        readonly capacity: number;
+      }
+    >
   >;
 }
 
-const EMPTY: ParticleFrameSnapshot = Object.freeze({
-  revision: -1,
-  data: new Map(),
-});
+export type SessionStatus = 'idle' | 'running' | 'paused' | 'disposed';
+
+const EMPTY: ParticleFrameSnapshot = Object.freeze({ revision: -1, effects: Object.freeze({}) });
+
+function defaultSchedule(tick: () => void): () => void {
+  const id = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(id);
+}
 
 /**
- * Own THE presentation clock for one system (T15-F1).
+ * Own THE exclusive presentation clock for one system (T15-F1/T15-RF3).
  *
- * - Exactly one binding/clock per system; views are readers only.
- * - The session status is applied synchronously at bind time, and tracked
- *   for later changes when a status reader is supplied.
- * - The rAF loop stops on unmount and is a true no-op while paused or when
- *   nothing is active.
- *
- * Returns the shared snapshot value every `ParticleView` reads plus the
- * binding for imperative diagnostics in labs. The scheduler is injectable
- * for deterministic headless tests.
+ * - Acquires the binding's driver lease; mounting the hook twice for one
+ *   system fails deterministically instead of double-advancing.
+ * - Two independent pause sources: the session status reader and an optional
+ *   manual pause (labs/UI). A running session can never cancel a manual
+ *   pause.
+ * - The scheduler fully stops while no slots are active and is woken by the
+ *   next accepted emission through the driver's wake listener.
+ * - Each changed revision is published as FRESH plain arrays through one
+ *   shared value (T15-RF1).
  */
 export function useParticlePresentation(
   system: ParticleSystem,
   options?: {
-    /** Read the owning session's current status each frame (best-effort). */
-    readonly sessionStatus?: () => 'idle' | 'running' | 'paused' | 'disposed';
+    /** Read the owning session's current status each frame. */
+    readonly sessionStatus?: () => SessionStatus;
+    /** Independent user/lab pause; true freezes age even while session runs. */
+    readonly manualPaused?: () => boolean;
+    /** Injectable scheduler for deterministic headless/mounted tests. */
+    readonly schedule?: (tick: () => void) => () => void;
+    /** Injectable clock for deterministic deltas in tests. */
+    readonly now?: () => number;
   },
 ): {
   readonly snapshot: SharedValue<ParticleFrameSnapshot>;
-  readonly binding: ParticlePresentationBinding;
 } {
   const binding = useMemo(() => system.bindPresentation(), [system]);
   const snapshot = useSharedValue<ParticleFrameSnapshot>(EMPTY);
-  const statusRef = useRef(options?.sessionStatus);
-  statusRef.current = options?.sessionStatus;
+
+  // Refs so the loop reads latest sources without resubscribing.
+  const sessionRef = useRef(options?.sessionStatus);
+  sessionRef.current = options?.sessionStatus;
+  const manualRef = useRef(options?.manualPaused);
+  manualRef.current = options?.manualPaused;
+  const scheduleRef = useRef(options?.schedule ?? defaultSchedule);
+  const nowRef = useRef(options?.now ?? (() => Date.now()));
 
   useEffect(() => {
-    if (statusRef.current !== undefined) {
-      applyStatus(system, statusRef.current());
-    }
+    // Exclusive ownership: a second hook on this system throws here.
+    const driver = binding.acquireDriver();
     let cancelled = false;
-    let raf: number | null = null;
-    let last = Date.now();
+    let cancelSchedule: (() => void) | null = null;
+    let last = nowRef.current();
     let lastRevision = binding.revision;
 
-    const frame = (): void => {
-      if (cancelled) return;
-      const now = Date.now();
-      const dt = Math.min((now - last) / 1000, 0.1);
-      last = now;
-      if (statusRef.current !== undefined) {
-        applyStatus(system, statusRef.current());
+    const publish = (): void => {
+      if (binding.revision === lastRevision) return;
+      lastRevision = binding.revision;
+      const effects: { [name: string]: ParticleFrameSnapshotLike['effects'][string] } = {};
+      for (const name of binding.effects) {
+        const b = binding.slots(name);
+        // Fresh arrays per publish (T15-RF1): never reuse identities that a
+        // Worklets serializer may have cached after the first transfer.
+        effects[name] = {
+          x: Array.from(b.x),
+          y: Array.from(b.y),
+          rotation: Array.from(b.rotation),
+          scale: Array.from(b.scale),
+          opacity: Array.from(b.opacity),
+          visible: Array.from(b.visible),
+          capacity: b.capacity,
+        };
       }
-      binding.tick(dt);
-      if (binding.revision !== lastRevision) {
-        lastRevision = binding.revision;
-        const data = new Map();
-        for (const name of binding.effects) {
-          data.set(name, binding.slots(name));
-        }
-        // One small frozen object per changed revision — the single JS→UI
-        // write for the whole system (T15-F2).
-        snapshot.value = Object.freeze({ revision: binding.revision, data });
-      }
-      raf = requestAnimationFrame(frame);
+      snapshot.value = { revision: binding.revision, effects };
     };
-    raf = requestAnimationFrame(frame);
+
+    const stepFrame = (): void => {
+      if (cancelled) return;
+      const now = nowRef.current();
+      const dt = Math.max(0, Math.min((now - last) / 1000, 0.1));
+      last = now;
+
+      // Independent pause sources: session AND manual.
+      const session = sessionRef.current?.() ?? 'running';
+      const manual = manualRef.current?.() ?? false;
+      if (system.status !== 'disposed') {
+        if (session === 'paused' || session === 'disposed' || manual) {
+          system.pauseIfRunning();
+        } else {
+          system.resumeIfPaused();
+        }
+      }
+
+      driver.step(dt);
+      publish();
+
+      if (driver.isIdle()) {
+        // Fully stop scheduling; the wake listener restarts us on emission.
+        if (cancelSchedule) {
+          cancelSchedule();
+          cancelSchedule = null;
+        }
+        return;
+      }
+      cancelSchedule = scheduleRef.current(stepFrame);
+    };
+
+    driver.setWakeListener(() => {
+      if (cancelled || cancelSchedule !== null) return;
+      last = nowRef.current();
+      cancelSchedule = scheduleRef.current(stepFrame);
+    });
+
+    // Initial sync + first frame.
+    if (sessionRef.current) applyStatus(system, sessionRef.current());
+    stepFrame();
 
     return () => {
       cancelled = true;
-      if (raf !== null) cancelAnimationFrame(raf);
+      driver.setWakeListener(null);
+      if (cancelSchedule) cancelSchedule();
+      driver.release();
     };
   }, [system, binding, snapshot]);
 
-  return { snapshot, binding };
+  return { snapshot };
 }
 
-function applyStatus(
-  system: ParticleSystem,
-  sessionStatus: 'idle' | 'running' | 'paused' | 'disposed',
-): void {
+function applyStatus(system: ParticleSystem, session: SessionStatus): void {
   if (system.status === 'disposed') return;
-  if (sessionStatus === 'running' || sessionStatus === 'idle') {
-    if (system.status === 'paused') system.resume();
+  if (session === 'running' || session === 'idle') {
+    system.resumeIfPaused();
   } else {
     system.pauseIfRunning();
   }
-}
-
-/** Read the GameWorld2D context values when mounted inside a world. */
-export function useWorldTransform(): {
-  readonly viewport: SharedValue<unknown> | null;
-  readonly camera: SharedValue<unknown> | null;
-} {
-  const ctx = GameWorldContext;
-  void ctx;
-  // Views read the context directly where needed; this helper exists to keep
-  // the import surface explicit for the view implementation below.
-  return { viewport: null, camera: null };
 }

@@ -91,7 +91,7 @@ Equal active age produces identical sampled values regardless of how updates wer
 
 ## One clock per system
 
-A system has exactly one presentation owner: `useParticlePresentation(system)` mounts the single rAF driver and publishes one frozen frame snapshot per changed revision. `ParticleView` is a pure reader — mounting two views never double-advances age. The session status is applied immediately at bind time (a bound-while-paused system stays paused) and re-checked each frame.
+A system has exactly one presentation owner. `useParticlePresentation(system)` acquires the binding's exclusive driver lease (a second owner throws deterministically) and runs the only rAF loop; while the lease is held, ad-hoc `tick()` calls are rejected so nothing can double-advance age. The loop fully stops when every slot is idle and restarts on the next accepted emission. Two independent pause sources are honored: the session status reader AND an optional `manualPaused` callback — a running session can never cancel a manual pause. Each changed revision is published as fresh plain arrays, so the UI runtime always observes the latest frame.
 
 ## Lifecycle
 
@@ -107,11 +107,11 @@ Diagnostics semantics are per particle: `emitted` counts placed particles (fresh
 
 Storage is sized from the effect's immutable capacity — never a global maximum.
 
-**Shapes** render through one fixed topology: exactly `capacity` nodes mount once and update in place via shared values; inactive/culled slots hide with opacity 0 instead of unmounting. Every kind uses the CENTER anchor convention with sampled rotation and scale applied around it (rectangle bounds derive from that same center).
+**Shapes** render through ONE immediate `Picture` rebuilt on the UI runtime from the published frame: one React component and one worklet per effect regardless of capacity — no per-slot nodes exist. Circles draw at sampled centers with scaled radii; rectangles translate→rotate→scale around their center.
 
-**Sprites** render through a fixed-capacity `Atlas` batch following the SpriteBatch buffer pattern: source rects resolve once at bind time from the caller-provided decoded sheet, and one UI-runtime derived value writes all transforms per revision. A sprite effect rendered without its resolved `spriteSource` throws a structured error instead of silently drawing nothing.
+**Sprites** render through a fixed-capacity `Atlas` batch following the SpriteBatch buffer pattern: source rects resolve once at bind time from the caller-provided decoded sheet, and one UI-runtime derived value writes all transforms — with sampled scale folded into the RSXform (`scos = s·cosθ`) and center-anchor pivot compensation against the authored size. v1 requires the authored size aspect to match the source frame aspect; mismatches throw at bind time. A sprite effect rendered without its resolved `spriteSource` also throws a structured error instead of silently drawing nothing.
 
-World-space effects must be mounted inside the matching `GameWorld2D` so the presented camera + viewport transform applies exactly once; culling runs against camera-visible world bounds plus padding. Screen-space effects bypass the camera and cull against surface bounds. Culled particles keep aging — visibility never feeds back into the clock.
+World-space effects must be mounted inside the matching `GameWorld2D` so the presented camera + viewport transform applies exactly once; culling computes conservative world AABB from the camera's actual center/zoom/rotation plus padding (shared by both render paths). Screen-space effects bypass the camera and cull against surface bounds. Culled particles keep aging — visibility never feeds back into the clock.
 
 ## Next steps
 
