@@ -57,6 +57,12 @@
       "source": "./src/haptics.ts",
       "types": "./lib/typescript/src/haptics.d.ts",
       "default": "./lib/module/haptics.js"
+    },
+    "./particles": {
+      "react-native": "./src/particles.ts",
+      "source": "./src/particles.ts",
+      "types": "./lib/typescript/src/particles.d.ts",
+      "default": "./lib/module/particles.js"
     }
   },
   "react-native": "./src/index.ts",

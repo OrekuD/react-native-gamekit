@@ -40,3 +40,5 @@ export type { GameRendererProps, GameViewProps } from './react/GameView';
 export { GamePointerInput } from './react/GamePointerInput';
 export type { GamePointerInputProps } from './react/GamePointerInput';
 export type { GamePointerInstrumentation, GameViewInstrumentation } from './react/instrumentation';
+export { ParticleView, PARTICLE_MAX_CAPACITY } from './react/particles/ParticleView';
+export type { ParticleViewProps } from './react/particles/ParticleView';

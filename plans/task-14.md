@@ -2,8 +2,8 @@
 
 ## Status
 
-**Implementation review — changes requested.** T14.0–T14.7 are implemented,
-but the focused review of commit `6c5cad3` found five v1 contract issues below.
+**Complete — implementation review addressed.** T14.0–T14.7 and all focused
+review findings through T14-FF2 are resolved at the automated level.
 Physical-device rows remain honestly device-gated.
 
 Task 14 is complete when the v1 definition of done is satisfied. The future

@@ -1,0 +1,110 @@
+---
+title: Particles
+description: "Seeded, bounded sprite and shape bursts driven by committed events — fixed pools, analytic sampling, and presentation-only rendering."
+---
+
+Particles let you add juice — brick bursts, impact sparks — without letting visuals touch gameplay authority. A burst is a presentation-only reaction to a committed fact: the same definition, emission command, and seed always produce the same count, slot selection, lifetimes, velocities, and overflow choices.
+
+## Package boundary
+
+Particles are the `rn-gamekit/particles` subpath; rendering lives in `rn-gamekit/react`.
+
+```ts
+import { createParticleSystem, defineParticleEffect } from 'rn-gamekit/particles';
+```
+
+Importing `rn-gamekit` never starts a particle clock or allocates a pool. Definitions are validated immutable plain values — no Skia images, shared values, refs, or functions. Unused systems do zero work: nothing runs until `emit()` is called and a renderer advances the clock.
+
+## Defining an effect
+
+```ts
+import { defineParticleEffect } from 'rn-gamekit/particles';
+
+const brickBurst = defineParticleEffect({
+  capacity: 96,
+  space: 'world',
+  overflow: 'recycle-oldest',
+  particle: {
+    kind: 'sprite',
+    sheet: assets.effects.sheet,
+    frame: 'spark',
+    size: { width: 8, height: 8 },
+  },
+  burst: { count: 12 },
+  lifetimeSeconds: { min: 0.25, max: 0.55 },
+  speed: { min: 70, max: 150 },
+  gravity: { x: 0, y: 180 },
+  fadeOut: true,
+});
+```
+
+Validation rejects invalid definitions eagerly: capacity must be an integer in `[1, 1024]`, ranges must be finite with `min ≤ max`, `burst.count ≤ capacity`, and `space`/`overflow`/`particle.kind` are exact unions. Shape particles support only `circle` (with optional `radius`) and `rectangle` (with optional `width`/`height`) plus one `color`.
+
+## Creating the system
+
+```ts
+import { createParticleSystem } from 'rn-gamekit/particles';
+
+const particles = createParticleSystem({ effects: { brickBurst } });
+```
+
+One mounted system owns fixed slot storage per effect, allocated exactly once at capacity. Capacity never grows at runtime.
+
+## Emission from committed events
+
+```ts
+import { seedGameEvent } from 'rn-gamekit';
+
+session.addGameEventListener('brick-hit', (event) => {
+  particles.emit('brickBurst', {
+    position: event.payload.point,
+    seed: seedGameEvent(event),
+  });
+});
+```
+
+The seed drives a documented deterministic PRNG (mulberry32). Field consumption order is fixed: lifetime → speed → direction → rotation → rotation speed → scale start. The same command and seed therefore reproduce the same burst byte-for-byte within floating-point tolerance (`1e-4`). Never use `Math.random()` for seeds — event identity `(tick, ordinal)` is stable across catch-up replay.
+
+Invalid commands throw before any pool mutation: unknown effect names, non-finite positions, non-finite seeds.
+
+## Overflow policies
+
+When every slot in the pool is active:
+
+- `drop-new` ignores the new particle and counts it in diagnostics.
+- `recycle-oldest` reuses the slot with the smallest spawn sequence and resets every field — origin, velocity, rotation, scale, opacity, color, sequence.
+
+Tie-breaking is spawn sequence then slot index, so recycling order is stable under catch-up bursts.
+
+## Analytic sampling
+
+Position is closed-form from age, never accumulated per frame:
+
+```text
+position(age) = origin + velocity·age + ½·acceleration·age²
+rotation(age) = initial + angularSpeed·age
+opacity(age)  = fadeOut ? 1 − t : 1      where t = min(age / lifetime, 1)
+scale(age)    = lerp(scaleStart, scaleEnd, t)
+```
+
+Equal active age produces identical sampled values regardless of how updates were scheduled — one 0.3s update equals three 0.1s updates within tolerance. Pause freezes age with no suspended wall-time debt; resume continues at the same age. Culled particles keep aging: culling changes visibility only.
+
+## Lifecycle
+
+- Session pause freezes the clock; emissions while paused are dropped and counted.
+- Disposal clears slots and rejects new work; it is idempotent.
+- Old-session events cannot emit into a replacement controller — dispose the old system when its session retires.
+- Backgrounded surfaces stop advancing the clock because the rAF loop is owned by the mounted view.
+
+Diagnostics (`active`, `emitted`, `dropped`, `recycled`) are immutable snapshots sampled at control frequency (~8Hz) — never per frame, never in React state per particle.
+
+## Rendering
+
+Shape particles render through one fixed topology: nodes mount once per max-capacity slot and update in place via shared values; inactive and culled slots hide with opacity 0 instead of unmounting. React does not re-render per particle or display frame. World-space effects render through `GameWorld2D` with the presented camera; screen-space effects bypass camera movement while respecting the surface bounds.
+
+Sprite particles render through Atlas batching grouped by sheet, with frames resolved once at bind time. The focused device measurement between the retained shape topology and an immediate Picture path remains open on physical hardware.
+
+## Next steps
+
+- Trigger bursts from facts in [Events](/docs/engine-systems/events).
+- Keep feedback bounded in [Audio](/docs/engine-systems/audio) and [Haptics](/docs/engine-systems/haptics).

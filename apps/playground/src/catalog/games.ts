@@ -56,6 +56,12 @@ export const PLAYGROUND_GAMES = [
     label: 'Play',
   },
   {
+    id: 'particle-lab',
+    title: 'Particle Lab',
+    description: 'Seeded bursts, fixed pools, overflow policies, pause freeze, diagnostics.',
+    label: 'Run',
+  },
+  {
     id: 'audio-lab',
     title: 'Audio Lab',
     description: 'T14.0 spike — audio/haptics wiring, volume/mute, lifecycle (device-gated output).',

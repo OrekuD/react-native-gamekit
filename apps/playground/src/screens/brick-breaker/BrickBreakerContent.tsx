@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Canvas } from '@shopify/react-native-skia';
+import { ParticleView } from 'rn-gamekit/react';
 import { createGameAudio } from 'rn-gamekit/audio';
 import { createGameHaptics } from 'rn-gamekit/haptics';
+import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
 
 import type { BrickBreakerSession } from './brickBreakerGame';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
@@ -53,6 +56,69 @@ function useBrickHitCount(session: BrickBreakerSession): number {
 
 const BRICK_SFX = require('../../../assets/audio/sfx.wav') as number;
 const BRICK_MUSIC = require('../../../assets/audio/music.wav') as number;
+
+/** Presentation-only bursts (T15.5): seeded from committed event identity. */
+const brickBurst = defineParticleEffect({
+  capacity: 96,
+  space: 'screen',
+  overflow: 'recycle-oldest',
+  particle: { kind: 'shape', shape: 'circle', radius: 3, color: '#fbbf24' },
+  burst: { count: 10 },
+  lifetimeSeconds: { min: 0.25, max: 0.55 },
+  speed: { min: 70, max: 150 },
+  gravity: { x: 0, y: 180 },
+  fadeOut: true,
+});
+const lifeBurst = defineParticleEffect({
+  capacity: 48,
+  space: 'screen',
+  overflow: 'drop-new',
+  particle: { kind: 'shape', shape: 'rectangle', width: 6, height: 6, color: '#f87171' },
+  burst: { count: 14 },
+  lifetimeSeconds: { min: 0.35, max: 0.7 },
+  speed: { min: 90, max: 190 },
+  gravity: { x: 0, y: 240 },
+  fadeOut: true,
+});
+
+function useBrickParticles(session: BrickBreakerSession) {
+  const systemRef = useRef<ReturnType<typeof createParticleSystem> | null>(null);
+  useEffect(() => {
+    const system = createParticleSystem({ effects: { brickBurst, lifeBurst } });
+    systemRef.current = system;
+    let raf: number | null = null;
+    let last = Date.now();
+    const tick = (): void => {
+      const now = Date.now();
+      if (!system.isPaused && !system.isDisposed) system.update(Math.min((now - last) / 1000, 0.1));
+      last = now;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    // Session pause freezes the particle clock (T15.3)
+    const sub = session.addStatusListener((status) => {
+      if (status === 'paused' || status === 'disposed') system.pause();
+      else if (status === 'running') system.resume();
+    });
+    // Committed events only; seed from stable tick/ordinal identity
+    const subs = [
+      session.addGameEventListener('brick-hit', (e) => {
+        system.emit('brickBurst', { position: { x: e.payload.point.x * 2 + 16, y: e.payload.point.y * 2 }, seed: e.tick * 7919 + e.ordinal });
+      }),
+      session.addGameEventListener('life-lost', (e) => {
+        system.emit('lifeBurst', { position: { x: 160, y: 420 }, seed: e.tick * 104729 + e.ordinal });
+      }),
+      sub,
+    ];
+    return () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+      subs.forEach((x) => { try { x.remove(); } catch {} });
+      system.dispose();
+      systemRef.current = null;
+    };
+  }, [session]);
+  return systemRef;
+}
 
 function useBrickBreakerFeedback(session: BrickBreakerSession) {
   const audioRef = useRef<Awaited<ReturnType<typeof createGameAudio>> | null>(null);
@@ -180,6 +246,7 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
   const hud = useHudValue(session);
   const hitCount = useBrickHitCount(session);
   const { audioRef, hapticsRef, audioReady } = useBrickBreakerFeedback(session);
+  const particles = useBrickParticles(session);
   const [sfxVolume, setSfxVolume] = useState(0.8);
   const [isMuted, setIsMuted] = useState(false);
 
@@ -221,6 +288,12 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
         testID={BRICK_BREAKER_LAYOUT.stage.testID}
       >
         <GameHud hud={hud} hitCount={hitCount} />
+        {particles.current ? (
+          <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+            <ParticleView system={particles.current} effect="brickBurst" width={320} height={480} />
+            <ParticleView system={particles.current} effect="lifeBurst" width={320} height={480} />
+          </Canvas>
+        ) : null}
         <View pointerEvents="box-none" style={styles.feedbackBar}>
           <Text style={styles.feedbackText}>Audio {audioReady ? 'ready' : 'loading'}</Text>
           <Pressable
