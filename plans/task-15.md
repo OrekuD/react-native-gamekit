@@ -2,10 +2,9 @@
 
 ## Status
 
-**Complete — v1 done.** T15.0–T15.6 implemented: definitions + pure seeded
-sampling, bounded fixed-capacity controller, presentation-time binding,
-stable shape rendering, Brick Breaker + Particle Lab integration, and the
-Particles engine-system page. Device performance rows honestly open.
+**Implementation review — changes requested.** T15.0–T15.6 are implemented,
+but the focused review of commit `35ea645` found six v1 contract gaps below.
+Device performance rows remain honestly open.
 
 Task 15 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
@@ -289,6 +288,134 @@ V1 must preserve future options without exposing unfinished APIs.
 - [x] Particles never enter collision, simulation authority, or saves. — emission is post-commit, write-none.
 - [x] Brick Breaker and the focused example use only public APIs. — subpath + react exports only.
 - [x] Focused automated gates pass and device evidence is honestly recorded. — pnpm check green; device rows explicitly open.
+
+## Feedback
+
+This feedback covers only Task 15. Resolve these items before marking the v1
+particle system complete. Add focused RED tests for each item; the physical
+device measurements remain separate and don't block the code fixes.
+
+### T15-F1 — Use exactly one clock per particle system (High)
+
+`useBrickParticles`, `ParticleLabScreen`, and every mounted `ParticleView` each
+call `system.update()` from their own `requestAnimationFrame` loop. A system
+rendered through two views therefore advances two or three times per display
+frame. Particle lifetime and movement change based on how many renderers are
+mounted, which breaks the active-time and schedule-independence contracts.
+
+Required approach:
+
+- Give each `ParticleSystem` exactly one presentation-time owner.
+- Make `ParticleView` presentation-only; it must never advance the system.
+- Mount one driver or binding for the system, then let any number of particle
+  views read the same sampled frame.
+- Apply the current session status immediately when binding. A system created
+  while the session is paused must start paused.
+- Stop the driver when idle, hidden, disposed, or unmounted.
+- Add a focused test that advances one system with one view and with two views
+  and proves identical ages, positions, expiration, and diagnostics.
+
+### T15-F2 — Replace the 1,024-node-per-effect JS hot path (High)
+
+Every `ParticleView` allocates 3,072 shared values and 1,024 Skia nodes even
+when an effect capacity is 24 or 48. Its JavaScript RAF then scans all 1,024
+slots and performs individual JS-to-UI shared-value writes every frame. This
+does not implement the planned fixed effect-capacity pool or UI-owned hot path
+and is likely to create the frame drops this design was intended to avoid.
+
+Required approach:
+
+- Allocate presentation storage from the immutable effect capacity, not
+  `PARTICLE_MAX_CAPACITY`.
+- Keep hook and node identity stable for that mounted definition; reject an
+  in-place definition/capacity replacement or remount by an explicit binding
+  generation.
+- Use one batched UI-runtime update path, following the existing
+  `SpriteBatch` buffer pattern, instead of thousands of JS-thread writes.
+- Process only the effect's fixed slots and make the idle path a true no-op.
+- Add mounted contract tests that assert a capacity of 24 creates 24 slots,
+  rerenders preserve their identity, and a second effect does not multiply the
+  system clock.
+
+### T15-F3 — Implement the claimed sprite/Atlas renderer (High)
+
+The current `ParticleView` explicitly returns `null` for sprite definitions.
+No Task 15 code imports `Atlas` or `SpriteBatch`, resolves a particle sheet or
+frame, or writes sprite transforms. The existing Sprite Field renderer does
+not satisfy the particle API contract.
+
+Required approach:
+
+- Add a typed asset binding to the particle renderer so a sprite definition's
+  `sheet` and `frame` resolve once at bind time.
+- Render sprite particle slots through a fixed-capacity Atlas batch with stable
+  source rectangles, transforms, colors, and slot identities.
+- Fail with a structured error for a missing sheet or frame; don't silently
+  render nothing.
+- Add a real sprite effect to Particle Lab and a mounted test proving a sprite
+  definition produces Atlas data and updates without React remounts.
+- Keep sprite animation deferred unless v1 explicitly adds it; a static frame
+  is enough for this task.
+
+### T15-F4 — Implement world-space and camera behavior (High)
+
+`ParticleView` never reads `definition.space`, a viewport, or the presented
+camera. Both reference effects are screen-space shapes, and neither reference
+screen mounts particle content through `GameWorld2D`. The current width/height
+check is only a local rectangle check, not camera-aware world culling.
+
+Required approach:
+
+- Make the renderer branch explicitly between `screen` and `world` space.
+- Render world-space particles through the existing presented camera and
+  viewport transform exactly once; screen-space particles must bypass it.
+- Cull world particles against camera-visible world bounds plus padding, while
+  preserving particle age and slot identity.
+- Add one world-space effect and one screen-space effect to Particle Lab, then
+  move the camera and prove only the world effect follows it.
+- Add focused pure and mounted tests for camera movement, zoom, culling, and
+  pause without relying on physical-device measurements.
+
+### T15-F5 — Present all sampled transform fields (Important)
+
+The sampler computes `rotation` and `scale`, but `ParticleView` publishes only
+`x`, `y`, and `opacity`. Shape size therefore never follows
+`scaleOverLife`, rotation is invisible, and rectangles use the sampled point
+as their top-left corner while circles use it as their center.
+
+Required approach:
+
+- Freeze one position/anchor convention for every particle kind.
+- Apply sampled scale and rotation in the retained shape path and Atlas sprite
+  path without rebuilding React nodes.
+- Derive rectangle bounds from the same center/anchor convention used by
+  circles and sprites.
+- Add projector tests at age 0, midlife, and end-of-life for circle,
+  rectangle, and sprite transforms.
+
+### T15-F6 — Replace hidden mutable renderer access with a safe binding (Important)
+
+The renderer reaches into `__definitions` and `getActiveParticlesSafe` through
+casts, while public `getActiveParticles()` returns the controller's mutable
+slot objects. A consumer can mutate those objects and corrupt pool state.
+`createParticleSystem()` also trusts definitions passed directly to it instead
+of validating and copying them at its boundary.
+
+Required approach:
+
+- Remove the hidden cast-based properties and define one typed internal
+  presentation binding between the controller and React renderer.
+- Keep mutable slots private. Public inspection must return frozen snapshots,
+  or remain a test-only/internal API that cannot mutate controller state.
+- Validate, clone, and freeze every effect inside `createParticleSystem()` so
+  callers cannot bypass `defineParticleEffect()` or mutate a definition after
+  system creation.
+- Validate the effect key and command before applying the paused-drop policy;
+  malformed or unknown commands must not become silent paused drops.
+- Freeze the meanings of `emitted`, `dropped`, and `recycled` per particle,
+  including paused bursts and recycled particles, and test each path.
+- Add mutation and malformed-definition tests that fail against the current
+  implementation and prove the controller remains unchanged.
 
 ## Future expansion backlog
 

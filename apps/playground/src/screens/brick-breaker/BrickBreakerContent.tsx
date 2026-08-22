@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Canvas } from '@shopify/react-native-skia';
-import { ParticleView } from 'rn-gamekit/react';
 import { createGameAudio } from 'rn-gamekit/audio';
 import { createGameHaptics } from 'rn-gamekit/haptics';
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
+import { useParticlePresentation, ParticleView } from 'rn-gamekit/react';
+import { Canvas } from '@shopify/react-native-skia';
 
 import type { BrickBreakerSession } from './brickBreakerGame';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
@@ -82,42 +82,37 @@ const lifeBurst = defineParticleEffect({
 });
 
 function useBrickParticles(session: BrickBreakerSession) {
-  const systemRef = useRef<ReturnType<typeof createParticleSystem> | null>(null);
+  // Created once per session; the ONLY clock is the presentation hook below.
+  const [system] = useState<ReturnType<typeof createParticleSystem>>(() =>
+    createParticleSystem({ effects: { brickBurst, lifeBurst } }),
+  );
+  useEffect(() => () => system.dispose(), [system]);
+
+  // T15-F1: apply current status immediately at bind, then track changes.
+  const statusReader = useMemo(
+    () => ({ sessionStatus: () => session.status as 'idle' | 'running' | 'paused' | 'disposed' }),
+    [session],
+  );
+  const presentation = useParticlePresentation(system, statusReader);
+
   useEffect(() => {
-    const system = createParticleSystem({ effects: { brickBurst, lifeBurst } });
-    systemRef.current = system;
-    let raf: number | null = null;
-    let last = Date.now();
-    const tick = (): void => {
-      const now = Date.now();
-      if (!system.isPaused && !system.isDisposed) system.update(Math.min((now - last) / 1000, 0.1));
-      last = now;
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    // Session pause freezes the particle clock (T15.3)
-    const sub = session.addStatusListener((status) => {
-      if (status === 'paused' || status === 'disposed') system.pause();
-      else if (status === 'running') system.resume();
-    });
-    // Committed events only; seed from stable tick/ordinal identity
+    // Committed events only; seed from stable tick/ordinal identity.
     const subs = [
       session.addGameEventListener('brick-hit', (e) => {
-        system.emit('brickBurst', { position: { x: e.payload.point.x * 2 + 16, y: e.payload.point.y * 2 }, seed: e.tick * 7919 + e.ordinal });
+        if (system.status === 'running') {
+          system.emit('brickBurst', { position: { x: e.payload.point.x * 2 + 16, y: e.payload.point.y * 2 }, seed: e.tick * 7919 + e.ordinal });
+        }
       }),
       session.addGameEventListener('life-lost', (e) => {
-        system.emit('lifeBurst', { position: { x: 160, y: 420 }, seed: e.tick * 104729 + e.ordinal });
+        if (system.status === 'running') {
+          system.emit('lifeBurst', { position: { x: 160, y: 420 }, seed: e.tick * 104729 + e.ordinal });
+        }
       }),
-      sub,
     ];
-    return () => {
-      if (raf !== null) cancelAnimationFrame(raf);
-      subs.forEach((x) => { try { x.remove(); } catch {} });
-      system.dispose();
-      systemRef.current = null;
-    };
-  }, [session]);
-  return systemRef;
+    return () => subs.forEach((x) => { try { x.remove(); } catch {} });
+  }, [session, system]);
+
+  return { system, snapshot: presentation.snapshot };
 }
 
 function useBrickBreakerFeedback(session: BrickBreakerSession) {
@@ -288,12 +283,10 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
         testID={BRICK_BREAKER_LAYOUT.stage.testID}
       >
         <GameHud hud={hud} hitCount={hitCount} />
-        {particles.current ? (
-          <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
-            <ParticleView system={particles.current} effect="brickBurst" width={320} height={480} />
-            <ParticleView system={particles.current} effect="lifeBurst" width={320} height={480} />
-          </Canvas>
-        ) : null}
+        <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <ParticleView system={particles.system} effect="brickBurst" width={320} height={480} snapshot={particles.snapshot} />
+          <ParticleView system={particles.system} effect="lifeBurst" width={320} height={480} snapshot={particles.snapshot} />
+        </Canvas>
         <View pointerEvents="box-none" style={styles.feedbackBar}>
           <Text style={styles.feedbackText}>Audio {audioReady ? 'ready' : 'loading'}</Text>
           <Pressable

@@ -89,20 +89,29 @@ scale(age)    = lerp(scaleStart, scaleEnd, t)
 
 Equal active age produces identical sampled values regardless of how updates were scheduled — one 0.3s update equals three 0.1s updates within tolerance. Pause freezes age with no suspended wall-time debt; resume continues at the same age. Culled particles keep aging: culling changes visibility only.
 
+## One clock per system
+
+A system has exactly one presentation owner: `useParticlePresentation(system)` mounts the single rAF driver and publishes one frozen frame snapshot per changed revision. `ParticleView` is a pure reader — mounting two views never double-advances age. The session status is applied immediately at bind time (a bound-while-paused system stays paused) and re-checked each frame.
+
 ## Lifecycle
 
-- Session pause freezes the clock; emissions while paused are dropped and counted.
+- Session pause freezes the clock; emissions while paused drop their whole burst into `dropped`.
+- Invalid effect names or malformed commands always throw — even while paused.
 - Disposal clears slots and rejects new work; it is idempotent.
 - Old-session events cannot emit into a replacement controller — dispose the old system when its session retires.
-- Backgrounded surfaces stop advancing the clock because the rAF loop is owned by the mounted view.
+- Unmounting the presentation hook stops the driver; idle ticks write nothing.
 
-Diagnostics (`active`, `emitted`, `dropped`, `recycled`) are immutable snapshots sampled at control frequency (~8Hz) — never per frame, never in React state per particle.
+Diagnostics semantics are per particle: `emitted` counts placed particles (fresh or recycled), `dropped` counts never-placed particles (overflow under `drop-new` plus whole paused bursts), and `recycled` counts placed particles that reused an occupied slot. They are immutable snapshots read at control frequency (~8Hz).
 
 ## Rendering
 
-Shape particles render through one fixed topology: nodes mount once per max-capacity slot and update in place via shared values; inactive and culled slots hide with opacity 0 instead of unmounting. React does not re-render per particle or display frame. World-space effects render through `GameWorld2D` with the presented camera; screen-space effects bypass camera movement while respecting the surface bounds.
+Storage is sized from the effect's immutable capacity — never a global maximum.
 
-Sprite particles render through Atlas batching grouped by sheet, with frames resolved once at bind time. The focused device measurement between the retained shape topology and an immediate Picture path remains open on physical hardware.
+**Shapes** render through one fixed topology: exactly `capacity` nodes mount once and update in place via shared values; inactive/culled slots hide with opacity 0 instead of unmounting. Every kind uses the CENTER anchor convention with sampled rotation and scale applied around it (rectangle bounds derive from that same center).
+
+**Sprites** render through a fixed-capacity `Atlas` batch following the SpriteBatch buffer pattern: source rects resolve once at bind time from the caller-provided decoded sheet, and one UI-runtime derived value writes all transforms per revision. A sprite effect rendered without its resolved `spriteSource` throws a structured error instead of silently drawing nothing.
+
+World-space effects must be mounted inside the matching `GameWorld2D` so the presented camera + viewport transform applies exactly once; culling runs against camera-visible world bounds plus padding. Screen-space effects bypass the camera and cull against surface bounds. Culled particles keep aging — visibility never feeds back into the clock.
 
 ## Next steps
 

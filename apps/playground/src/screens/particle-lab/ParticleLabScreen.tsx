@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Canvas } from '@shopify/react-native-skia';
 
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
-import { ParticleView } from 'rn-gamekit/react';
+import { ParticleView, useParticlePresentation } from 'rn-gamekit/react';
 
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import type { createGameSession } from 'rn-gamekit';
@@ -43,87 +43,66 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
   const session = game as ReturnType<typeof createGameSession>;
   const [status, setStatus] = useState('tap to burst');
   const [paused, setPaused] = useState(false);
-  const [system, setSystem] = useState<ReturnType<typeof createParticleSystem> | null>(null);
-  const systemRef = useRef<ReturnType<typeof createParticleSystem> | null>(null);
-  const [, forceTick] = useState(0);
-
+  // Created once per mount; disposed exactly once on unmount.
+  const [system] = useState<ReturnType<typeof createParticleSystem>>(() =>
+    createParticleSystem({ effects: { burst, drops } }),
+  );
+  useEffect(() => () => system.dispose(), [system]);
+  // Diagnostics HUD sampled at ~8Hz — control frequency only.
+  const [diagTick, setDiagTick] = useState(0);
   useEffect(() => {
-    const created = createParticleSystem({ effects: { burst, drops } });
-    systemRef.current = created;
-    let raf: number | null = null;
-    let published = false;
-    let last = Date.now();
-    let diagAt = 0;
-    const tick = (): void => {
-      const now = Date.now();
-      if (!created.isPaused && !created.isDisposed) created.update(Math.min((now - last) / 1000, 0.1));
-      last = now;
-      if (!published) {
-        published = true;
-        setSystem(created); // async callback context, not sync effect body
-      }
-      // Diagnostics at control frequency only (~8Hz)
-      if (now - diagAt > 125 && !created.isDisposed) {
-        diagAt = now;
-        forceTick((n) => n + 1);
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      if (raf !== null) cancelAnimationFrame(raf);
-      created.dispose();
-      systemRef.current = null;
-      setSystem(null);
-    };
+    const id = setInterval(() => setDiagTick((n) => n + 1), 125);
+    return () => clearInterval(id);
   }, []);
+  void diagTick;
+
+  // THE single presentation clock (T15-F1): views never advance the system.
+  const sessionStatusRef = useRef<'idle' | 'running' | 'paused' | 'disposed'>('running');
+  useEffect(() => {
+    sessionStatusRef.current = session?.status ?? 'running';
+  }, [session]);
+  const statusReader = useMemo(() => ({ sessionStatus: () => sessionStatusRef.current }), []);
+  const presentation = useParticlePresentation(system, statusReader);
 
   const emitBurst = (): void => {
-    const s = systemRef.current;
-    if (!s || s.isPaused) return;
-    s.emit('burst', {
+    if (system.status !== 'running') return;
+    system.emit('burst', {
       position: { x: 60 + Math.random() * 200, y: 120 + Math.random() * 220 },
       seed: Math.floor(Date.now()) >>> 0,
     });
-    setStatus(`burst — active ${s.getDiagnostics('burst').active}`);
+    setStatus(`burst — active ${system.getDiagnostics('burst').active}`);
   };
 
   const emitDrops = (): void => {
-    const s = systemRef.current;
-    if (!s || s.isPaused) return;
-    s.emit('drops', {
+    if (system.status !== 'running') return;
+    system.emit('drops', {
       position: { x: 40 + Math.random() * 240, y: 80 + Math.random() * 160 },
       seed: Math.floor(Date.now() * 3) >>> 0,
     });
-    setStatus(`drops — dropped ${s.getDiagnostics('drops').dropped}`);
+    setStatus(`drops — dropped ${system.getDiagnostics('drops').dropped}`);
   };
 
   const togglePause = (): void => {
-    const s = systemRef.current;
-    if (!s) return;
-    if (s.isPaused) {
-      s.resume();
+    if (system.status === 'paused') {
+      system.resume();
       setPaused(false);
       setStatus('resumed');
-    } else {
-      s.pause();
+    } else if (system.status === 'running') {
+      system.pause();
       setPaused(true);
       setStatus('paused — age frozen');
     }
   };
 
-  const d1 = system?.getDiagnostics('burst');
-  const d2 = system?.getDiagnostics('drops');
+  // Diagnostics sampled during render are fine here because forceTick runs at ~8Hz.
+  const d1 = system.getDiagnostics('burst');
+  const d2 = system.getDiagnostics('drops');
 
   return (
     <View style={styles.screen}>
       <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
-        {system ? (
-          <>
-            <ParticleView system={system} effect="burst" width={320} height={480} />
-            <ParticleView system={system} effect="drops" width={320} height={480} />
-          </>
-        ) : null}
+        <ParticleView system={system} effect="burst" width={320} height={480} snapshot={presentation.snapshot} />
+        <ParticleView system={system} effect="drops" width={320} height={480} snapshot={presentation.snapshot} />
       </Canvas>
 
       <View pointerEvents="box-none" style={styles.hud}>

@@ -1,141 +1,230 @@
 import { ParticleError } from './errors';
+import { defineParticleEffect } from './defineParticleEffect';
 import { createRng, sampleInitialSlot, sampleSlotAtAge } from './sampling';
-import type { ParticleDiagnostics, ParticleEffectDefinition, ParticleEmitCommand, ParticleSlot, ParticleSystem, ParticleSystemOptions } from './types';
+import type {
+  ParticleDiagnostics,
+  ParticleEffectDefinition,
+  ParticlePresentationBinding,
+  ParticleSlotSnapshot,
+  ParticleSystem,
+  ParticleSystemOptions,
+} from './types';
+import type { Point2D } from '../geometry/types';
 
-function assertCommand(cmd: unknown): asserts cmd is ParticleEmitCommand {
-  if (!cmd || typeof cmd !== 'object') throw new ParticleError('emit command must be object');
+/** Adapter from the mutable pool slot to the pure sampler's input. */
+function ageView(slot: MutableSlot): {
+  readonly lifetime: number;
+  readonly origin: Point2D;
+  readonly velocity: Point2D;
+  readonly rotation: number;
+  readonly rotationSpeed: number;
+  readonly scaleStart: number;
+  readonly scaleEnd: number;
+} {
+  return {
+    lifetime: slot.lifetime,
+    origin: { x: slot.originX, y: slot.originY },
+    velocity: { x: slot.vx, y: slot.vy },
+    rotation: slot.rotation,
+    rotationSpeed: slot.rotationSpeed,
+    scaleStart: slot.scaleStart,
+    scaleEnd: slot.scaleEnd,
+  };
+}
+
+function assertCommand(cmd: unknown): asserts cmd is { position: Point2D; seed: number } {
+  if (cmd === null || typeof cmd !== 'object' || Array.isArray(cmd)) {
+    throw new ParticleError('emit command must be an object');
+  }
   const c = cmd as Record<string, unknown>;
-  if (!c.position || typeof (c.position as {x:unknown}).x !== 'number' || !Number.isFinite((c.position as {x:number}).x)) throw new ParticleError('command.position.x must be finite');
-  if (typeof (c.position as {y:unknown}).y !== 'number' || !Number.isFinite((c.position as {y:number}).y)) throw new ParticleError('command.position.y must be finite');
-  if (typeof c.seed !== 'number' || !Number.isFinite(c.seed)) throw new ParticleError('command.seed must be finite');
+  const pos = c.position;
+  if (pos === null || typeof pos !== 'object' || Array.isArray(pos)) {
+    throw new ParticleError('emit command position must be {x,y}');
+  }
+  const pp = pos as Record<string, unknown>;
+  if (typeof pp.x !== 'number' || !Number.isFinite(pp.x)) {
+    throw new ParticleError('emit command position.x must be a finite number');
+  }
+  if (typeof pp.y !== 'number' || !Number.isFinite(pp.y)) {
+    throw new ParticleError('emit command position.y must be a finite number');
+  }
+  if (typeof c.seed !== 'number' || !Number.isFinite(c.seed)) {
+    throw new ParticleError('emit command seed must be a finite number');
+  }
+}
+
+interface MutableSlot {
+  active: boolean;
+  age: number;
+  lifetime: number;
+  originX: number;
+  originY: number;
+  vx: number;
+  vy: number;
+  rotation: number;
+  rotationSpeed: number;
+  scaleStart: number;
+  scaleEnd: number;
+  opacity: number;
+  color: string;
+  spawnSequence: number;
 }
 
 export function createParticleSystem<TEffects extends Record<string, ParticleEffectDefinition>>(
   options: ParticleSystemOptions & { effects: TEffects },
 ): ParticleSystem<TEffects> {
-  if (!options || typeof options.effects !== 'object') throw new ParticleError('effects required');
-  const effectNames = Object.keys(options.effects);
-  if (effectNames.length === 0) throw new ParticleError('at least one effect required');
-  const definitions = new Map<string, ParticleEffectDefinition>();
-  for (const name of effectNames) {
-    const def = options.effects[name]!;
-    if (!def) throw new ParticleError(`effect ${name} missing`);
-    definitions.set(name, def);
+  if (options === null || typeof options !== 'object') {
+    throw new ParticleError('createParticleSystem requires options');
+  }
+  const rawEffects = options.effects;
+  if (rawEffects === null || typeof rawEffects !== 'object') {
+    throw new ParticleError('createParticleSystem requires { effects }');
+  }
+  const names = Object.keys(rawEffects);
+  if (names.length === 0) {
+    throw new ParticleError('createParticleSystem effects must not be empty');
   }
 
-  let disposed = false;
-  let paused = false;
+  // T15-F6: validate, clone, and freeze every definition at the boundary so
+  // callers cannot bypass defineParticleEffect or mutate after creation.
+  const definitions = new Map<string, ParticleEffectDefinition>();
+  for (const name of names) {
+    definitions.set(name, defineParticleEffect(rawEffects[name]!));
+  }
+
+  let status: 'running' | 'paused' | 'disposed' = 'running';
   let generation = 0;
   let spawnSequence = 0;
-  const pools = new Map<string, ParticleSlot[]>();
+
+  const pools = new Map<string, MutableSlot[]>();
   const diagnostics = new Map<string, ParticleDiagnostics>();
   for (const [name, def] of definitions) {
-    const pool: ParticleSlot[] = Array.from({ length: def.capacity }, () => ({
-      active: false,
-      age: 0,
-      lifetime: 0,
-      origin: { x: 0, y: 0 },
-      position: { x: 0, y: 0 },
-      velocity: { x: 0, y: 0 },
-      rotation: 0,
-      rotationSpeed: 0,
-      scale: 1,
-      scaleStart: 1,
-      scaleEnd: 1,
-      opacity: 0,
-      color: '#fff',
-      spawnSequence: -1,
-      effect: name,
-    }));
-    pools.set(name, pool);
+    pools.set(
+      name,
+      Array.from({ length: def.capacity }, () => ({
+        active: false,
+        age: 0,
+        lifetime: 1,
+        originX: 0,
+        originY: 0,
+        vx: 0,
+        vy: 0,
+        rotation: 0,
+        rotationSpeed: 0,
+        scaleStart: 1,
+        scaleEnd: 1,
+        opacity: 0,
+        color: '#ffffff',
+        spawnSequence: -1,
+      })),
+    );
     diagnostics.set(name, { active: 0, emitted: 0, dropped: 0, recycled: 0 });
   }
 
-  function getDiagnostics(effect?: string): ParticleDiagnostics {
-    if (effect) {
-      const d = diagnostics.get(effect);
-      if (!d) throw new ParticleError(`unknown effect ${effect}`);
-      return { ...d };
+  function requireEffect(effect: string): ParticleEffectDefinition {
+    const def = definitions.get(effect);
+    if (def === undefined) {
+      throw new ParticleError(`unknown particle effect ${JSON.stringify(effect)}`);
     }
-    let active=0, emitted=0, dropped=0, recycled=0;
-    for (const d of diagnostics.values()) { active+=d.active; emitted+=d.emitted; dropped+=d.dropped; recycled+=d.recycled; }
-    return { active, emitted, dropped, recycled };
+    return def;
   }
 
-  function emit(effect: string, command: ParticleEmitCommand): void {
-    if (disposed) throw new ParticleError('particle system is disposed');
-    if (paused) {
-      // External emissions while paused use drop-new policy (all paused emissions are dropped)
-      const d = diagnostics.get(effect);
-      if (d) diagnostics.set(effect, { ...d, dropped: d.dropped + 1 });
+  function frozenSnapshot(effect: string): ParticleDiagnostics {
+    const d = diagnostics.get(effect);
+    return d === undefined
+      ? Object.freeze({ active: 0, emitted: 0, dropped: 0, recycled: 0 })
+      : Object.freeze({ ...d });
+  }
+
+  function emit(effect: string, command: unknown): void {
+    // T15-F6: validate effect key and command BEFORE the paused policy so
+    // malformed input is never silently swallowed as a paused drop.
+    const def = requireEffect(effect);
+    assertCommand(command);
+    if (status === 'disposed') {
+      throw new ParticleError('particle system is disposed');
+    }
+    if (status === 'paused') {
+      const d = diagnostics.get(effect)!;
+      diagnostics.set(effect, {
+        ...d,
+        dropped: d.dropped + def.burst.count,
+      });
       return;
     }
-    const def = definitions.get(effect);
-    if (!def) throw new ParticleError(`unknown effect ${effect}`);
-    assertCommand(command);
+
     const pool = pools.get(effect)!;
     const diag = diagnostics.get(effect)!;
     const rng = createRng(command.seed >>> 0);
-    // Check stale generation - for replacement, we use generation token
-    // For v1, we reject if system generation has advanced (replacement controller)
-    // Here generation is per-system, not per-effect, but we check disposed only
-    const burstCount = def.burst.count;
     let emitted = 0;
     let dropped = 0;
     let recycled = 0;
-    for (let i=0; i<burstCount; i++) {
-      // Find slot
+
+    for (let i = 0; i < def.burst.count; i++) {
       let slotIndex = -1;
       let oldestIndex = -1;
-      let oldestSeq = Infinity;
-      for (let s=0; s<pool.length; s++) {
+      let oldestSeq = Number.POSITIVE_INFINITY;
+      for (let s = 0; s < pool.length; s++) {
         const slot = pool[s]!;
-        if (!slot.active) { slotIndex = s; break; }
-        if (slot.spawnSequence < oldestSeq) { oldestSeq = slot.spawnSequence; oldestIndex = s; }
+        if (!slot.active) {
+          slotIndex = s;
+          break;
+        }
+        if (slot.spawnSequence < oldestSeq) {
+          oldestSeq = slot.spawnSequence;
+          oldestIndex = s;
+        }
       }
       if (slotIndex === -1) {
         if (def.overflow === 'drop-new') {
           dropped++;
           continue;
-        } else {
-          // recycle-oldest
-          slotIndex = oldestIndex;
-          if (slotIndex === -1) { dropped++; continue; }
-          recycled++;
         }
-      } else {
-        emitted++;
+        slotIndex = oldestIndex;
+        if (slotIndex === -1) {
+          dropped++;
+          continue;
+        }
+        recycled++;
       }
+      emitted++;
       const slot = pool[slotIndex]!;
-      // Sample initial values - deterministic order: lifetime, speed, direction, rotation, scale
       const sampled = sampleInitialSlot(rng, def, command.position, spawnSequence++, effect);
-      // Reset every field when recycling (F2)
       slot.active = true;
       slot.age = 0;
       slot.lifetime = sampled.lifetime;
-      slot.origin = { x: sampled.origin.x, y: sampled.origin.y };
-      slot.position = { x: sampled.position.x, y: sampled.position.y };
-      slot.velocity = { x: sampled.velocity.x, y: sampled.velocity.y };
+      slot.originX = sampled.origin.x;
+      slot.originY = sampled.origin.y;
+      slot.vx = sampled.velocity.x;
+      slot.vy = sampled.velocity.y;
       slot.rotation = sampled.rotation;
       slot.rotationSpeed = sampled.rotationSpeed;
-      slot.scale = sampled.scale;
       slot.scaleStart = sampled.scaleStart;
       slot.scaleEnd = sampled.scaleEnd;
       slot.opacity = sampled.opacity;
       slot.color = sampled.color;
       slot.spawnSequence = sampled.spawnSequence;
-      slot.effect = effect;
     }
-    const active = pool.filter(s=>s.active).length;
-    diagnostics.set(effect, { active, emitted: diag.emitted + emitted, dropped: diag.dropped + dropped, recycled: diag.recycled + recycled });
+
+    let active = 0;
+    for (const s of pool) if (s.active) active++;
+    diagnostics.set(effect, {
+      active,
+      emitted: diag.emitted + emitted,
+      dropped: diag.dropped + dropped,
+      recycled: diag.recycled + recycled,
+    });
   }
 
   function update(deltaSeconds: number): void {
-    if (disposed || paused) return;
-    if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) throw new ParticleError('deltaSeconds must be finite >=0');
+    if (status === 'disposed') throw new ParticleError('particle system is disposed');
+    if (status === 'paused') return;
+    if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) {
+      throw new ParticleError('deltaSeconds must be a finite number >= 0');
+    }
     for (const [name, pool] of pools) {
       const def = definitions.get(name)!;
-      let activeCount = 0;
+      let active = 0;
       for (const slot of pool) {
         if (!slot.active) continue;
         slot.age += deltaSeconds;
@@ -144,85 +233,230 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
           slot.opacity = 0;
           continue;
         }
-        // Analytic sampling at age
-        const sampled = sampleSlotAtAge(slot, def, slot.age);
-        // For position, we need to compute from origin; but slot.position currently holds current position, not origin
-        // To keep analytic, we store origin as initial position and recompute each frame from origin
-        // However our slot.position is overwritten each frame to new sampled position for rendering
-        // For v1, we approximate by using sampled position as new absolute (since we don't store origin separately, we treat slot.position as origin at spawn and update via analytic)
-        // To make schedule-independent, we store origin separately? Simplify: use returned position as absolute
-        slot.position = sampled.position;
-        slot.rotation = sampled.rotation;
-        slot.scale = sampled.scale;
+          const sampled = sampleSlotAtAge(ageView(slot), def, slot.age);
         slot.opacity = sampled.opacity;
-        activeCount++;
+        active++;
       }
       const d = diagnostics.get(name)!;
-      diagnostics.set(name, { ...d, active: activeCount });
+      if (d.active !== active) diagnostics.set(name, { ...d, active });
     }
   }
 
-  function pause(): void {
-    if (disposed) throw new ParticleError('particle system is disposed');
-    paused = true;
+  // ----- Presentation binding (T15-F6): typed, no hidden internals -----
+  interface ParticleSlotBuffers {
+    readonly x: Float32Array;
+    readonly y: Float32Array;
+    readonly rotation: Float32Array;
+    readonly scale: Float32Array;
+    readonly opacity: Float32Array;
+    readonly visible: Uint8Array;
+    readonly capacity: number;
+  }
+  const buffers = new Map<string, ParticleSlotBuffers>();
+  for (const [name, def] of definitions) {
+    buffers.set(name, {
+      x: new Float32Array(def.capacity),
+      y: new Float32Array(def.capacity),
+      rotation: new Float32Array(def.capacity),
+      scale: new Float32Array(def.capacity),
+      opacity: new Float32Array(def.capacity),
+      visible: new Uint8Array(def.capacity),
+      capacity: def.capacity,
+    });
   }
 
-  function resume(): void {
-    if (disposed) throw new ParticleError('particle system is disposed');
-    paused = false;
-  }
+  let revision = 0;
+  let running = false;
+  let stopScheduled: (() => void) | null = null;
+  let lastTick: (() => void) | null = null;
 
-  function dispose(): void {
-    if (disposed) return;
-    disposed = true;
-    generation++;
-    for (const pool of pools.values()) {
-      for (const slot of pool) {
-        slot.active = false;
-        slot.age = 0;
-        slot.opacity = 0;
-        slot.origin = { x: 0, y: 0 };
-        slot.position = { x: 0, y: 0 };
-        slot.velocity = { x: 0, y: 0 };
-        slot.spawnSequence = -1;
+  function resample(): void {
+    let changed = false;
+    for (const [name, buf] of buffers) {
+      const def = definitions.get(name)!;
+      const pool = pools.get(name)!;
+      let anyActive = false;
+      for (let i = 0; i < buf.capacity; i++) {
+        const slot = pool[i]!;
+        if (!slot.active) {
+          if (buf.visible[i] !== 0) {
+            buf.visible[i] = 0;
+            changed = true;
+          }
+          continue;
+        }
+        anyActive = true;
+        const s = sampleSlotAtAge(ageView(slot), def, slot.age);
+        if (
+          buf.x[i] !== s.x ||
+          buf.y[i] !== s.y ||
+          buf.rotation[i] !== s.rotation ||
+          buf.scale[i] !== s.scale ||
+          buf.opacity[i] !== s.opacity ||
+          buf.visible[i] !== 1
+        ) {
+          changed = true;
+        }
+        buf.x[i] = s.x;
+        buf.y[i] = s.y;
+        buf.rotation[i] = s.rotation;
+        buf.scale[i] = s.scale;
+        buf.opacity[i] = s.opacity;
+        buf.visible[i] = 1;
       }
+      void anyActive;
     }
-    // Clear diagnostics active but keep emitted etc? For v1, reset active only
-    for (const [name, d] of diagnostics) {
-      diagnostics.set(name, { ...d, active: 0 });
-    }
+    if (changed) revision++;
   }
 
-  function getActiveParticles(effect: string): readonly ParticleSlot[] {
-    const pool = pools.get(effect);
-    if (!pool) throw new ParticleError(`unknown effect ${effect}`);
-    return pool.filter(s=>s.active);
+  function onTick(): void {
+    if (!running || status !== 'running') return;
+    update(stepSeconds);
+    resample();
   }
+  let stepSeconds = 1 / 60;
 
-  const system = {
-    emit,
-    update,
-    pause,
-    resume,
-    dispose,
-    getDiagnostics,
-    getActiveParticles,
-    getActiveParticlesSafe(effect: string): readonly ParticleSlot[] {
-      try { return getActiveParticles(effect); } catch { return []; }
+  const binding: ParticlePresentationBinding = {
+    systemGeneration: generation,
+    definition(effect: string): ParticleEffectDefinition {
+      return requireEffect(effect);
     },
-    get isPaused() { return paused; },
-    get isDisposed() { return disposed; },
-    get generation() { return generation; },
+    effects: Object.freeze([...definitions.keys()]),
+    tick(deltaSeconds: number): void {
+      // Manual/headless entry point: advances even before start() so tests
+      // and custom drivers can drive frames deterministically.
+      if (status === 'disposed') return;
+      update(deltaSeconds);
+      resample();
+    },
+    start(schedule, step = 1 / 60): void {
+      if (running) {
+        throw new ParticleError('presentation clock already started — one owner per binding');
+      }
+      if (status === 'disposed') {
+        throw new ParticleError('particle system is disposed');
+      }
+      running = true;
+      stepSeconds = step;
+      lastTick = () => onTick();
+      stopScheduled = schedule(() => {
+        if (lastTick) lastTick();
+      });
+    },
+    stop(): void {
+      running = false;
+      lastTick = null;
+      if (stopScheduled) {
+        const s = stopScheduled;
+        stopScheduled = null;
+        s();
+      }
+    },
+    get running() {
+      return running;
+    },
+    get revision() {
+      return revision;
+    },
+    slots(effect: string) {
+      requireEffect(effect);
+      const b = buffers.get(effect);
+      if (b === undefined) throw new ParticleError(`unknown particle effect ${JSON.stringify(effect)}`);
+      return b;
+    },
   };
-  // Renderer access to validated definitions (not part of the public type;
-  // plain values only — no native handles).
-  Object.defineProperty(system, '__definitions', {
-    value: definitions,
-    enumerable: false,
-    writable: false,
-  });
-  return system as unknown as ParticleSystem<TEffects> & {
-    __definitions: Map<string, ParticleEffectDefinition>;
-    getActiveParticlesSafe(e: string): readonly ParticleSlot[];
+  Object.freeze(binding);
+
+  const system: ParticleSystem<TEffects> = {
+    emit: emit as ParticleSystem<TEffects>['emit'],
+    update,
+    pause(): void {
+      if (status === 'disposed') throw new ParticleError('particle system is disposed');
+      status = 'paused';
+    },
+    resume(): void {
+      if (status === 'disposed') throw new ParticleError('particle system is disposed');
+      status = 'running';
+    },
+    dispose(): void {
+      if (status === 'disposed') return;
+      status = 'disposed';
+      generation++;
+      if (running) binding.stop();
+      for (const pool of pools.values()) {
+        for (const slot of pool) {
+          slot.active = false;
+          slot.age = 0;
+          slot.opacity = 0;
+          slot.spawnSequence = -1;
+        }
+      }
+      for (const [name, d] of diagnostics) {
+        diagnostics.set(name, { ...d, active: 0 });
+      }
+      for (const buf of buffers.values()) {
+        buf.visible.fill(0);
+      }
+      revision++;
+    },
+    getDiagnostics(effect?: keyof TEffects & string): ParticleDiagnostics {
+      if (effect !== undefined) {
+        requireEffect(effect);
+        return frozenSnapshot(effect);
+      }
+      let active = 0;
+      let emitted = 0;
+      let dropped = 0;
+      let recycled = 0;
+      for (const d of diagnostics.values()) {
+        active += d.active;
+        emitted += d.emitted;
+        dropped += d.dropped;
+        recycled += d.recycled;
+      }
+      return Object.freeze({ active, emitted, dropped, recycled });
+    },
+    getActiveParticles(effect: keyof TEffects & string): readonly ParticleSlotSnapshot[] {
+      requireEffect(effect);
+      if (status === 'disposed') return [];
+      const def = definitions.get(effect)!;
+      const out: ParticleSlotSnapshot[] = [];
+      for (const slot of pools.get(effect)!) {
+        if (!slot.active) continue;
+        const sampled = sampleSlotAtAge(ageView(slot), def, slot.age);
+        const origin = { x: slot.originX, y: slot.originY };
+        out.push(
+          Object.freeze({
+            active: true,
+            age: slot.age,
+            lifetime: slot.lifetime,
+            origin: Object.freeze(origin),
+            position: Object.freeze({ x: sampled.x, y: sampled.y }),
+            velocity: Object.freeze({ x: slot.vx, y: slot.vy }),
+            rotation: sampled.rotation,
+            scale: sampled.scale,
+            opacity: sampled.opacity,
+            color: slot.color,
+            spawnSequence: slot.spawnSequence,
+            effect,
+          }),
+        );
+      }
+      return out;
+    },
+    pauseIfRunning(): void {
+      if (status === 'running') status = 'paused';
+    },
+    resumeIfPaused(): void {
+      if (status === 'paused') status = 'running';
+    },
+    get status() {
+      return status;
+    },
+    bindPresentation(): ParticlePresentationBinding {
+      if (status === 'disposed') throw new ParticleError('particle system is disposed');
+      return binding;
+    },
   };
+  return Object.freeze(system);
 }
