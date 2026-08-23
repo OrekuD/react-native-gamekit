@@ -47,6 +47,8 @@ pnpm-debug.log*
 .DS_Store
 *.pem
 
+/research/
+
 # local environment files
 .env
 .env.*
