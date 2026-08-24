@@ -56,6 +56,12 @@ export const PLAYGROUND_GAMES = [
     label: 'Play',
   },
   {
+    id: 'platformer-lab',
+    title: 'Platformer Lab',
+    description: 'Tile world, solid + one-way collision, floor snap, contacts HUD.',
+    label: 'Play',
+  },
+  {
     id: 'particle-lab',
     title: 'Particle Lab',
     description: 'Seeded bursts, fixed pools, overflow policies, pause freeze, diagnostics.',

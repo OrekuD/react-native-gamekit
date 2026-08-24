@@ -1,0 +1,119 @@
+---
+title: Tilemaps
+description: "Finite orthogonal tile maps with immutable definitions, chunked queries, solid and one-way collision, and pure AABB platformer movement."
+---
+
+Tilemaps make a scrolling platformer practical without a scene tree, ECS, or rigid-body engine. Maps are immutable finite orthogonal data; movement is a pure fixed-step helper; rendering is presentation-only Atlas batching.
+
+## Package boundary
+
+Tilemaps ship as the `rn-gamekit/tilemap` subpath.
+
+```ts
+import { defineTileMap2D, movePlatformerBody2D } from 'rn-gamekit/tilemap';
+```
+
+Importing `rn-gamekit` never parses maps, builds chunk indexes, or allocates buffers. Core map definitions and collision queries are native-free; the Skia `TileMapLayer2D` component lives in the same subpath without changing map authority.
+
+## Defining a map
+
+```ts
+import { defineTileMap2D, defineTileSet2D } from 'rn-gamekit/tilemap';
+
+const tileset = defineTileSet2D({
+  tiles: {
+    grass: { frame: 'grass', collision: 'solid' },
+    platform: { frame: 'platform', collision: 'one-way-up' },
+    sky: { frame: 'sky' },
+  },
+});
+
+const level = defineTileMap2D({
+  cellSize: { width: 16, height: 16 },
+  origin: { x: 0, y: 0 },
+  tileset,
+  layers: [
+    { id: 'terrain', width: 64, height: 16, data: terrainIds }, // row-major, 0=empty
+  ],
+});
+```
+
+Numeric tile ids are assigned by declaration order starting at 1; `0` always means empty. Definition validates cell size, safe-integer dimensions, data length (`width × height`), unknown ids, and duplicate layer ids — all with exact source paths. Author buffers are cloned into owned frozen storage; mutating your input array afterwards cannot affect the map.
+
+World coordinates follow Gamekit's y-down convention. World position of cell (cx, cy) is `origin + (cx·cellWidth, cy·cellHeight)`. Negative coordinates use floor division, never truncation toward zero. Lookups outside the finite map return documented absence (empty results), not errors.
+
+## Queries
+
+Four bounded queries run in deterministic layer-order-then-row-major order:
+
+```ts
+import {
+  cellsAtPoint,
+  cellsInAabb,
+  cellsInSweptBounds,
+  visibleCells,
+} from 'rn-gamekit/tilemap';
+
+const underCursor = cellsAtPoint(level, pointer);
+const aroundBody = cellsInAabb(level, playerAabb, ['terrain']);
+const sweptRegion = cellsInSweptBounds(level, body, displacement);
+const onScreen = visibleCells(level, cameraBounds, overscanCells);
+```
+
+Each returns a frozen array of immutable `TileCell2D` values carrying the layer id, numeric id, tile name, collision kind, cell coordinate, and world AABB. Swept bounds are the union of start and end AABBs — always bounded, never unbounded for large displacements. Spans clamp to the map before iteration.
+
+The optimized queries match a brute-force oracle scan exactly (tested).
+
+## Platformer movement
+
+```ts
+import { movePlatformerBody2D } from 'rn-gamekit/tilemap';
+
+const result = movePlatformerBody2D({
+  body: state.playerBody,          // Aabb2D
+  velocity: nextVelocity,
+  deltaSeconds,
+  map: level,
+  collisionLayers: ['terrain'],
+  dropThroughOneWay: input.button('drop').held,
+  floorSnapDistance: 4,
+});
+```
+
+Frozen semantics:
+
+- Axis order X then Y; solids block both axes.
+- One-way platforms block descent only when the previous bottom was at/above the platform top (`ONE_WAY_TOLERANCE = 1e-4`) and `dropThroughOneWay` is false. Rising passes through freely; horizontal support along the top works.
+- Starting overlap resolves along the least-penetration face (up preferred on ties), up to `PLATFORMER_MAX_ITERATIONS = 4`; unresolved spawn overlap throws deterministically.
+- Floor snap pulls falling/resting bodies onto tops within `floorSnapDistance`.
+- The result carries new body/velocity/displacement/remainingDisplacement plus classified `floor`, `ceiling`, `leftWall`, `rightWall` contacts with outward normals.
+
+Gravity, jump rules, coyote time, buffering, animation, and input stay game-owned — the helper consumes one motion intent per fixed step and owns no scheduler or timer.
+
+## Rendering
+
+```tsx
+import { GameWorld2D } from 'rn-gamekit/react';
+import { TileMapLayer2D } from 'rn-gamekit/tilemap';
+
+<GameWorld2D viewport={viewport}>
+  <TileMapLayer2D map={level} layer="background" parallax={{ x: 0.5, y: 0.5 }}
+    source={{ image, frames }} width={320} height={480} />
+  <TileMapLayer2D map={level} layer="terrain"
+    source={{ image, frames }} width={320} height={480} />
+</GameWorld2D>
+```
+
+Frame rectangles resolve once at bind time; missing frames throw a structured error naming the tile. Slot capacity derives from surface bounds + overscan + cell size — never from map dimensions — and slots refill/hide in place as the camera moves. Parallax applies only to presentation layers using the same correction formula as `GameLayer2D`. Culling here can never affect simulation: collision queries read full layer data regardless of visibility.
+
+React does not re-render per tile; each layer is one stable Atlas node whose UI-runtime worklet refills slots from the presented camera bounds.
+
+## Tiled import
+
+`parseTiledMap2D()` normalizes one finite orthogonal Tiled JSON subset: inline uncompressed tilelayer arrays, no chunks, no object groups, no per-tile flip flags. Unsupported features reject with exact source paths (`layers[1](walls).compression: …`). Raw editor JSON never enters fixed-step or render hot paths — the normalized Gamekit map is the runtime model.
+
+## Next steps
+
+- React to gameplay facts with [Events](/docs/engine-systems/events).
+- Add juice with [Particles](/docs/engine-systems/particles).
+- Move the world with [Camera2D](/docs/engine-systems/camera2d).

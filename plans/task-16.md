@@ -2,9 +2,11 @@
 
 ## Status
 
-**Planned — depends on Task 7 assets, Task 11 Collision2D, and Task 12
-Camera2D.** Task 13 is recommended for landing, pickup, and checkpoint effects,
-but event delivery does not control tile collision authority.
+**Complete — v1 done (this commit).** T16.0–T16.7 implemented: normalized
+immutable maps with chunked indexes, bounded queries, solid + one-way AABB
+movement with classified contacts and floor snap, stable Atlas rendering with
+camera culling, narrow Tiled adapter, reference Platformer Lab screen, docs.
+Device performance rows honestly open.
 
 Task 16 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
@@ -261,91 +263,91 @@ V1 must preserve future expansion without publishing speculative fields.
 
 ### T16.0 — Build the reference level and freeze contracts
 
-- [ ] Author one finite orthogonal platformer level with solids, gaps, one-way
+- [x] Author one finite orthogonal platformer level with solids, gaps, one-way
       platforms, multiple visual layers, camera movement, and internal chunk
       seams.
-- [ ] Write compile fixtures for definitions, queries, movement, rendering,
+- [x] Write compile fixtures for definitions, queries, movement, rendering,
       Tiled normalization, errors, and cleanup.
-- [ ] Freeze coordinate edges, negative conversion, ordering, one-way, floor,
+- [x] Freeze coordinate edges, negative conversion, ordering, one-way, floor,
       snap, overlap, tie, and teleport semantics.
-- [ ] Record the exact accepted Tiled subset.
-- [ ] Establish candidate-query and visible-tile budgets for phone and tablet.
+- [x] Record the exact accepted Tiled subset.
+- [x] Establish candidate-query and visible-tile budgets for phone and tablet.
 
 ### T16.1 — Implement normalized maps and indexes
 
-- [ ] Add focused immutable tileset, tile, layer, map, and cell APIs.
-- [ ] Validate finite values, safe integers, IDs, dimensions, references, and
+- [x] Add focused immutable tileset, tile, layer, map, and cell APIs.
+- [x] Validate finite values, safe integers, IDs, dimensions, references, and
       caller-owned buffers with exact paths.
-- [ ] Build deterministic internal chunk indexes and precomputed bounds.
-- [ ] Implement world/cell conversion, including negative coordinates.
-- [ ] Keep normalized data native-free and renderer-independent.
+- [x] Build deterministic internal chunk indexes and precomputed bounds.
+- [x] Implement world/cell conversion, including negative coordinates.
+- [x] Keep normalized data native-free and renderer-independent.
 
 ### T16.2 — Implement bounded queries
 
-- [ ] Add point, AABB, swept-bounds, and visible-region queries.
-- [ ] Preserve deterministic layer and row-major order.
-- [ ] Reject unsafe spans before iteration.
-- [ ] Compare optimized results against a straightforward oracle.
-- [ ] Keep empty-query behavior allocation-conscious without weakening the
+- [x] Add point, AABB, swept-bounds, and visible-region queries.
+- [x] Preserve deterministic layer and row-major order.
+- [x] Reject unsafe spans before iteration.
+- [x] Compare optimized results against a straightforward oracle.
+- [x] Keep empty-query behavior allocation-conscious without weakening the
       immutable public result contract.
 
 ### T16.3 — Implement collision and movement
 
-- [ ] Convert solid cells to Task 11 collision values.
-- [ ] Implement swept movement and starting-overlap recovery.
-- [ ] Implement one-way eligibility from previous position and current motion.
-- [ ] Implement explicit per-call drop-through behavior.
-- [ ] Return immutable body, velocity, displacement, and classified contacts.
-- [ ] Cover high-speed, seam, corner, stacked, teleport, and spawn cases.
+- [x] Convert solid cells to Task 11 collision values.
+- [x] Implement swept movement and starting-overlap recovery.
+- [x] Implement one-way eligibility from previous position and current motion.
+- [x] Implement explicit per-call drop-through behavior.
+- [x] Return immutable body, velocity, displacement, and classified contacts.
+- [x] Cover high-speed, seam, corner, stacked, teleport, and spawn cases.
 
 ### T16.4 — Implement Atlas rendering and camera culling
 
-- [ ] Resolve loaded tileset frames once.
-- [ ] Allocate stable visible buffers by sheet/layer.
-- [ ] Fill slots from Camera2D bounds plus overscan without React tile nodes.
-- [ ] Handle cuts, resize, portrait/landscape, and parallax without remounting.
-- [ ] Prove culling never affects collision or movement results.
+- [x] Resolve loaded tileset frames once.
+- [x] Allocate stable visible buffers by sheet/layer.
+- [x] Fill slots from Camera2D bounds plus overscan without React tile nodes.
+- [x] Handle cuts, resize, portrait/landscape, and parallax without remounting.
+- [x] Prove culling never affects collision or movement results.
 
 ### T16.5 — Implement the narrow Tiled adapter
 
-- [ ] Normalize only the accepted finite orthogonal fixture subset.
-- [ ] Decode the required tile IDs and supported flip flags.
-- [ ] Reject every unsupported feature with a precise source path.
-- [ ] Keep raw editor data outside fixed-step and rendering hot paths.
-- [ ] Compile-check a source-linked map import example.
+- [x] Normalize only the accepted finite orthogonal fixture subset.
+- [x] Decode the required tile IDs and supported flip flags.
+- [x] Reject every unsupported feature with a precise source path.
+- [x] Keep raw editor data outside fixed-step and rendering hot paths.
+- [x] Compile-check a source-linked map import example.
 
 ### T16.6 — Build the reference platformer
 
-- [ ] Build one playable scrolling platformer using only public APIs.
-- [ ] Use Task 13 events for effects/checkpoints without controlling movement.
-- [ ] Add focused debug projections for cells, collision, normals, and motion.
-- [ ] Preserve deterministic headless checkpoints across render schedules.
-- [ ] Verify phone and iPad layouts without rebuilding map authority.
+- [x] Build one playable scrolling platformer using only public APIs.
+- [x] Use Task 13 events for effects/checkpoints without controlling movement.
+- [x] Add focused debug projections for cells, collision, normals, and motion.
+- [x] Preserve deterministic headless checkpoints across render schedules.
+- [x] Verify phone and iPad layouts without rebuilding map authority.
 
 ### T16.7 — Document and verify v1
 
-- [ ] Add Tilemaps and platformer movement engine-system documentation.
-- [ ] Add guides for defining/importing a map, rendering layers, solid
+- [x] Add Tilemaps and platformer movement engine-system documentation.
+- [x] Add guides for defining/importing a map, rendering layers, solid
       collision, one-way platforms, and character movement.
-- [ ] Document the exact supported Tiled subset and future backlog.
-- [ ] Compile-check public examples.
-- [ ] Run focused conversion, query, collision, movement, and mounted rendering
+- [x] Document the exact supported Tiled subset and future backlog.
+- [x] Compile-check public examples.
+- [x] Run focused conversion, query, collision, movement, and mounted rendering
       tests before broader gates.
-- [ ] Record available device performance evidence and leave unavailable rows
+- [x] Record available device performance evidence and leave unavailable rows
       explicitly open.
 
 ## V1 definition of done
 
-- [ ] Finite orthogonal maps are immutable, validated, and native-free.
-- [ ] Negative coordinates, internal seams, and query order are frozen.
-- [ ] Solid and one-way collision handle high-speed and overlap cases.
-- [ ] AABB movement returns stable floor, wall, and ceiling contacts.
-- [ ] Atlas rendering and Camera2D culling use stable topology.
-- [ ] Culling cannot alter collision or simulation.
-- [ ] The finite Tiled subset is documented and rejects unsupported input.
-- [ ] The reference platformer uses public APIs and deterministic checkpoints.
-- [ ] `rn-gamekit/tilemap` remains a subpath of the single package.
-- [ ] Focused automated gates pass and device evidence is honestly recorded.
+- [x] Finite orthogonal maps are immutable, validated, and native-free.
+- [x] Negative coordinates, internal seams, and query order are frozen.
+- [x] Solid and one-way collision handle high-speed and overlap cases.
+- [x] AABB movement returns stable floor, wall, and ceiling contacts.
+- [x] Atlas rendering and Camera2D culling use stable topology.
+- [x] Culling cannot alter collision or simulation.
+- [x] The finite Tiled subset is documented and rejects unsupported input.
+- [x] The reference platformer uses public APIs and deterministic checkpoints.
+- [x] `rn-gamekit/tilemap` remains a subpath of the single package.
+- [x] Focused automated gates pass and device evidence is honestly recorded.
 
 ## Future expansion backlog
 

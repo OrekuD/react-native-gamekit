@@ -63,6 +63,12 @@
       "source": "./src/particles.ts",
       "types": "./lib/typescript/src/particles.d.ts",
       "default": "./lib/module/particles.js"
+    },
+    "./tilemap": {
+      "react-native": "./src/tilemap.ts",
+      "source": "./src/tilemap.ts",
+      "types": "./lib/typescript/src/tilemap.d.ts",
+      "default": "./lib/module/tilemap.js"
     }
   },
   "react-native": "./src/index.ts",

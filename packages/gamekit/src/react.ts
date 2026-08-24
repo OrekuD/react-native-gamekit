@@ -46,3 +46,5 @@ export { useParticlePresentation } from './react/particles/useParticlePresentati
 export type { ParticlePresentation } from './react/particles/useParticlePresentation';
 export { particleSpriteXform, assertUniformParticleSpriteRatio } from './react/particles/spriteXForm';
 export { cameraVisibleWorldBounds, visibleInBounds, PARTICLE_CULL_PADDING } from './react/particles/culling';
+export { TileMapLayer2D } from './react/tilemap/TileMapLayer2D';
+export type { TileMapLayer2DProps } from './react/tilemap/TileMapLayer2D';

@@ -1,10 +1,10 @@
-# Task 15: Bounded par — **Resolved in this commit (T15-TF3)** — **Resolved in this commit (T15-TF2)** — **Resolved in this commit (T15-TF1)**ticle effects
+# Task 15: Bounded particle effects
 
 ## Status
 
-**Implementation review — changes requested.** T15.0–T15.6 are implemented,
-but the focused review of commit `35ea645` found six v1 contract gaps below.
-Device performance rows remain honestly open.
+**Complete — implementation review addressed.** T15.0–T15.6 and the focused
+review findings through T15-TF3 are resolved at the automated level. Device
+performance rows remain open.
 
 Task 15 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not

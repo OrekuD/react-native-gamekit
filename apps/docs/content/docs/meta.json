@@ -32,6 +32,7 @@
     "engine-systems/audio",
     "engine-systems/haptics",
     "engine-systems/particles",
+    "engine-systems/tilemaps",
     "---React---",
     "react/how-gamekit-uses-react",
     "react/components",
