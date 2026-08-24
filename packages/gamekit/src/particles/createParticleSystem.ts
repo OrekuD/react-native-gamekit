@@ -262,8 +262,11 @@ export function createParticleSystem<TEffects extends Record<string, ParticleEff
         if (!slot.active) continue;
         slot.age += deltaSeconds;
         if (slot.age >= slot.lifetime) {
+          // T15-TF1: expiry IS a registry membership change — bump so the
+          // pruned registry ships before the driver sleeps.
           slot.active = false;
           slot.opacity = 0;
+          registryRevision++;
           continue;
         }
           const sampled = sampleSlotAtAge(ageView(slot), def, slot.age);

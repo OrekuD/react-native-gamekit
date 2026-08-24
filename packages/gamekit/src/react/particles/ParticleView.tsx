@@ -1,8 +1,8 @@
 import { useContext, useMemo } from 'react';
 import { Atlas, Picture, Skia } from '@shopify/react-native-skia';
-import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
+import { useColorBuffer, useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
-import type { SkImage } from '@shopify/react-native-skia';
+import type { SkImage, SkColor } from '@shopify/react-native-skia';
 
 import { GameWorldContext } from '../sprites/GameWorld2D';
 import type {
@@ -68,12 +68,8 @@ export function ParticleView({
     [system, effect],
   );
   const world = useContext(GameWorldContext);
-  const camera = (world?.camera ?? null) as
-    | { value?: Parameters<typeof cameraVisibleWorldBounds>[0] extends never ? never : { camera?: { center: { x: number; y: number }; zoom: number; rotationRadians: number } } | undefined }
-    | null;
-  const viewport = (world?.viewport ?? null) as
-    | { value?: { visibleLogicalBounds?: { x: number; y: number; width: number; height: number } } | undefined }
-    | null;
+  const camera = (world?.camera ?? null) as never;
+  const viewport = (world?.viewport ?? null) as never;
 
   if (definition.particle.kind === 'sprite') {
     if (spriteSource === undefined) {
@@ -103,8 +99,8 @@ export function ParticleView({
         width={width}
         height={height}
         space={definition.space}
-        camera={camera as never}
-        viewport={viewport as never}
+        camera={camera}
+        viewport={viewport}
       />
     );
   }
@@ -120,23 +116,30 @@ export function ParticleView({
       rectWidth={definition.particle.width ?? 6}
       rectHeight={definition.particle.height ?? 6}
       color={definition.particle.color ?? '#ffffff'}
+      fadeOut={definition.fadeOut}
       gravityX={definition.gravity.x}
       gravityY={definition.gravity.y}
       width={width}
       height={height}
       space={definition.space}
-      camera={camera as never}
-      viewport={viewport as never}
+      camera={camera}
+      viewport={viewport}
     />
   );
 }
 
-/** Analytic transform for one emission at the given ACTIVE time. */
-function sampleEmission(
+/**
+ * Analytic transform for one emission at the given ACTIVE time.
+ *
+ * T15-TF3: opacity honors the definition's fade policy — `fadeOut: true`
+ * ramps `1 -> t`, `fadeOut: false` stays fully opaque for the whole life.
+ */
+export function sampleEmission(
   e: ParticleEmissionRecord,
   now: number,
   gravityX: number,
   gravityY: number,
+  fadeOut: boolean,
 ): { x: number; y: number; rotation: number; scale: number; opacity: number; alive: boolean } {
   'worklet';
   const age = now - e.bornAt;
@@ -148,7 +151,7 @@ function sampleEmission(
   const y = e.originY + e.vy * age + 0.5 * gravityY * age * age;
   const rotation = e.rotation + e.rotationSpeed * age;
   const scale = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
-  const opacity = 1 - t;
+  const opacity = fadeOut ? 1 - t : 1;
   return { x, y, rotation, scale, opacity, alive: true };
 }
 
@@ -166,6 +169,7 @@ function ShapeBatch(props: {
   readonly rectWidth: number;
   readonly rectHeight: number;
   readonly color: string;
+  readonly fadeOut: boolean;
   readonly gravityX: number;
   readonly gravityY: number;
   readonly width: number;
@@ -174,7 +178,7 @@ function ShapeBatch(props: {
   readonly camera: unknown;
   readonly viewport: unknown;
 }) {
-  const { clock, registry, effect, capacity, shape, radius, rectWidth, rectHeight, color, gravityX, gravityY, width, height, space, camera, viewport } =
+  const { clock, registry, effect, capacity, shape, radius, rectWidth, rectHeight, color, fadeOut, gravityX, gravityY, width, height, space, camera, viewport } =
     props;
 
   const picture = useDerivedValue(() => {
@@ -198,7 +202,7 @@ function ShapeBatch(props: {
     const particles = entry.particles;
     for (let i = 0; i < particles.length && i < capacity; i++) {
       const e = particles[i]!;
-      const s = sampleEmission(e, now, gravityX, gravityY);
+      const s = sampleEmission(e, now, gravityX, gravityY, fadeOut);
       if (!s.alive || s.opacity <= 0) continue;
       if (!visibleInBounds(s.x, s.y, bounds)) continue;
       paint.setAlphaf(Math.max(0, Math.min(1, s.opacity)));
@@ -245,7 +249,9 @@ function SpriteSlots(props: {
   const { clock, registry, effect, capacity, image, frameRect, drawWidth, drawHeight, fadeOut, gravityX, gravityY, width, height, space, camera, viewport } =
     props;
 
-  // UI-owned buffers created once per mount (T15-SF1).
+  // UI-owned buffers created once per mount (T15-SF1). Colors use the
+  // supported Skia color buffer (T15-TF3): each entry is an SkColor
+  // Float32Array [r,g,b,a] mutated on the UI runtime.
   const rects = useRectBuffer(capacity, (rect) => {
     'worklet';
     rect.setXYWH(0, 0, 0, 0);
@@ -254,9 +260,13 @@ function SpriteSlots(props: {
     'worklet';
     xform.set(1, 0, 0, 0);
   });
-  // Per-slot alpha lives in ONE stable color buffer allocated on mount and
-  // mutated on the UI runtime — never republished from JS (T15-SF1/SF2).
-  const colors = useMemo<number[]>(() => new Array<number>(capacity).fill(-1), [capacity]);
+  const colors = useColorBuffer(capacity, (color: SkColor) => {
+    'worklet';
+    color[0] = 1;
+    color[1] = 1;
+    color[2] = 1;
+    color[3] = 0;
+  });
 
   useDerivedValue(() => {
     'worklet';
@@ -271,7 +281,8 @@ function SpriteSlots(props: {
     for (let i = 0; i < capacity; i++) {
       const rectSlot = rects.value[i];
       const xformSlot = xforms.value[i];
-      if (rectSlot === undefined || xformSlot === undefined) continue;
+      const colorSlot: SkColor | undefined = colors.value[i];
+      if (rectSlot === undefined || xformSlot === undefined || colorSlot === undefined) continue;
 
       let placed = false;
       if (entry !== undefined && i < entry.particles.length) {
@@ -295,7 +306,11 @@ function SpriteSlots(props: {
             });
             rectSlot.setXYWH(frameRect.x, frameRect.y, frameRect.width, frameRect.height);
             xformSlot.set(xf.scos, xf.ssin, xf.tx, xf.ty);
-            colors[i] = packSpriteColor(255, 255, 255, fadeOut ? Math.max(0, Math.min(1, op)) : 1);
+            // White modulates the texture; alpha carries sampled fade.
+            colorSlot[0] = 1;
+            colorSlot[1] = 1;
+            colorSlot[2] = 1;
+            colorSlot[3] = Math.max(0, Math.min(1, op));
             placed = true;
           }
         }
@@ -303,18 +318,14 @@ function SpriteSlots(props: {
       if (!placed) {
         // Hide inactive/culled slots AND clear stale alpha (T15-SF2).
         rectSlot.setXYWH(0, 0, 0, 0);
-        colors[i] = packSpriteColor(255, 255, 255, 0);
+        colorSlot[0] = 1;
+        colorSlot[1] = 1;
+        colorSlot[2] = 1;
+        colorSlot[3] = 0;
       }
     }
     return colors;
   });
 
-  return <Atlas image={image} sprites={rects} transforms={xforms} colors={colors as never} />;
-}
-
-/** Pack RGBA into an Skia-compatible integer with premultiplied-style alpha slot. */
-function packSpriteColor(r: number, g: number, b: number, a: number): number {
-  'worklet';
-  const A = Math.round(Math.max(0, Math.min(1, a)) * 255);
-  return ((A << 24) | (b << 16) | (g << 8) | r) >>> 0;
+  return <Atlas image={image} sprites={rects} transforms={xforms} colors={colors} />;
 }

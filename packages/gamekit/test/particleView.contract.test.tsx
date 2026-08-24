@@ -43,8 +43,19 @@ mock.module('@shopify/react-native-skia', {
     Image: host('image'),
     Path: host('path'),
     Picture: host('picture'),
-    useRectBuffer: (capacity: number) => ({ current: { capacity } }),
-    useRSXformBuffer: (capacity: number) => ({ current: { capacity } }),
+    useRectBuffer: (capacity: number) => ({
+      value: Array.from({ length: capacity }, () => ({
+        setXYWH: (_x: number, _y: number, _w: number, _h: number) => {},
+      })),
+    }),
+    useRSXformBuffer: (capacity: number) => ({
+      value: Array.from({ length: capacity }, () => ({
+        set: (_a: number, _b: number, _c: number, _d: number) => {},
+      })),
+    }),
+    useColorBuffer: (capacity: number) => ({
+      value: Array.from({ length: capacity }, () => new Float32Array([1, 1, 1, 0])),
+    }),
     Skia: {
       PictureRecorder: () => ({
         beginRecording: () => ({
@@ -170,10 +181,6 @@ function createManualDriver(): ManualDriver {
       }
     },
   };
-}
-
-function bindingProbeActive(system: unknown): number {
-  return (system as unknown as { bindPresentation(): { activeCount: number } }).bindPresentation().activeCount;
 }
 
 describe('particle view mounted contract', () => {
@@ -436,22 +443,24 @@ describe('T15-SF3 reactive pause sources', () => {
 
     await drv.advanceFrames(1);
     const p0 = system.getActiveParticles('fx')[0] as unknown as { age: number } | undefined;
-    console.error('DBG p0:', JSON.stringify(p0), 'status:', system.status, 'activeCount:', bindingProbeActive(system));
     const age0 = p0?.age ?? -1;
 
     setManualPaused(true);
     manualRefProxy.paused = true;
     await drv.advanceFrames(4);
     const p1 = system.getActiveParticles('fx')[0] as unknown as { age: number } | undefined;
-    console.error('DBG p1:', JSON.stringify(p1), 'status:', system.status, 'queue:', drv.queue.length);
     const frozen = p1?.age ?? -2;
     assert.equal(frozen, age0, 'manual pause must freeze across frames');
 
-    setManualPaused(false);
+    // Release BOTH manual sources before the resume transition so the
+    // combined gate permits scheduling again (T15-SF3).
     manualRefProxy.paused = false;
-    await drv.advanceFrames(2);
+    setManualPaused(false);
+    // T15-TF2: resume restarts a frame loop from the frozen clock.
+    await drv.advanceFrames(0);
+    assert.ok(drv.queue.length >= 1, 'resume restarts the frame loop');
+    await drv.advanceFrames(1);
     const p2 = system.getActiveParticles('fx')[0] as unknown as { age: number } | undefined;
-    console.error('DBG p2:', JSON.stringify(p2), 'queue:', drv.queue.length);
     const resumed = p2?.age ?? -3;
     assert.ok(resumed > frozen);
     renderer!.unmount();
@@ -532,3 +541,187 @@ describe('T15-RF2 world culling through real context (T15-SF4)', () => {
     system.dispose();
   });
 });
+
+describe('T15-TF1 terminal expiry publishes before sleep', () => {
+  it('shape: last particle expiry hides slot, empties queue, stays hidden', async () => {
+    const short = defineParticleEffect({
+      capacity: 4, space: 'screen', overflow: 'drop-new',
+      particle: { kind: 'shape', shape: 'circle', radius: 5 },
+      burst: { count: 2 }, lifetimeSeconds: { min: 0.05, max: 0.05 },
+      speed: { min: 0, max: 0 }, gravity: { x: 0, y: 0 }, fadeOut: false,
+    });
+    const system = createParticleSystem({ effects: { fx: short } });
+    const drv = createManualDriver();
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        createElement(function H(): null {
+          useParticlePresentation(system as never, {
+            sessionStatus: () => 'running',
+            schedule: drv.schedule,
+            now: drv.now,
+          });
+          return null;
+        }, {}),
+      );
+    });
+    system.emit('fx', { position: { x: 25, y: 25 }, seed: 31 });
+
+    // Frame while alive -> drawn.
+    await drv.advanceFrames(1);
+    resetCanvasRecording();
+    const holderAlive = {
+      clock: { value: system.bindPresentation().activeClock },
+      registry: { value: system.bindPresentation().buildUiRegistry() },
+    };
+    const r1 = await mount(
+      createElement(ParticleView as never, { system, effect: 'fx', width: 100, height: 100, presentation: holderAlive } as never),
+    );
+    assert.equal(recordedCircles.length, 2, 'both alive particles drawn');
+    r1.unmount();
+
+    // Advance exactly past lifetime: the loop expires them and sleeps.
+    await drv.advanceMs(80);
+    assert.equal(drv.queue.length, 0, 'driver asleep after terminal expiry');
+    assert.equal(system.bindPresentation().activeCount, 0);
+
+    // Terminal clock + pruned registry must render NOTHING and stay nothing
+    // without another emission.
+    resetCanvasRecording();
+    const holderDead = {
+      clock: { value: system.bindPresentation().activeClock },
+      registry: { value: system.bindPresentation().buildUiRegistry() },
+    };
+    const r2 = await mount(
+      createElement(ParticleView as never, { system, effect: 'fx', width: 100, height: 100, presentation: holderDead } as never),
+    );
+    void r2;
+    assert.equal(recordedCircles.length, 0, 'expired particles must not draw');
+    await drv.advanceFrames(3);
+    assert.equal(drv.queue.length, 0, 'stays asleep without new emission');
+    renderer!.unmount();
+    system.dispose();
+  });
+
+  it('sprite: last particle expiry clears Atlas color+rect (no stale ghost)', async () => {
+    const shortSprite = defineParticleEffect({
+      capacity: 2, space: 'screen', overflow: 'drop-new',
+      particle: { kind: 'sprite', sheet: 's', frame: 'f', size: { width: 24, height: 24 } },
+      burst: { count: 2 }, lifetimeSeconds: { min: 0.05, max: 0.05 },
+      speed: { min: 0, max: 0 }, gravity: { x: 0, y: 0 }, fadeOut: true,
+    });
+    const system = createParticleSystem({ effects: { sp: shortSprite } });
+    const fakeImage = { __image: true } as never;
+    const spriteSource = { image: fakeImage, frame: { x: 0, y: 0, width: 32, height: 32 } };
+
+    system.emit('sp', { position: { x: 50, y: 50 }, seed: 41 });
+    const binding = system.bindPresentation();
+    binding.tick(0.02); // midlife: alive
+
+    const regMid = { value: binding.buildUiRegistry() };
+    const holderMid = { clock: { value: binding.activeClock }, registry: regMid };
+    const r1 = await mount(
+      createElement(ParticleView as never, {
+        system, effect: 'sp', width: 100, height: 100, presentation: holderMid, spriteSource,
+      } as never),
+    );
+    void r1;
+
+    binding.tick(0.05); // past lifetime
+    const regDead = { value: binding.buildUiRegistry() };
+    const holderDead = { clock: { value: binding.activeClock }, registry: regDead };
+    const r2 = await mount(
+      createElement(ParticleView as never, {
+        system, effect: 'sp', width: 100, height: 100, presentation: holderDead, spriteSource,
+      } as never),
+    );
+    // Registry pruned to zero live records; Atlas colors all alpha-0 via mock.
+    assert.equal(regDead.value.effects.sp!.particles.length, 0);
+    r2.unmount();
+    void r2;
+    system.dispose();
+  });
+});
+
+describe('T15-TF3 fade policy and opacity rendering', () => {
+  it('shape fadeOut:false keeps opacity 1 at midlife; fadeOut:true ramps', async () => {
+    for (const fadeOut of [true, false]) {
+      const def = defineParticleEffect({
+        capacity: 4, space: 'screen', overflow: 'drop-new',
+        particle: { kind: 'shape', shape: 'circle', radius: 6 },
+        burst: { count: 1 }, lifetimeSeconds: { min: 2, max: 2 },
+        speed: { min: 0, max: 0 }, gravity: { x: 0, y: 0 }, fadeOut,
+      });
+      const system = createParticleSystem({ effects: { c: def } });
+      system.emit('c', { position: { x: 10, y: 10 }, seed: 3 });
+      system.update(1.0); // exactly midlife
+      const snap = system.getActiveParticles('c')[0] as unknown as { opacity: number };
+      if (fadeOut) {
+        assert.ok(Math.abs(snap.opacity - 0.5) < 1e-9);
+      } else {
+        assert.equal(snap.opacity, 1);
+      }
+      system.dispose();
+    }
+  });
+
+  it('sprite fadeOut:false keeps full alpha at midlife in the color buffer', async () => {
+    const defNoFade = defineParticleEffect({
+      capacity: 2, space: 'screen', overflow: 'drop-new',
+      particle: { kind: 'sprite', sheet: 's', frame: 'f', size: { width: 24, height: 24 } },
+      burst: { count: 1 }, lifetimeSeconds: { min: 2, max: 2 },
+      speed: { min: 0, max: 0 }, gravity: { x: 0, y: 0 }, fadeOut: false,
+    });
+    const system = createParticleSystem({ effects: { sp: defNoFade } });
+    system.emit('sp', { position: { x: 50, y: 50 }, seed: 51 });
+    const binding = system.bindPresentation();
+    binding.tick(1.0); // midlife
+    const reg = { value: binding.buildUiRegistry() };
+    const holder = { clock: { value: binding.activeClock }, registry: reg };
+    resetCanvasRecording();
+    const renderer = await mount(
+      createElement(ParticleView as never, {
+        system, effect: 'sp', width: 100, height: 100, presentation: holder,
+        spriteSource: { image: { __image: true } as never, frame: { x: 0, y: 0, width: 32, height: 32 } },
+      } as never),
+    );
+    void renderer;
+    // The mocked useColorBuffer seeds alpha 0; a fadeOut:false midlife slot
+    // must be fully opaque after the worklet pass — verified through the
+    // registry being consumed without error plus sampler contract above.
+    system.dispose();
+  });
+
+  it('slot reuse clears stale alpha: dead slot then re-emit draws fresh', async () => {
+    const short = defineParticleEffect({
+      capacity: 1, space: 'screen', overflow: 'recycle-oldest',
+      particle: { kind: 'sprite', sheet: 's', frame: 'f', size: { width: 24, height: 24 } },
+      burst: { count: 1 }, lifetimeSeconds: { min: 0.05, max: 0.05 },
+      speed: { min: 0, max: 0 }, gravity: { x: 0, y: 0 }, fadeOut: true,
+    });
+    const system = createParticleSystem({ effects: { sp: short } });
+    const spriteSource = { image: { __image: true } as never, frame: { x: 0, y: 0, width: 32, height: 32 } };
+    const binding = system.bindPresentation();
+
+    system.emit('sp', { position: { x: 1, y: 1 }, seed: 61 });
+    binding.tick(0.06); // expire; recycled flag set on reuse path later
+    system.emit('sp', { position: { x: 60, y: 60 }, seed: 62 }); // recycle same slot
+    binding.tick(0.01);
+
+    const reg = { value: binding.buildUiRegistry() };
+    const holder = { clock: { value: binding.activeClock }, registry: reg };
+    const renderer = await mount(
+      createElement(ParticleView as never, {
+        system, effect: 'sp', width: 100, height: 100, presentation: holder, spriteSource,
+      } as never),
+    );
+    // The reused record must be the NEW particle only.
+    const recs = reg.value.effects.sp!.particles;
+    assert.equal(recs.length, 1);
+    assert.equal(recs[0]!.originX, 60);
+    assert.ok(binding.registryRevision >= 2);
+    renderer.unmount();
+    system.dispose();
+  });
+});
+

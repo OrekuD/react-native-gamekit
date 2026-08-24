@@ -37,11 +37,12 @@ function defaultSchedule(tick: () => void): () => void {
  *
  * Per-frame runtime work is ONE scalar write (`clock.value`); the bounded
  * emission registry is transferred only when membership changes (T15-SF1).
- * Pause sources are applied REACTIVELY — synchronously at bind, on session
- * transitions via the optional subscribe seam, and on manual-pause changes —
- * so an emission accepted after a pause transition follows the paused-drop
- * policy even while the driver was asleep (T15-SF3). Scheduling fully stops
- * while paused or idle and restarts only from resume/wake transitions.
+ *
+ * Pause sources are applied through ONE effect-owned control so transitions
+ * stop/start the scheduler immediately — including while the driver is idle
+ * or asleep (T15-SF3). Scheduling runs only when the system is running AND
+ * at least one particle is active; it fully stops otherwise and restarts
+ * from resume/wake transitions.
  */
 export function useParticlePresentation(
   system: ParticleSystem,
@@ -67,17 +68,23 @@ export function useParticlePresentation(
   // Latest-source refs (frame loop + reactive callbacks read these).
   const sessionRef = useRef(options?.sessionStatus);
   sessionRef.current = options?.sessionStatus;
-  const scheduleRef = useRef(options?.schedule ?? defaultSchedule);
-  const nowRef = useRef(options?.now ?? (() => Date.now()));
-
-  // Manual pause lives OUTSIDE render so the imperative setter is stable and
-  // reactive without depending on animation frames (T15-SF3).
-  const manualPausedRef = useRef(false);
-
   const manualReaderRef = useRef(options?.manualPaused);
   manualReaderRef.current = options?.manualPaused;
+  const scheduleRef = useRef(options?.schedule ?? defaultSchedule);
+  const nowRef = useRef(options?.now ?? (() => Date.now()));
+  // Manual pause lives OUTSIDE render so the imperative setter is stable and
+  // reactive without depending on animation frames.
+  const manualPausedRef = useRef(false);
 
-  const applyCombinedPause = useCallback((): void => {
+  // Stable control ref owned by the effect (T15-TF2): the public setter and
+  // every pause transition route through this without capturing stale state.
+  const controlRef = useRef<{
+    applyPause(): void;
+    syncRegistry(): void;
+    updateScheduling(): void;
+  }>({ applyPause: () => {}, syncRegistry: () => {}, updateScheduling: () => {} });
+
+  function applyCombinedPause(): void {
     if (system.status === 'disposed') return;
     const session = sessionRef.current?.() ?? 'running';
     const effectivePaused =
@@ -87,7 +94,7 @@ export function useParticlePresentation(
       session === 'disposed';
     if (effectivePaused) system.pauseIfRunning();
     else system.resumeIfPaused();
-  }, [system]);
+  }
 
   useEffect(() => {
     const driver = binding.acquireDriver();
@@ -117,7 +124,8 @@ export function useParticlePresentation(
 
     const syncRegistry = (): void => {
       if (binding.registryRevision !== registry.value.registryRevision) {
-        // Bounded transfer: only on membership changes (T15-SF1).
+        // Bounded transfer: only on membership changes (T15-SF1). Expiration
+        // bumps the revision too, so the terminal prune ships (T15-TF1).
         registry.value = binding.buildUiRegistry();
       }
     };
@@ -132,9 +140,12 @@ export function useParticlePresentation(
       driver.step(dt);
       syncRegistry();
 
-      // Scalar clock write: the only per-frame boundary traffic (T15-SF1).
+      // ALWAYS publish the terminal scalar — including the step that
+      // transitions to zero actives, so renderers hide the expired record
+      // before we sleep (T15-TF1).
+      clock.value = binding.activeClock;
+
       if (!driver.isIdle()) {
-        clock.value = binding.activeClock;
         startScheduling();
         return;
       }
@@ -142,17 +153,29 @@ export function useParticlePresentation(
       stopScheduling();
     };
 
-    // Reactive pause application + registry sync (T15-SF3): runs even while
-    // the scheduler is asleep, then stops/restarts scheduling to match.
-    const onSourcesChanged = (): void => {
-      applyCombinedPause();
-      syncRegistry();
-      if (cancelled || system.status === 'disposed') return;
-      if (!driver.isIdle()) startScheduling();
-      else stopScheduling();
+    // Effect-owned scheduling control (T15-TF2): pause transitions call this
+    // synchronously via the stable ref.
+    controlRef.current = {
+      applyPause: applyCombinedPause,
+      syncRegistry,
+      updateScheduling(): void {
+        applyCombinedPause();
+        syncRegistry();
+        if (cancelled || system.status === 'disposed') {
+          stopScheduling();
+          return;
+        }
+        // Schedule only when running AND something is active.
+        if (system.status === 'running' && !driver.isIdle()) {
+          startScheduling();
+        } else {
+          stopScheduling();
+        }
+      },
     };
 
-    driver.setWakeListener(onSourcesChanged);
+    // Reactive pause application + registry sync + reschedule.
+    driver.setWakeListener(() => controlRef.current.updateScheduling());
 
     // Initial synchronous application at bind time.
     applyCombinedPause();
@@ -161,7 +184,7 @@ export function useParticlePresentation(
       options?.sessionSubscribe !== undefined
         ? options.sessionSubscribe((status) => {
             sessionRef.current = () => status;
-            onSourcesChanged();
+            controlRef.current.updateScheduling();
           })
         : undefined;
 
@@ -184,17 +207,11 @@ export function useParticlePresentation(
   const setManualPaused = useCallback(
     (paused: boolean): void => {
       manualPausedRef.current = paused;
-      // Reactive: apply immediately, not on the next animation frame.
-      applyCombinedPause();
-      if (system.status !== 'disposed' && system.status === 'running') {
-        // Resume may need scheduling restarted; emit/wake also covers this,
-        // but an explicit nudge keeps resume latency at one frame.
-        if (binding.activeCount > 0) {
-          clock.value = binding.activeClock;
-        }
-      }
+      // Route through the effect-owned control: applies combined sources AND
+      // stops/starts the scheduler immediately (T15-TF2).
+      controlRef.current.updateScheduling();
     },
-    [applyCombinedPause, binding, clock, system],
+    [],
   );
 
   return { clock, registry, setManualPaused };

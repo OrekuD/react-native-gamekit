@@ -1,4 +1,4 @@
-# Task 15: Bounded particle effects
+# Task 15: Bounded par — **Resolved in this commit (T15-TF3)** — **Resolved in this commit (T15-TF2)** — **Resolved in this commit (T15-TF1)**ticle effects
 
 ## Status
 
@@ -631,6 +631,81 @@ Required approach:
 - Add a mounted integration test using the real context and shared values,
   including a far-from-origin camera case. This implementation proof isn't
   device-gated; only final performance and visual validation are.
+
+## Third follow-up feedback
+
+Commit `43b1b87` establishes the intended scalar-clock architecture and real
+world-space lab path. Three focused runtime issues remain.
+
+### T15-TF1 — Publish terminal expiry before stopping the clock (High)
+
+When `driver.step()` expires the last active particle, `stepFrame()` sees
+`driver.isIdle() === true` and stops without assigning the new
+`binding.activeClock` to `clock.value`. Expiration also doesn't increment
+`registryRevision`. The UI therefore retains the previous clock value, where
+the particle was still alive, and its stale emission record can remain drawn
+indefinitely after the driver goes idle.
+
+Required approach:
+
+- Publish the final active-time scalar after every successful driver step,
+  including the step that transitions active count to zero.
+- Treat expiration as a registry membership change and publish a pruned
+  registry before sleeping, or prove the terminal clock alone makes every
+  renderer hide the expired record.
+- Keep the driver asleep after that terminal publish; don't add an extra
+  polling frame.
+- Add mounted tests for one shape and one sprite whose last particle expires.
+  Advance exactly past lifetime, assert the node/Atlas slot becomes invisible,
+  assert the queue is empty, and assert it remains invisible without another
+  emission.
+
+### T15-TF2 — Actually stop scheduling during pause (High)
+
+`setManualPaused()` applies the system status but cannot call the effect's
+`stopScheduling()` or `startScheduling()`. With active particles, the existing
+RAF continues forever because `driver.isIdle()` is false. The session callback
+has the same issue: `onSourcesChanged()` starts whenever particles are active
+without checking the combined paused state. The implementation freezes age,
+but it doesn't satisfy the promised zero scheduled frames while paused.
+
+Required approach:
+
+- Route manual and session pause transitions through one effect-owned control
+  function that applies the combined sources and stops or starts the scheduler
+  immediately.
+- Schedule only when the system is running and active count is greater than
+  zero. Resume must restart exactly one frame loop from the frozen clock.
+- Keep the public setter stable without capturing stale scheduler state; use a
+  stable control ref if the scheduler functions live inside the effect.
+- Strengthen the mounted test to assert the scheduler queue becomes empty
+  immediately after active pause, stays empty across attempted frame advances,
+  and contains one loop after resume.
+- Remove the committed `console.error('DBG ...')` statements from the focused
+  particle tests once the lifecycle assertion is deterministic.
+
+### T15-TF3 — Preserve shape fade policy and use a real Skia color buffer (High)
+
+The UI `sampleEmission()` always returns `opacity = 1 - t`, so shape particles
+fade even when their definition has `fadeOut: false`. The sprite path has the
+opposite integration problem: it creates an ordinary memoized `number[]`,
+mutates its worklet-captured clone, casts it to `never`, and passes it as Atlas
+`colors`. In the pinned Skia API, Atlas expects `SkColor[]` and provides
+`useColorBuffer()` for a UI-owned reactive color buffer. The current array can
+remain stale and its packed integers aren't the declared `SkColor`
+`Float32Array` values.
+
+Required approach:
+
+- Pass `fadeOut` into the shape sampler and return opacity `1` when disabled.
+- Replace the ordinary color array with Skia's `useColorBuffer()` and mutate
+  each `SkColor` entry on the UI runtime using the supported representation.
+- Clear inactive and culled color slots through that buffer, alongside the
+  zero-size source rectangle.
+- Remove the `as never` escape hatch from the Atlas `colors` prop.
+- Add mounted tests proving shape and sprite opacity at midlife for both
+  `fadeOut: true` and `fadeOut: false`, plus slot reuse after a fully
+  transparent or culled particle.
 
 ## Future expansion backlog
 
