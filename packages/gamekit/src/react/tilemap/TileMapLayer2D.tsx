@@ -119,6 +119,12 @@ export function TileMapLayer2D({
 
   const cw = map.cellSize.width;
   const ch = map.cellSize.height;
+  const originX = map.origin.x;
+  const originY = map.origin.y;
+  // Pad world is scalar based on the larger cell dimension (T16-SF2
+  // overscan contract). Capacity and bounds must share this exact scalar
+  // so they cannot drift for non-square cells.
+  const padWorld = overscan * Math.max(cw, ch);
   // px/py already validated above
 
   // Resolve frames ONCE at bind time (structured errors for missing
@@ -130,9 +136,11 @@ export function TileMapLayer2D({
 
   // Slot capacity covers the worst rotated AABB at minZoom (T16-SF2):
   // conservative extents approach the viewport diagonal at 45 degrees.
+  // Must use the same padWorld as writeLayerVisibleBounds so non-square
+  // cells (e.g. 8x64) do not under-size one axis.
   const diagonal = Math.hypot(width, height);
-  const slotsX = Math.ceil(diagonal / (cw * minZoom)) + overscan * 2 + 1;
-  const slotsY = Math.ceil(diagonal / (ch * minZoom)) + overscan * 2 + 1;
+  const slotsX = Math.ceil((diagonal / minZoom + 2 * padWorld) / cw) + 1;
+  const slotsY = Math.ceil((diagonal / minZoom + 2 * padWorld) / ch) + 1;
   const capacity = slotsX * slotsY;
 
   const rects = useRectBuffer(capacity, (rect) => {
@@ -193,9 +201,7 @@ export function TileMapLayer2D({
     }
   }, [warnedCapacitySV, capacityWarnPendingSV]);
 
-  const originX = map.origin.x;
-  const originY = map.origin.y;
-  const padWorld = overscan * Math.max(cw, ch);
+  // originX/Y and padWorld already defined above for capacity sizing
 
   useDerivedValue(() => {
     'worklet';

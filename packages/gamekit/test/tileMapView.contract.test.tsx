@@ -539,38 +539,90 @@ describe('tilemap layer mounted contract', () => {
   it('rotated 45-degree view at minZoom fills every occupied cell (T16-SF2)', async () => {
     // Fully occupied map so every cell in the visible span must be drawn;
     // a partial Atlas would be immediately visible.
-    function makeFullMap(w: number, h: number) {
+    function makeFullMap(w: number, h: number, cw = 16, ch = 16) {
       const ts = Core.defineTileSet2D({ tiles: { grass: { frame: 'g', collision: 'solid' } } });
       const data = new Array(w * h).fill(1);
       return Core.defineTileMap2D({
-        cellSize: { width: 16, height: 16 },
+        cellSize: { width: cw, height: ch },
         tileset: ts,
         layers: [{ id: 't', width: w, height: h, data }],
       });
     }
     const rotation = Math.PI / 4;
-    for (const [vw, vh, label] of [
-      [320, 480, 'portrait'],
-      [1024, 768, 'tablet'],
+    // Square cells (baseline) plus non-square cells that expose the overscan-per-axis bug (T16-TF1).
+    for (const [vw, vh, cw, ch, label] of [
+      [320, 480, 16, 16, 'portrait 16x16'],
+      [1024, 768, 16, 16, 'tablet 16x16'],
+      [320, 480, 8, 64, 'portrait 8x64'],
+      [320, 480, 64, 8, 'portrait 64x8'],
+      [1024, 768, 8, 64, 'tablet 8x64'],
+      [1024, 768, 64, 8, 'tablet 64x8'],
     ] as const) {
-      const map = makeFullMap(96, 96);
+      const map = makeFullMap(96, 96, cw, ch);
+      const frames = { g: { x: 0, y: 0, width: cw, height: ch } };
       const camSV = cameraAt(800, 800, 0.5, rotation);
       const vp = viewportAt(0, 0, vw, vh);
-      const { lastDerived } = await mountWith(map, { camera: camSV, viewport: vp }, { width: vw, height: vh, minZoom: 0.5 });
-      const filled = lastDerived()();
-      // With diagonal-sized capacity, the rotated span must fully fit;
-      // the contract is either all present or all hidden — never partial.
-      // At zoom == minZoom the span is within capacity, so expect a full fill.
+      // Mount with matching surface size and cell-matched frames
+      const beforeCount = derivedClosures.length;
+      let r: ReturnType<typeof create> | null = null;
+      await act(async () => {
+        r = create(createElement(
+          GameWorld2D as never,
+          { viewport: vp, camera: camSV } as never,
+          createElement(TileMapLib.TileMapLayer2D as never, {
+            map, layer: 't',
+            source: { image: { __image: true } as never, frames },
+            width: vw, height: vh, overscan: 1, minZoom: 0.5,
+          } as never),
+        ));
+      });
+      const fillIndex = beforeCount + 1;
+      const lastDerived = () => {
+        const fn = derivedClosures[fillIndex] as () => number;
+        return fn();
+      };
+      const filled = lastDerived();
       assert.ok(filled > 0, `${label} 45deg at minZoom must fill (${filled})`);
-      // Verify the pure helper agrees: span cells at this rotation equals filled count for a full map
+      const padWorld = 1 * Math.max(cw, ch);
       const out = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-      Presentation.writeLayerVisibleBounds(camSV as never, vp as never, 1, 1, 16, out);
-      const cx0 = Math.max(0, Math.floor(out.minX / 16));
-      const cy0 = Math.max(0, Math.floor(out.minY / 16));
-      const cx1 = Math.min(95, Math.floor(out.maxX / 16));
-      const cy1 = Math.min(95, Math.floor(out.maxY / 16));
+      Presentation.writeLayerVisibleBounds(camSV as never, vp as never, 1, 1, padWorld, out);
+      const cx0 = Math.max(0, Math.floor(out.minX / cw));
+      const cy0 = Math.max(0, Math.floor(out.minY / ch));
+      const cx1 = Math.min(95, Math.floor(out.maxX / cw));
+      const cy1 = Math.min(95, Math.floor(out.maxY / ch));
       const spanCells = (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
       assert.equal(filled, spanCells, `${label} fully occupied span must be complete`);
+      r!.unmount();
+    }
+    // Non-rotated non-square case isolates overscan math from rotation math.
+    {
+      const map = makeFullMap(96, 96, 8, 64);
+      const camSV = cameraAt(400, 400, 1, 0);
+      const vp = viewportAt(0, 0, 320, 480);
+      const frames = { g: { x: 0, y: 0, width: 8, height: 64 } };
+      const r = await (async () => {
+        const beforeCount = derivedClosures.length;
+        let renderer: ReturnType<typeof create> | null = null;
+        await act(async () => {
+          renderer = create(createElement(
+            GameWorld2D as never,
+            { viewport: vp, camera: camSV } as never,
+            createElement(TileMapLib.TileMapLayer2D as never, {
+              map, layer: 't',
+              source: { image: { __image: true } as never, frames },
+              width: 320, height: 480, overscan: 1,
+            } as never),
+          ));
+        });
+        const fillIndex = beforeCount + 1;
+        return {
+          lastDerived: () => (derivedClosures[fillIndex] as () => number)(),
+          renderer: renderer!,
+        };
+      })();
+      const filled = r.lastDerived();
+      assert.ok(filled > 0, 'non-rotated 8x64 must fill');
+      r.renderer.unmount();
     }
   });
 

@@ -2,9 +2,30 @@
 
 ## Status
 
-**Third follow-up resolved (this change), re-review pending.** T16-F1
-through T16-SF3 are now addressed as described below. Device performance
-rows remain open until they run on named hardware.
+**All findings resolved (TF1 and TF2 addressed in this change), re-review
+pending.** T16-SF1 through T16-TF2 are now addressed as described below.
+Device performance rows remain open until they run on named hardware.
+
+### Fourth follow-up resolution summary (TF1-TF2)
+
+- **T16-TF1** — Overscan is now a consistent per-axis cell count derived
+  from the same scalar `padWorld = overscan * max(cellWidth, cellHeight)`
+  used by both `writeLayerVisibleBounds` and buffer sizing:
+  `slotsAxis = ceil((diagonal/minZoom + 2*padWorld)/cellAxis)+1`. This
+  keeps capacity and bounds in lockstep for non-square cells (e.g. 8×64
+  and 64×8). The `-2` preflight remains fail-closed. New fully-occupied
+  rotated tests cover 8×64 and 64×8 on phone (320×480) and tablet
+  (1024×768) at `zoom === minZoom = 0.5`, plus a non-rotated non-square
+  case to isolate overscan math from rotation math.
+- **T16-TF2** — Extracted `AssetGateOverlay` to
+  `src/shell/AssetGateOverlay.tsx` so it can be tested without the full
+  shell. Added `src/shell/assetGate.test.tsx` (3 tests: loading spinner,
+  error+retry, back) and extended `platformerLabContent.test.tsx` to
+  invoke the real duplicate sequence `onPressIn → onTouchEnd →
+  onPressOut` and assert exactly one release edge plus a second press
+  proving the held state was cleared. `GameSurface` now gates `Content`
+  behind `slot.status === 'loading'` (verified by the overlay's blocking
+  pointerEvents and by existing `surfaceController` loading/ready tests).
 
 ### Third follow-up resolution summary (SF1-SF3)
 
@@ -807,6 +828,75 @@ Required approach:
   deliver ready assets and prove the same control reaches the gameplay session.
 - Add loading-error-retry and close-while-error coverage, plus a touch sequence
   that invokes both `onTouchEnd` and `onPressOut` but produces one release edge.
+
+## Third follow-up feedback
+
+This isolated review covers only the repairs in `cb74f81`. The split warning
+and window-request guards in T16-SF1 are correct. Keep that implementation and
+address the two remaining findings below.
+
+### T16-TF1 — Rotated capacity is still wrong for non-square cells (High)
+
+`TileMap2D` intentionally supports independent `cellSize.width` and
+`cellSize.height`, but the new capacity formula adds only
+`overscan * 2` slots to each axis while `writeLayerVisibleBounds()` expands
+both axes by `overscan * max(cellWidth, cellHeight)` world units. Those two
+contracts agree only for square cells.
+
+For example, with 8x64 cells, a 320x480 viewport, `minZoom={1}`,
+`overscan={1}`, and a 45-degree camera, the X bounds gain 64 world units on
+each side—eight X cells per side—but the X buffer reserves only one overscan
+cell per side. `fillTileSlots()` then returns `-2` and hides the whole layer at
+a valid zoom. The never-partial guard is safe, but a supported map can become
+blank even though the documented capacity contract says it fits.
+
+Required approach:
+
+- Freeze overscan as a number of cells per axis, not one scalar world distance
+  based on the larger cell dimension.
+- Prefer extending the bounds writer to accept independent X/Y padding and
+  pass `overscan * cellWidth` and `overscan * cellHeight`. If the scalar
+  padding contract is retained, size each axis from that exact scalar padding:
+  `ceil((diagonal / minZoom + 2 * paddingWorld) / cellAxis) + 1`.
+- Derive buffer capacity and visible bounds from one shared formula/contract so
+  they cannot drift again.
+- Preserve the `-2` preflight as a defensive fail-closed path; do not weaken it
+  or return a partial Atlas.
+- Add fully occupied rotated-camera tests using both 8x64 and 64x8 cells on
+  phone and tablet viewports at `zoom === minZoom`. Assert the complete visible
+  span renders rather than merely asserting a positive fill count.
+- Include a non-rotated non-square case so the tests distinguish overscan math
+  from rotation math.
+
+### T16-TF2 — The claimed T16-SF3 regression tests do not exist (Important)
+
+The implementation now selects `AssetGateOverlay` while the slot is loading,
+and `release()` correctly checks `heldActions.delete(action)`. However, the
+commit adds no mounted shell test for the loading gate, ready handoff,
+error/retry, or close-while-error flows. The existing Platformer Lab control
+test also invokes `onTouchCancel` and `onPressOut` separately; it never invokes
+the real duplicate sequence of `onTouchEnd` followed by `onPressOut`.
+
+The Task 16 resolution summary currently says all of those behaviors are
+covered, so the completion record is ahead of the evidence.
+
+Required approach:
+
+- Add a focused mounted test around the real `GameSurface`/asset-gate
+  composition, extracting that internal component into a focused module if
+  necessary to avoid mocking the entire application.
+- Mount a loading slot and prove gameplay `Content` is not mounted, the
+  placeholder input receives no control action, and Back remains usable.
+- Publish an error state and prove the error UI renders, Retry calls the exact
+  active request's retry function once, and Back/close remains safe.
+- Publish the matching ready slot and prove the gate unmounts and `Content`
+  receives the real session and matching lease. Include a stale request state
+  that must not open gameplay content.
+- Extend the existing Platformer Lab mounted control test to call
+  `onPressIn`, then both `onTouchEnd` and `onPressOut`, and assert exactly one
+  release edge. Repeat a second press to prove the held state was cleared.
+- Update the third follow-up resolution summary only after these named tests
+  exist and fail against the pre-fix behavior.
 
 ## Future expansion backlog
 

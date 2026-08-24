@@ -183,11 +183,12 @@ describe('Platformer Lab mounted controls (T16-F2)', () => {
     });
     const root = renderer!.root;
     const jump = root.findAll(
-      (n: { props?: { testID?: string; onPressIn?: () => void; onPressOut?: () => void; onTouchCancel?: () => void } }) =>
+      (n: { props?: { testID?: string; onPressIn?: () => void; onPressOut?: () => void; onTouchCancel?: () => void; onTouchEnd?: () => void } }) =>
         n.props?.testID === 'platformer-jump',
     )[0]!;
     assert.equal(typeof jump.props.onPressOut, 'function', 'jump declares a release edge');
     assert.equal(typeof jump.props.onTouchCancel, 'function', 'jump releases on touch cancel');
+    assert.equal(typeof jump.props.onTouchEnd, 'function', 'jump releases on touch end');
 
     // Two full press cycles.
     jump.props.onPressIn?.();
@@ -197,11 +198,24 @@ describe('Platformer Lab mounted controls (T16-F2)', () => {
     assert.deepEqual(session.pressEdges.filter((a) => a === 'jump'), ['jump', 'jump']);
     assert.deepEqual(session.releaseEdges.filter((a) => a === 'jump'), ['jump', 'jump']);
 
+    // Duplicate onTouchEnd + onPressOut from one normal touch must collapse to one release.
+    jump.props.onPressIn?.();
+    jump.props.onTouchEnd?.();
+    jump.props.onPressOut?.();
+    assert.equal(session.pressEdges.filter((a) => a === 'jump').length, 3, 'third press edge');
+    assert.equal(session.releaseEdges.filter((a) => a === 'jump').length, 3, 'duplicate onTouchEnd+onPressOut collapses to one release');
+
+    // A second distinct press after the duplicate still yields a new edge.
+    jump.props.onPressIn?.();
+    jump.props.onPressOut?.();
+    assert.equal(session.pressEdges.filter((a) => a === 'jump').length, 4);
+    assert.equal(session.releaseEdges.filter((a) => a === 'jump').length, 4);
+
     // Touch cancel also releases a held jump.
     jump.props.onPressIn?.();
     jump.props.onTouchCancel?.();
-    assert.equal(session.pressEdges.filter((a) => a === 'jump').length, 3);
-    assert.equal(session.releaseEdges.filter((a) => a === 'jump').length, 3);
+    assert.equal(session.pressEdges.filter((a) => a === 'jump').length, 5);
+    assert.equal(session.releaseEdges.filter((a) => a === 'jump').length, 5);
     act(() => session.dispose());
   });
 
