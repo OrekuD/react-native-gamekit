@@ -50,6 +50,7 @@ mock.module('@shopify/react-native-skia', {
     Skia: { makeImageFromView: () => undefined },
     useRectBuffer: () => ({ current: undefined }),
     useRSXformBuffer: () => ({ current: undefined }),
+    useColorBuffer: () => ({ current: undefined }),
   },
 });
 mock.module('react-native-reanimated', {
