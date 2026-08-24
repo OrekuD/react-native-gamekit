@@ -1,0 +1,407 @@
+# Task 18: Optional rigid-body Physics2D adapter
+
+## Status
+
+**Planned as a v1 evaluation and optional integration milestone.** Task 11
+Collision2D remains the default for arcade and platformer games. Task 18 ships
+a production adapter only if one maintained 2D backend passes the maintenance,
+Expo/Hermes, transaction, performance, lifecycle, and physical-device gates.
+
+Task 18 is complete when the v1 definition of done is satisfied. A documented
+no-go result is a valid completion if no backend passes. The future expansion
+backlog remains documented but does not block completion and must not be
+implemented without a separate approved task.
+
+## Objective
+
+Support games that genuinely need dynamic rigid bodies, mass interaction,
+forces, friction, restitution, and sensors without making physics mandatory or
+allowing a third-party backend to define Gamekit's world model.
+
+```ts
+import {
+  createPhysicsWorld2D,
+  physicsBox2D,
+} from 'rn-gamekit/physics2d';
+
+const physics = await createPhysicsWorld2D({
+  gravity: { x: 0, y: 980 },
+  worldUnitsPerMeter: 100,
+});
+
+physics.createBody({
+  id: 'player',
+  type: 'dynamic',
+  position: { x: 120, y: 80 },
+  shapes: [
+    physicsBox2D({
+      id: 'body',
+      width: 20,
+      height: 36,
+      density: 1,
+      filter: playerFilter,
+    }),
+  ],
+  fixedRotation: true,
+});
+
+const result = physics.step({
+  tick,
+  deltaSeconds,
+  commands: [
+    { kind: 'apply-impulse', bodyId: 'player', value: { x: 0, y: -320 } },
+  ],
+});
+```
+
+This API is intentionally provisional. T18.0 must first prove how mutable
+backend state remains consistent when an authoritative tick later fails.
+
+## Package and dependency boundary
+
+Physics ships, if approved, as `rn-gamekit/physics2d`, a subpath of the single
+`rn-gamekit` npm package.
+
+- Do not publish a companion physics npm package in v1.
+- Do not add the backend as a mandatory dependency.
+- Declare the selected backend as an optional peer dependency.
+- Pin the exact validated version in monorepo development dependencies and the
+  playground.
+- Importing `rn-gamekit`, `rn-gamekit/react`, or non-physics subpaths must not
+  load, initialize, or link backend code through JavaScript imports.
+- Missing-backend errors occur only when the physics subpath/resource is used.
+- Publish a tested peer range and compatibility statement.
+- Task 11 Collision2D remains usable with no physics backend installed.
+
+## When to use Physics2D
+
+Use Task 11 Collision2D and game-authored movement for:
+
+- arcade collisions and manual response;
+- swept projectiles, triggers, and hitboxes;
+- tile/platformer character movement;
+- deterministic game-specific motion;
+- spatial queries without a solver.
+
+Use optional Physics2D only for demonstrated workflows such as:
+
+- stacks and tumbling dynamic bodies;
+- forces, impulses, friction, restitution, and mass interaction;
+- many interacting bodies where a maintained solver is preferable to custom
+  response code.
+
+V1 must include a reference scene that cannot be served adequately by Task 11
+alone. Otherwise the result is no-go.
+
+## V1 scope
+
+### Included in v1 if a backend passes
+
+- One selected and maintained 2D backend.
+- One `rn-gamekit/physics2d` public adapter surface.
+- Static, dynamic, and kinematic bodies.
+- Box and circle shapes.
+- Density, friction, restitution, damping, gravity scale, and fixed rotation.
+- Sensors and Task 11-compatible category/mask filters where semantics match.
+- Create/destroy body, set velocity, set kinematic transform, apply force, and
+  apply impulse commands.
+- Exactly one backend step per GameSession fixed step.
+- Immutable body transform/velocity/sleep projections.
+- Ordered contact begin/stay/end facts with stable Gamekit IDs.
+- Transaction safety when a tick or later commit phase fails.
+- Pause, restart, replacement, and disposal.
+- Renderer-neutral debug projections and Camera2D reference rendering.
+- Task 13 contact-event integration.
+- One Physics Lab/reference scene, docs, compatibility record, and focused
+  performance/device evidence.
+
+### Deferred from v1
+
+- Multiple interchangeable backends or a public backend plugin framework.
+- Public raw backend handles or `any` escape hatches.
+- Joints and constraints.
+- Polygon, capsule, chain, mesh, or heightfield shapes.
+- Advanced CCD configuration beyond one verified v1 bullet/body option.
+- Ray casts and shape casts beyond what the reference scene requires.
+- 3D physics, soft bodies, fluids, cloth, destruction, vehicles, and ragdolls.
+- Rollback, lockstep networking, authoritative server simulation, and
+  cross-device bit-perfect guarantees.
+- Automatic collider extraction from images, sprites, or tile art.
+- Physics save serialization beyond a game-owned explicit body projection.
+- Visual physics editing or Godot-style nodes/resources.
+
+## Non-negotiable boundaries
+
+### Backend does not define Gamekit's world
+
+- Public IDs are stable game-owned strings or branded values.
+- Public points, vectors, AABBs, filters, commands, contacts, and results are
+  immutable Gamekit values with explicit units.
+- Backend worlds, bodies, fixtures, shapes, callbacks, and handles remain
+  private.
+- Scene state, snapshots, events, and saves never contain backend objects.
+- Renderers consume committed transform projections, not a mutable world.
+- Backend upgrades may change private mappings without changing game code.
+
+### GameSession owns time
+
+- The fixed scheduler is the only physics clock.
+- The backend receives exactly one explicit `deltaSeconds` step per committed
+  fixed-step attempt.
+- The adapter owns no requestAnimationFrame, timer, accumulator, or auto-run
+  loop.
+- Pause issues no step and resume adds no suspended wall-time debt.
+- Presentation interpolates previous/current committed transforms through the
+  existing GameView alpha.
+
+### Transaction safety is a release gate
+
+Most rigid-body engines mutate an internal world during `step()`. A wrapper
+cannot publish new backend state and then allow a later scene/snapshot/freeze
+failure to leave that hidden world ahead of committed simulation.
+
+T18.0 must prototype and select one proven strategy:
+
+1. Integrate physics as a dedicated GameSession transaction phase that can
+   commit or restore backend state atomically.
+2. Step from an immutable prior `PhysicsState2D` and rebuild/restore the cached
+   backend whenever the prior state reappears after failure.
+3. Use a verified backend snapshot/restore facility around the authoritative
+   step.
+
+Reject a strategy that relies on “later code must not throw.” If no strategy
+meets correctness and mobile performance budgets, record no-go and ship no
+adapter.
+
+## Backend evaluation
+
+T18.0 must evaluate current candidates from official repositories, package
+metadata, releases, examples, licenses, advisories, and issue trackers. Do not
+select Matter, Planck, p2, Rapier, Box2D, or another backend from memory or
+popularity alone.
+
+### Required evidence
+
+- Active maintenance, permissive licensing, TypeScript support, and credible
+  issue handling.
+- Hermes, iOS, Android, New Architecture, and Expo prebuild/dev-client support.
+- No unsupported DOM globals or unreviewed binary distribution.
+- Clear WASM/native/JS initialization, threading, JSI, CocoaPods, Gradle, ABI,
+  and architecture requirements.
+- Reliable static/dynamic/kinematic bodies, box/circle shapes, sensors,
+  filters, materials, forces, impulses, sleeping, and contact lifecycle.
+- Stable body/shape identity and extractable debug geometry.
+- A transaction restore/rebuild strategy.
+- Predictable teardown across Fast Refresh, backgrounding, replacement, and
+  disposal.
+
+### Focused performance matrix
+
+Measure release-like physical-device builds with identical worlds/commands:
+
+- initialization and startup time;
+- JavaScript bundle and installed native binary delta;
+- fixed-step p50/p95/p99 for 32, 128, and 512 representative bodies;
+- one contact-heavy scene and one mostly sleeping scene;
+- conversion/sorting cost separated from backend step cost;
+- transaction restore/rebuild cost;
+- memory, allocations, teardown, and long-session stability;
+- 60 Hz simulation with 60/120 Hz presentation on available iPhone, iPad, and
+  Android hardware.
+
+The go/no-go decision must use explicit budgets frozen in T18.0.
+
+## V1 public model
+
+### Configuration and bodies
+
+- Gravity uses Gamekit world units per second squared.
+- `worldUnitsPerMeter` makes backend conversion explicit.
+- Body types are `'static' | 'dynamic' | 'kinematic'`.
+- Bodies have stable ID, type, transform, velocity, damping, gravity scale,
+  fixed rotation, and named shapes.
+- V1 shapes are discriminated box/circle values with local offset, density,
+  friction, restitution, sensor flag, and filters.
+- Do not reuse an AABB as a rotated physics box when semantics differ.
+
+Validate all IDs, references, finite values, ranges, duplicates, and capacity
+bounds before backend mutation.
+
+### Commands and step results
+
+Commands are immutable, tick-scoped intent. Freeze deterministic validation and
+ordering for create, destroy, transform, velocity, force, and impulse commands.
+
+One successful step returns:
+
+- tick and fixed `deltaSeconds`;
+- immutable transforms, velocities, and sleep state keyed/sorted by stable ID;
+- ordered contact begin/stay/end records with body/shape IDs, point, normal,
+  and only backend-portable fields;
+- diagnostics separate from authoritative result data.
+
+Sort backend callbacks into documented stable order before publication. Do not
+expose backend iteration order as a guarantee.
+
+### Events, rendering, and persistence
+
+- Publish Task 13 contact events only after the physics transaction commits.
+- Render previous/current committed transforms with existing interpolation.
+- Camera/culling changes drawing only and never stops off-screen simulation.
+- Debug projections are renderer-neutral; Skia appears only in the reference
+  renderer.
+- Task 17 saves a game-owned body projection and recreates a fresh validated
+  world. It never serializes backend memory, caches, pointers, or callbacks.
+
+## Determinism statement
+
+V1 promises stable command ordering, fixed `deltaSeconds`, stable ID sorting,
+and repeatable traces within the validated backend/runtime/device constraints.
+It does not promise bit-perfect cross-device equality. Floating-point math,
+sleeping, backend algorithms, WASM/native builds, and CPUs can diverge.
+
+Do not market the adapter for rollback or lockstep networking without a
+separate proven backend and contract.
+
+## Forward-compatibility constraints
+
+V1 must permit later growth without creating a universal abstraction now.
+
+- Keep public Gamekit values separate from the selected private backend.
+- Keep commands/result extraction separate from scheduling and rendering.
+- Keep shapes discriminated for future additions.
+- Keep contact IDs/order stable enough for future queries and trace tooling.
+- Keep save projections backend-neutral and game-owned.
+- Do not expose backend selection, joint placeholders, polygon `any` fields,
+  rollback toggles, or raw-handle escape hatches.
+
+## V1 implementation tasks
+
+### T18.0 — Research, spike, and make the go/no-go decision
+
+- [ ] Define one contact-heavy test world and one gameplay scene that truly
+      requires rigid-body solving.
+- [ ] Evaluate current maintained backends against the required evidence.
+- [ ] Build Expo-prebuild physical-device spikes for finalists.
+- [ ] Prototype and failure-test the viable transaction strategies.
+- [ ] Freeze v1 budgets for startup, bundle/native size, step cost, restore,
+      memory, and teardown.
+- [ ] Write compile fixtures for the proposed v1 API and record the selected
+      backend/version/peer range or a no-go result.
+
+#### T18.0 acceptance
+
+- [ ] At least one backend passes licensing, maintenance, Expo/Hermes,
+      transaction, performance, teardown, and device requirements, or the task
+      records no-go and stops without a production dependency.
+
+### T18.1 — Implement immutable values and validation
+
+- [ ] Add focused configuration, body, shape, material, command, contact,
+      result, and error modules.
+- [ ] Reuse Gamekit geometry/filter values only where semantics match exactly.
+- [ ] Validate values, IDs, references, duplicates, ranges, and command
+      conflicts with exact paths.
+- [ ] Keep public/root imports free of backend/native code.
+- [ ] Prove caller and backend mutation cannot change published values.
+
+### T18.2 — Implement the selected private adapter
+
+- [ ] Map v1 Gamekit values to private backend resources.
+- [ ] Maintain stable ID-to-handle ownership without exposing handles.
+- [ ] Apply commands in frozen order and step exactly once.
+- [ ] Extract immutable transforms, velocities, sleep state, and contacts.
+- [ ] Normalize/sort contacts and preserve backend error causes.
+- [ ] Implement idempotent disposal and stale-generation rejection.
+
+### T18.3 — Integrate transaction and session lifecycle
+
+- [ ] Integrate the selected transaction strategy at the fixed-step boundary.
+- [ ] Discard partial results/events on every command, backend, scene, snapshot,
+      or freeze failure.
+- [ ] Restore/rebuild prior backend state before the next accepted step.
+- [ ] Handle pause, transition, restart, catch-up, replacement, and disposal.
+- [ ] Preserve zero physics work for games that do not create a physics world.
+
+### T18.4 — Add contacts, events, and presentation
+
+- [ ] Publish ordered begin/stay/end contacts after successful commit.
+- [ ] Map committed contact facts to typed Task 13 events.
+- [ ] Publish previous/current transforms for GameView interpolation.
+- [ ] Add renderer-neutral body, shape, contact, and bounds debug projections.
+- [ ] Prove camera/culling and render failures cannot affect physics.
+
+### T18.5 — Build the reference scene
+
+- [ ] Build one Physics Lab/reference scene using only public APIs.
+- [ ] Demonstrate dynamic bodies, materials, sensors, sleep, impulses, pause,
+      restart, failure recovery, camera, and debug overlays.
+- [ ] Display step, conversion, contact, restore, and resource counts at control
+      frequency.
+- [ ] Verify close/reopen creates a fresh generation.
+- [ ] Explain why Task 11 alone is not sufficient for this scene.
+
+### T18.6 — Package, document, and verify v1
+
+- [ ] Export the adapter only from `rn-gamekit/physics2d`.
+- [ ] Configure the optional peer, clear missing-peer error, prebuild setup, and
+      compatibility statement.
+- [ ] Verify root/non-physics imports load no backend code.
+- [ ] Add Optional rigid-body Physics2D documentation and a Collision2D versus
+      Physics2D decision guide.
+- [ ] Document bodies, commands, contacts, lifecycle, rendering, persistence,
+      determinism limits, and backend/version constraints.
+- [ ] Run focused validation, adapter, transaction-failure, lifecycle,
+      interpolation, and teardown tests.
+- [ ] Record physical-device and release-like performance evidence or leave the
+      adapter at no-go.
+
+## V1 definition of done
+
+- [ ] One current backend passes the go/no-go gate, or a documented no-go ends
+      the task without a production dependency.
+- [ ] Physics is available only through `rn-gamekit/physics2d` in the single
+      package and the backend is an optional peer.
+- [ ] Task 11 remains the default no-backend collision path.
+- [ ] Public Gamekit values and stable IDs hide all backend objects.
+- [ ] GameSession owns the only physics step clock.
+- [ ] Failed ticks cannot leave the backend ahead of committed state.
+- [ ] Commands, bodies, and contacts have stable ordering and tested lifecycle
+      semantics.
+- [ ] Rendering, camera, culling, pause, replacement, and saves respect the
+      authority boundary.
+- [ ] The reference scene uses public APIs and proves a genuine solver need.
+- [ ] Compatibility, performance, and device evidence is published honestly.
+
+## Future expansion backlog
+
+These roadmap items remain preserved and non-blocking.
+
+| ID | Future capability | Implementation trigger |
+| --- | --- | --- |
+| PHYSICS-F1 | Joints and constraints | A reference game needs a specific joint family with portable semantics |
+| PHYSICS-F2 | Polygon, capsule, chain, and heightfield shapes | The selected backend and Gamekit geometry contract can represent them safely |
+| PHYSICS-F3 | Ray casts, shape casts, and richer queries | Real gameplay needs queries beyond Task 11 and v1 contacts |
+| PHYSICS-F4 | Advanced CCD and material/contact controls | Fast-body or contact customization requirements exceed v1 |
+| PHYSICS-F5 | Multiple backend adapters | A second backend has a compelling platform/capability advantage |
+| PHYSICS-F6 | Rollback, lockstep, and server simulation | A deterministic networking milestone selects a suitable backend |
+| PHYSICS-F7 | 3D physics | The 3D world, renderer, camera, and asset contracts exist |
+| PHYSICS-F8 | Soft bodies, cloth, fluids, vehicles, and destruction | Separate specialized system plans are approved |
+| PHYSICS-F9 | Collider generation from authored assets | Asset metadata, editing, and authority contracts are designed |
+| PHYSICS-F10 | Visual physics tooling | Public physics contracts have stabilized across real games |
+| PHYSICS-F11 | Backend-specific advanced escape surface | A safe capability-specific API is proven without leaking raw handles |
+
+## Implementation order
+
+Implement Task 18 in this order:
+
+1. T18.0 research, device spikes, transaction prototypes, and go/no-go.
+2. T18.1 immutable public values.
+3. T18.2 selected private adapter.
+4. T18.3 transaction/session integration.
+5. T18.4 contacts, events, and presentation.
+6. T18.5 reference scene.
+7. T18.6 packaging, docs, and focused verification.
+
+Do not install a backend before T18.0 proves maintenance, Expo/Hermes support,
+transaction recovery, and target-device viability.
