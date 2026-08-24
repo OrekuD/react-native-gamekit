@@ -17,7 +17,7 @@ import { GameView } from 'rn-gamekit/react';
 </GameView>
 ```
 
-Props: `game` (required), `renderer` (required), `assets` (loaded assets), `presentationKey` (forces a fresh renderer mount), `instrumentation`, `style`, and `children`. The renderer receives `frame`, `alpha`, `viewport`, and `assets` as shared values or stable props; see [How Gamekit uses React](./how-gamekit-uses-react).
+Props: `game` (required), `renderer` (required), `assets` (loaded assets), `camera2D` (an optional presented camera from `defineGameCamera2D`), `presentationKey` (forces a fresh renderer mount), `instrumentation`, `style`, and `children`. The renderer receives `frame`, `alpha`, `viewport`, `assets`, and (when a camera is declared) `camera` as shared values or stable props; see [How Gamekit uses React](./how-gamekit-uses-react).
 
 ## GamePointerInput
 
@@ -39,6 +39,22 @@ Props: `game`, `action` (a declared pointer action name), `instrumentation`. One
 | `GameWorld2D` | A coordinate wrapper that applies the viewport transform to its children. |
 
 The rule of thumb: `Sprite` for a modest number of individually authored sprites, `SpriteBatch` for shared-texture density. [Sprites](../engine-systems/sprites) and [Sprite batching](../engine-systems/sprite-batching) have the details; [Draw hundreds of sprites](../guides/draw-hundreds-of-sprites) is the hands-on version.
+
+## Camera and layer components
+
+| Component | Purpose |
+| --- | --- |
+| `GameLayer2D` | An ordered parallax layer inside `GameWorld2D`. JSX order is draw order; each factor scales only the camera center contribution. |
+
+The camera itself is not a component: you declare it with [`defineGameCamera2D`](../engine-systems/camera2d) and pass it to `GameView` through the `camera2D` prop. See [Render layers](../guides/render-layers) for parallax in practice.
+
+## Particle components
+
+| Component | Purpose |
+| --- | --- |
+| `ParticleView` | A presentation-only Skia surface that draws a headless particle system. |
+
+Pair it with `useParticlePresentation` to bind a `createParticleSystem` simulation to UI-owned buffers; see [Particles](../engine-systems/particles).
 
 ## Which components mount where
 

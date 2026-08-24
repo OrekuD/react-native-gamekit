@@ -1,9 +1,9 @@
 ---
 title: What is react native gamekit
-description: A headless-first 2D game toolkit for React Native and Expo.
+description: A headless 2D game toolkit for React Native and Expo.
 ---
 
-react native gamekit is a headless-first 2D game toolkit for React Native and Expo. You define a game as data, a session runs it deterministically at a fixed step, and React presents the result through Skia. The simulation never touches React state, which keeps it fast, testable, and the same on every device.
+react native gamekit is a headless 2D game toolkit for React Native and Expo. You define a game as data, a session runs it deterministically at a fixed step, and Skia presents the result.
 
 ## A game is a definition
 
@@ -67,8 +67,12 @@ function GameScreen() {
 - Three viewport modes with shared surface-to-world math
 - Sprites, sprite sheets, animation clips, and Atlas-backed batching
 - Typed local asset manifests with reference-counted loading
+- A `Camera2D` system with follow, shake, bounds, culling, and parallax layers
+- 2D collision detection with shapes, sweeps, manifolds, and a spatial hash
+- Headless particle effects with presentation-only Skia rendering
+- Audio playback and haptic patterns through opt-in subpath entries
 - A `testing` entry with a manual frame driver for deterministic tests
 
 ## What it isn't yet
 
-There's no physics, audio, or particle system, and no ECS layer. Collision is scene logic you write yourself, and the camera ([Camera2D](../engine-systems/camera2d)) is opt-in. The rest is planned; see the [Roadmap](./roadmap) for what's coming and what order it lands in.
+There's no physics simulation or ECS layer, and tilemaps and 3D are future work. Input beyond buttons and pointers (keyboard, gamepad, virtual sticks) is not covered yet; see the [Roadmap](./roadmap) for what's coming and what order it lands in.

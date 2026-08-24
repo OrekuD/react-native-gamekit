@@ -7,8 +7,7 @@ export const metadata: Metadata = {
     default: 'React Native Gamekit',
     template: '%s — React Native Gamekit',
   },
-  description:
-    'A headless-first 2D game toolkit for React Native and Expo, built for mobile and tablet.',
+  description: 'A headless 2D game toolkit for React Native and Expo.',
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {

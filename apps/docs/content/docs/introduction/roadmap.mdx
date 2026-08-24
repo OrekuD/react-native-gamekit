@@ -1,13 +1,17 @@
 ---
 title: Roadmap
-description: "What is planned for React Native Gamekit, and in what order. No dates, no promises: the reference games decide what ships."
+description: "What is planned for React Native Gamekit, and in what order. No dates, no promises: the reference games decide what gets built."
 ---
 
-This is the direction of travel, not a schedule. Every system below lands only when a reference game needs it and the headless-first boundary survives the addition. The [Changelog](../changelog) is the source of truth for what actually shipped.
+This is the direction of travel, not a schedule. Every system below lands only when a reference game needs it and the headless-first boundary survives the addition. The [Changelog](../changelog) is the source of truth for what actually landed.
 
-## Shipped recently
+## Recent additions
 
 - **Camera2D** (see [Engine Systems](../engine-systems/camera2d)): one authoritative presented camera shared by rendering and pointer input, with follow, world bounds, cuts, deterministic shake, parallax layers, and visibility culling.
+- **Collision2D** (see [Collision2D](../engine-systems/collision2d)): geometry primitives, contact manifolds, swept queries, segment crossings, category/mask filters, a deterministic spatial hash broad phase, and headless debug projection.
+- **Game events** (see [Events](../engine-systems/events)): declared event names, typed envelopes with payload limits, deterministic seeding, and update-scoped emitters.
+- **Particles** (see [Particles](../engine-systems/particles)): headless effect definitions and simulation with presentation-only Skia rendering and camera-aware culling.
+- **Audio and haptics** (see [Audio](../engine-systems/audio) and [Haptics](../engine-systems/haptics)): opt-in subpath entries with lifecycle-aware playback and bounded haptic presets.
 
 ## Next up
 
@@ -16,8 +20,6 @@ This is the direction of travel, not a schedule. Every system below lands only w
 
 ## Further out
 
-- **Audio.** A headless audio event queue that survives pauses, played through a native adapter.
-- **Particles.** A retained, headless particle field with a Skia renderer, in the same style as the sprite batch.
 - **Tilemaps.** Authored tile data with an atlas-backed renderer; the broad phase and the batch already assume the shapes this would need.
 - **Storage.** A small, headless save/load API for high scores and settings, kept out of the simulation loop.
 - **Physics.** A real solver on top of Collision2D's geometry. Detection stays yours until this exists.

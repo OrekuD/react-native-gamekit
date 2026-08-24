@@ -40,9 +40,51 @@ Everything in this table is a pure function unless noted. Signatures live in the
 | --- | --- |
 | `Viewport2D` module (`rn-gamekit`) | The headless viewport math: resolve modes, scale, offsets, and coordinate conversion. See [Viewport and coordinate spaces](../core-concepts/viewport). |
 
+## Camera2D
+
+| Function | Purpose |
+| --- | --- |
+| `createCamera2D(options)` | Build a headless camera: center, zoom, rotation, and clamped bounds. |
+| `followCamera2D(camera, target, options)` | Move the camera toward a target with damping. |
+| `clampCameraBounds2D(camera, bounds)` | Keep the camera view inside world bounds. |
+| `interpolateCamera2D(from, to, t)` | Blend two camera states. |
+| `sampleCameraShake2D(camera, timeSeconds)` | Deterministic shake offset for a configured shake. |
+| `getCameraVisibleBounds2D`, `filterCameraVisible2D`, `intersectsCameraView2D` | Visibility culling against the current camera view. |
+| `worldToSurface2D`, `surfaceToWorld2D`, `worldToLogical2D`, `logicalToWorld2D` | Coordinate conversion through the presented camera. See [Camera coordinates](../guides/camera-coordinates). |
+
+See [Camera2D](../engine-systems/camera2d).
+
+## Game events
+
+| Function | Entry | Purpose |
+| --- | --- | --- |
+| `gameEvent<TPayload>()` | `rn-gamekit` | One typed event descriptor; the type parameter is the payload, and there is no runtime schema. |
+| `defineGameEvents(defs)` | `rn-gamekit` | Declare the game's event map; scene updates get an update-scoped emitter. |
+| `seedGameEvent(envelope)` | `rn-gamekit` | Deterministic seed material for an event envelope. |
+
+See [Events](../engine-systems/events).
+
+## Particles
+
+| Function | Entry | Purpose |
+| --- | --- | --- |
+| `defineParticleEffect(options)` | `rn-gamekit/particles` | Validate a declarative particle effect: emission, motion, size, and color over lifetime. |
+| `createParticleSystem(effect, options)` | `rn-gamekit/particles` | Run the headless particle simulation; presentation is a separate Skia concern. |
+
+See [Particles](../engine-systems/particles).
+
+## Audio and haptics
+
+| Function | Entry | Purpose |
+| --- | --- | --- |
+| `createGameAudio(options)` | `rn-gamekit/audio` | Async factory for one shared `AudioContext`: decoded buffers, category gains, SFX voices, one music channel. Requires an optional peer. |
+| `createGameHaptics(options)` | `rn-gamekit/haptics` | Bounded, best-effort haptic presets with mute, capability checks, and rate limits. Requires an optional peer. |
+
+See [Audio](../engine-systems/audio) and [Haptics](../engine-systems/haptics).
+
 ## Errors
 
-`GameAssetError` (assets), `GameSessionDisposedError` and `GameSessionLifecycleError` (sessions) are the structured error classes. See [Asset errors](./asset-errors) for the asset codes.
+`GameAssetError` (assets), `GameSessionDisposedError` and `GameSessionLifecycleError` (sessions), `GameEventError` (events), `GeometryError` (geometry), `GameAudioError` (audio), and `GameHapticsError` (haptics) are the structured error classes. See [Asset errors](./asset-errors) for the asset codes.
 
 ## Collision2D
 

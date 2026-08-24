@@ -2,7 +2,11 @@
 
 > **🚧 Work in Progress** — This project is under active development. APIs, documentation, and examples are subject to change without notice and are not yet recommended for production use.
 
-A React Native game toolkit for mobile and tablet, built on Expo. This repository is a pnpm + Turborepo monorepo containing three projects:
+A headless 2D game toolkit for React Native and Expo. Everything a 2D game
+needs, running headless: scenes, input, physics-grade collision, cameras,
+audio. Bring your own renderer or use Skia.
+
+This repository is a pnpm + Turborepo monorepo containing three projects:
 
 | Path | Package | Purpose |
 | --- | --- | --- |

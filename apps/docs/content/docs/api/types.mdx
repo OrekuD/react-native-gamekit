@@ -58,3 +58,17 @@ See [Viewport and coordinate spaces](../core-concepts/viewport).
 ## Geometry and Collision2D
 
 The geometry primitives (`Point2D`, `Vector2D`, `Aabb2D`, `Circle2D`, `Segment2D`, `GeometryError`) and every collision type (`CollisionHit2D`, `CollisionFilter2D`, collider records, `SpatialHashIndex2D`) are exported from the main entry. See [Collision2D](../engine-systems/collision2d).
+
+## Camera2D
+
+| Type | Purpose |
+| --- | --- |
+| `Camera2D` | Headless camera state: center, zoom, rotation, bounds. |
+| `CameraCut2D` | The presented camera snapshot shared with renderers and pointer input. |
+| `CameraShakeOptions2D`, `FollowCamera2DOptions2D`, `CameraViewShape2D` | Shake configuration, follow tuning, and the visible-view shape. |
+
+See [Camera2D](../engine-systems/camera2d).
+
+## Events, particles, audio, and haptics
+
+`GameEventDefinitions`, `GameEventDescriptor`, `GameEventEnvelope`, `GameEventMap`, and `GameEventEmitter` describe the typed event system; see [Events](../engine-systems/events). Particle effect and system types live beside their factory in `rn-gamekit/particles`; see [Particles](../engine-systems/particles). Audio and haptics types come from their subpath entries; see [Audio](../engine-systems/audio) and [Haptics](../engine-systems/haptics).

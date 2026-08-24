@@ -1,5 +1,4 @@
 import Link from 'next/link';
-import { appName } from '@/lib/shared';
 
 const sections = [
   {
@@ -24,15 +23,15 @@ export default function HomePage() {
     <main className="mx-auto flex min-h-[70vh] w-full max-w-4xl flex-col items-center justify-center gap-10 px-6 py-20">
       <section className="flex flex-col items-center text-center">
         <p className="font-mono text-xs uppercase tracking-widest text-fd-muted-foreground">
-          Mobile &amp; tablet · Expo · React Native
+          Mobile &amp; tablet
         </p>
         <h1 className="mt-4 text-5xl font-semibold tracking-tight sm:text-6xl">
-          Games, defined headlessly.
+          A headless 2D game toolkit for React Native and Expo.
         </h1>
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-fd-muted-foreground">
-          {appName} is a headless-first 2D game toolkit for React Native and
-          Expo. React configures and observes a game session — it never becomes
-          the per-frame store.
+          Everything a 2D game needs, running headless: scenes, input,
+          physics-grade collision, cameras, audio. Bring your own renderer or
+          use Skia.
         </p>
         <div className="mt-8 flex gap-3">
           <Link
@@ -64,16 +63,6 @@ export default function HomePage() {
           </Link>
         ))}
       </section>
-
-      <p className="text-center text-sm text-fd-muted-foreground">
-        Architecture research:{' '}
-        <Link
-          className="text-fd-primary underline underline-offset-4"
-          href="https://github.com/OrekuD/react-native-gamekit/blob/main/REACT_NATIVE_GAMEKIT_RESEARCH.md"
-        >
-          REACT_NATIVE_GAMEKIT_RESEARCH.md
-        </Link>
-      </p>
     </main>
   );
 }

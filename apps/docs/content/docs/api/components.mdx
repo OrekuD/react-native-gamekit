@@ -23,6 +23,27 @@ All components below come from the `rn-gamekit/react` entry. The [Components](..
 
 Related helpers: `resolveSpriteFrameRect`, `spriteFrameNameForClip`, `viewportTransform`, `computeSpriteRsxform`, `spriteAnchorWorld`, `spriteGroupCorrection`.
 
+## Camera and layers
+
+| Export | Purpose |
+| --- | --- |
+| `defineGameCamera2D(select)` | Declares the `GameView`-owned presented camera; the selection runs on commits as a worklet. Passed to `GameView` through its `camera2D` prop. |
+| `GameLayer2D` | An ordered parallax layer inside `GameWorld2D`. JSX order is draw order; parallax scales only the camera center contribution. |
+| `cameraViewportTransform2D` / `layerParallaxTransform2D` | The composed camera + viewport transform element lists used by the groups. |
+
+See [Camera2D](../engine-systems/camera2d) and [Render layers](../guides/render-layers).
+
+## Particles
+
+| Export | Purpose |
+| --- | --- |
+| `ParticleView` | Presentation-only Skia surface that draws a headless particle system. |
+| `useParticlePresentation` | Binds a particle system to UI-owned buffers for `ParticleView`. |
+| `particleSpriteXform`, `assertUniformParticleSpriteRatio` | Sprite transforms for particle rendering. |
+| `cameraVisibleWorldBounds`, `visibleInBounds` | Camera-aware culling helpers (`PARTICLE_CULL_PADDING`). |
+
+See [Particles](../engine-systems/particles).
+
 ## Asset plumbing
 
 | Export | Purpose |
