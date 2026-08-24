@@ -26,7 +26,10 @@ import { cameraLabCamera } from '../screens/camera-lab/cameraLabCamera';
 import CameraLabContent from '../screens/camera-lab/CameraLabContent';
 import { CameraLabRenderer } from '../screens/camera-lab/CameraLabRenderer';
 import { createCameraLabSession } from '../screens/camera-lab/cameraLabGame';
-import PlatformerLabScreen from '../screens/platformer-lab/PlatformerLabScreen';
+import PlatformerLabContent from '../screens/platformer-lab/PlatformerLabContent';
+import { PlatformerLabRenderer } from '../screens/platformer-lab/PlatformerLabRenderer';
+import { createPlatformerLabSession } from '../screens/platformer-lab/platformerLabGame';
+import { platformerLabCamera } from '../screens/platformer-lab/platformerLabCamera';
 import AudioLabScreen from '../screens/audio-lab/AudioLabScreen';
 import ParticleLabScreen from '../screens/particle-lab/ParticleLabScreen';
 import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRenderer';
@@ -401,10 +404,12 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     instrumented: true,
   },
   'platformer-lab': {
-    renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
-    content: PlatformerLabScreen as unknown as ComponentType<PlaygroundGameContentProps>,
-    createSession: () => createIdleSession() as unknown as GameSession,
-    pointer: true,
+    renderer: PlatformerLabRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: PlatformerLabContent as unknown as ComponentType<PlaygroundGameContentProps>,
+    createSession: () => createPlatformerLabSession() as unknown as GameSession,
+    pointer: false,
+    camera2D: platformerLabCamera as unknown as GameCamera2DDefinition<never>,
+    assetBacked: true,
   },
   'particle-lab': {
     renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,

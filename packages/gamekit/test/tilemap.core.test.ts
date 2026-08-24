@@ -53,11 +53,11 @@ describe('T16.1 definitions and validation', () => {
     assert.throws(() => defineTileSet2D({ tiles: {} }), /tiles: must declare/);
     assert.throws(
       () => defineTileSet2D({ tiles: { bad: { frame: '' } } }),
-      /tiles\.bad\.frame/,
+      /tiles\."bad"\.frame/,
     );
     assert.throws(
       () => defineTileSet2D({ tiles: { bad: { frame: 'f', collision: 'slope' as never } } }),
-      /tiles\.bad\.collision/,
+      /tiles\."bad"\.collision/,
     );
   });
 
@@ -388,7 +388,9 @@ describe('T16.3 collision and movement', () => {
   it('decorative layers never collide even when overlapped', () => {
     const m = makeMap();
     const r = movePlatformerBody2D({
-      body: { x: -31, y: -62, width: 10, height: 10 }, // inside deco coin cell
+      // Fully inside the deco-covered gap cell (3,0); terrain is empty there,
+      // so any reported contact would have to come from the decorative layer.
+      body: { x: 18, y: -62, width: 8, height: 8 },
       velocity: { x: 0, y: 0 }, deltaSeconds: 0.016,
       map: m, collisionLayers: ['terrain'],
     });
@@ -439,7 +441,7 @@ describe('T16.5 narrow Tiled adapter', () => {
           tileset,
           { gidToTileName: {} },
         ),
-      /object layers are not supported/,
+      /"objectgroup" layers are not supported/,
     );
     assert.throws(
       () =>

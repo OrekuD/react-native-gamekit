@@ -13,7 +13,7 @@ Tilemaps ship as the `rn-gamekit/tilemap` subpath.
 import { defineTileMap2D, movePlatformerBody2D } from 'rn-gamekit/tilemap';
 ```
 
-Importing `rn-gamekit` never parses maps, builds chunk indexes, or allocates buffers. Core map definitions and collision queries are native-free; the Skia `TileMapLayer2D` component lives in the same subpath without changing map authority.
+Importing `rn-gamekit` never parses maps, builds chunk indexes, or allocates buffers. Core map definitions and collision queries are native-free. The Skia `TileMapLayer2D` component lives in `rn-gamekit/react` beside the other rendering primitives; importing the data subpath never pulls graphics into headless code.
 
 ## Defining a map
 
@@ -93,8 +93,7 @@ Gravity, jump rules, coyote time, buffering, animation, and input stay game-owne
 ## Rendering
 
 ```tsx
-import { GameWorld2D } from 'rn-gamekit/react';
-import { TileMapLayer2D } from 'rn-gamekit/tilemap';
+import { GameLayer2D, GameWorld2D, TileMapLayer2D } from 'rn-gamekit/react';
 
 <GameWorld2D viewport={viewport}>
   <TileMapLayer2D map={level} layer="background" parallax={{ x: 0.5, y: 0.5 }}

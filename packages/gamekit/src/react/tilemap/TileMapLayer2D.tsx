@@ -1,39 +1,21 @@
-import { useContext, useMemo } from 'react';
-import { Atlas } from '@shopify/react-native-skia';
-import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
-import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import { useContext, useMemo, useCallback } from 'react';
+import { Atlas, useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
+import { useDerivedValue, useSharedValue, runOnJS, type SharedValue } from 'react-native-reanimated';
 import type { SkImage } from '@shopify/react-native-skia';
 
 import { GameWorldContext } from '../sprites/GameWorld2D';
 import type { CameraCut2D } from '../../camera2d/types';
 import type { ResolvedViewport2D } from '../../viewport2d/types';
-import type {
-  TileMap2D,
-  TileSet2D,
-} from '../../tilemap/types';
-
-/**
- * Resolve tile ids to sheet-frame rectangles ONCE at bind time (T16.4).
- * Exported pure so tests can exercise the structured error directly.
- */
-export function resolveTileFrames(
-  tileset: TileSet2D,
-  frames: Readonly<Record<string, { x: number; y: number; width: number; height: number }>>,
-): Map<number, { x: number; y: number; width: number; height: number }> {
-  const cache = new Map<number, { x: number; y: number; width: number; height: number }>();
-  for (let id = 1; id < tileset.names.length + 1; id++) {
-    const name = tileset.nameOfId[id]!;
-    const def = tileset.tiles[name]!;
-    const rect = frames[def.frame];
-    if (rect === undefined) {
-      throw new Error(
-        `[rn-gamekit/tilemap] frame "${def.frame}" for tile "${name}" is missing from the bound sheet`,
-      );
-    }
-    cache.set(id, rect);
-  }
-  return cache;
-}
+import type { TileMap2D } from '../../tilemap/types';
+import {
+  buildFrameTable,
+  buildTileWindowSnapshot,
+  cameraLayerVisibleBounds,
+  fillTileSlots,
+  EMPTY_TILE_WINDOW,
+  type TileFrameTable,
+  type TileWindowSnapshot,
+} from './tilePresentation';
 
 export interface TileMapLayer2DProps {
   /** The normalized immutable map. */
@@ -42,34 +24,9 @@ export interface TileMapLayer2DProps {
   readonly layer: string;
   /**
    * Decoded sheet plus resolved frame rectangles — resolve ONCE at bind
-   * time via the asset store (T16.4).
+   * time via the asset store. Frame dimensions must equal the map cell
+   * dimensions in v1.
    */
-  readonly source: {
-    readonly image: SkImage;
-    readonly frames: Readonly<Record<string, { x: number; y: number; width: number; height: number }>>;
-  };
-  /** Presentation-only parallax factor; 1 = locked to world. */
-  readonly parallax?: { readonly x: number; readonly y: number };
-  /** Extra visible tiles around the camera bounds. Default 1. */
-  readonly overscan?: number;
-}
-
-/**
- * Stable-topology Atlas tile layer (T16.4).
- *
- * One React node per layer. The slot buffer is sized from the passed
- * surface bounds + overscan + cell size — NOT from map dimensions — and is
- * refilled in place as the presented camera moves. Rendering reads the same
- * immutable map data that collision queries use, but culling here can never
- * affect simulation: collision queries run against full layer data.
- */
-/**
- * Resolve tile ids to sheet-frame rectangles ONCE at bind time (T16.4).
- * Exported pure so tests can exercise the structured error directly.
- */
-export interface TileMapLayer2DProps {
-  readonly map: TileMap2D;
-  readonly layer: string;
   readonly source: {
     readonly image: SkImage;
     readonly frames: Readonly<Record<string, { x: number; y: number; width: number; height: number }>>;
@@ -77,10 +34,31 @@ export interface TileMapLayer2DProps {
   /** Surface size: px for screen space, world units for world space. */
   readonly width: number;
   readonly height: number;
+  /** Extra visible cells around the camera bounds. Default 1. */
   readonly overscan?: number;
-  readonly parallax?: { readonly x: number; readonly y: number };
+  /** Presentation-only parallax factor; 1 = locked to world. */
+  readonly parallax?: { readonly x: number; y: number };
 }
 
+/**
+ * Stable-topology Atlas tile layer (T16.4, reworked per T16-F3/F4).
+ *
+ * One React node per layer. The slot buffer is sized from the passed
+ * surface bounds + overscan + cell size — NOT from map dimensions. The
+ * worklet never touches the map value, `layer.data`, or a JS `Map`:
+ *
+ * - Frame rectangles are pre-resolved into a flat numeric table at bind
+ *   time (validated: missing frames and cell/frame size mismatches throw
+ *   structured bind errors).
+ * - A bounded window snapshot (ids sized by viewport capacity) is built on
+ *   JS and transferred via a shared value ONLY when the visible cell span
+ *   outgrows the current window; camera interpolation inside the window is
+ *   allocation-free scalar math.
+ * - Visible bounds derive from the PRESENTED camera (center/zoom/rotation)
+ *   with the GameLayer2D parallax model applied once, afterwards.
+ * - Culling here can never affect simulation: collision queries read full
+ *   layer data through the private chunk index regardless of visibility.
+ */
 export function TileMapLayer2D({
   map, layer, source, width, height, overscan = 1, parallax,
 }: TileMapLayer2DProps) {
@@ -97,17 +75,18 @@ export function TileMapLayer2D({
     throw new Error(`[rn-gamekit/tilemap] layer "${layer}" does not exist on this map`);
   }
 
-  // Resolve every referenced frame rect ONCE at bind time.
-  const frameOf = useMemo(
-    () => resolveTileFrames(map.tileset, source.frames),
-    [map, source],
-  );
-
   const cw = map.cellSize.width;
   const ch = map.cellSize.height;
-  const pad = overscan * Math.max(cw, ch);
-  const slotsX = Math.ceil((width + pad * 2) / cw) + 1;
-  const slotsY = Math.ceil((height + pad * 2) / ch) + 1;
+
+  // Resolve frames ONCE at bind time (structured errors for missing
+  // frames and frame/cell size mismatches — T16-F3).
+  const frameTable: TileFrameTable = useMemo(
+    () => buildFrameTable(map.tileset, source.frames, cw, ch),
+    [map, source, cw, ch],
+  );
+
+  const slotsX = Math.ceil((width + overscan * cw * 2) / cw) + 1;
+  const slotsY = Math.ceil((height + overscan * ch * 2) / ch) + 1;
   const capacity = slotsX * slotsY;
 
   const rects = useRectBuffer(capacity, (rect) => {
@@ -119,67 +98,55 @@ export function TileMapLayer2D({
     xform.set(1, 0, 0, 0);
   });
 
+  // Bounded transferred window + one-shot request guard (T16-F4).
+  const windowSV = useSharedValue<TileWindowSnapshot>(EMPTY_TILE_WINDOW);
+  const pendingSV = useSharedValue(false);
+
+  // JS handler: builds the next bounded snapshot for the requested range.
+  // Only runs when the visible span outgrows the current window.
+  const requestWindow = useCallback((x0: number, y0: number, x1: number, y1: number) => {
+    // Pad by the overscan so small camera motions don't re-request.
+    windowSV.value = buildTileWindowSnapshot(
+      map, layerData.id,
+      x0 - overscan, y0 - overscan, x1 + overscan, y1 + overscan,
+      frameTable,
+    );
+    pendingSV.value = false;
+  }, [map, layerData.id, overscan, frameTable]);
+
   const px = parallax?.x ?? 1;
   const py = parallax?.y ?? 1;
+  const originX = map.origin.x;
+  const originY = map.origin.y;
+  const padWorld = overscan * Math.max(cw, ch);
 
   useDerivedValue(() => {
     'worklet';
-    // Camera-visible world bounds (with parallax applied presentation-only).
-    const view = viewportSV?.value?.visibleLogicalBounds;
-    if (view === undefined) return 0;
-    let minX = view.x;
-    let minY = view.y;
-    if (px !== 1 || py !== 1) {
-      // Parallax correction matches GameLayer2D: effective center C' = L + (C-L)*p.
-      const logicalCx = view.x + view.width / 2;
-      const logicalCy = view.y + view.height / 2;
-      const camCut = camera?.value;
-      if (camCut !== undefined) {
-        minX += (camCut.camera.center.x - logicalCx) * (1 - px);
-        minY += (camCut.camera.center.y - logicalCy) * (1 - py);
+    const bounds = cameraLayerVisibleBounds(camera as never, viewportSV as never, px, py, padWorld);
+    if (bounds === undefined) return 0;
+    const cx0 = Math.max(0, Math.floor((bounds.minX - originX) / cw));
+    const cy0 = Math.max(0, Math.floor((bounds.minY - originY) / ch));
+    const cx1 = Math.min(layerData.width - 1, Math.floor((bounds.maxX - originX) / cw));
+    const cy1 = Math.min(layerData.height - 1, Math.floor((bounds.maxY - originY) / ch));
+    if (cx0 > cx1 || cy0 > cy1) {
+      // Off-map view: hide everything.
+      for (let i = 0; i < capacity; i++) {
+        rects.value[i]?.setXYWH(0, 0, 0, 0);
       }
+      return 0;
     }
-    const bounds = {
-      x: minX - pad,
-      y: minY - pad,
-      width: view.width + pad * 2,
-      height: view.height + pad * 2,
-    };
-
-    const originX = map.origin.x;
-    const originY = map.origin.y;
-    const c0x = Math.max(0, Math.floor((bounds.x - originX) / cw));
-    const c0y = Math.max(0, Math.floor((bounds.y - originY) / ch));
-    const c1x = Math.min(layerData.width - 1, Math.floor((bounds.x + bounds.width - originX) / cw));
-    const c1y = Math.min(layerData.height - 1, Math.floor((bounds.y + bounds.height - originY) / ch));
-
-    let slot = 0;
-    for (let cy = c0y; cy <= c1y; cy++) {
-      for (let cx = c0x; cx <= c1x; cx++) {
-        const id = layerData.data[cy * layerData.width + cx]!;
-        if (id === 0) continue;
-        const rectSlot = rects.value[slot];
-        const xformSlot = xforms.value[slot];
-        if (rectSlot === undefined || xformSlot === undefined) continue;
-        const frame = frameOf.get(id);
-        if (frame === undefined) continue;
-        rectSlot.setXYWH(frame.x, frame.y, frame.width, frame.height);
-        const wx = originX + cx * cw;
-        const wy = originY + cy * ch;
-        // Center anchor: pivot at half of the DRAWN extent (cw*ch).
-        xformSlot.set(1, 0, wx - cw / 2, wy - ch / 2);
-        slot++;
-        if (slot >= capacity) break;
-      }
-      if (slot >= capacity) break;
+    // Fill from the transferred window when it covers the visible span.
+    const snap = windowSV.value;
+    const filled = fillTileSlots(snap, bounds, rects.value, xforms.value, {
+      cw, ch, originX, originY, layerWidth: layerData.width, layerHeight: layerData.height, capacity,
+    });
+    if (filled < 0 && !pendingSV.value) {
+      pendingSV.value = true;
+      runOnJS(requestWindow)(cx0, cy0, cx1, cy1);
+      return -1;
     }
-    // Hide remaining stale slots atomically.
-    for (let i = slot; i < capacity; i++) {
-      rects.value[i]?.setXYWH(0, 0, 0, 0);
-    }
-    return slot;
+    return filled;
   });
 
   return <Atlas image={source.image} sprites={rects} transforms={xforms} />;
 }
-

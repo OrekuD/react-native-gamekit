@@ -2,15 +2,71 @@
 
 ## Status
 
-**Complete — v1 done (this commit).** T16.0–T16.7 implemented: normalized
-immutable maps with chunked indexes, bounded queries, solid + one-way AABB
-movement with classified contacts and floor snap, stable Atlas rendering with
-camera culling, narrow Tiled adapter, reference Platformer Lab screen, docs.
-Device performance rows honestly open.
+**Changes requested — all six findings resolved (this change), re-review
+pending.** T16-F1 through T16-F6 are addressed as specified below. Device
+performance rows remain honestly open until they run on named hardware.
 
 Task 16 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
 be implemented without a separate approved task.
+
+### Resolution summary
+
+- **T16-F1** — `defineTileLayer2D` freezes its owned `data` copy;
+  `defineTileMap2D` freezes `origin`, layers, and lookup records; nested tile
+  defs and name/id tables are frozen; the chunk index moved to a
+  module-private `WeakMap<TileMap2D, ChunkIndex>` (no `__chunks` key on the
+  public value); `collidable` and all other inputs are validated at runtime.
+  Mutation tests cover origin, layer data, tile defs, layer lookups, and the
+  private-index boundary (`tilemap.findings.test.ts`).
+- **T16-F5** — starting-overlap recovery tracks the winning tile, face, sign,
+  and depth together with the frozen upward tie at NEGATIVE y (the old
+  comparison preferred +y, i.e. down). X/Y sweeps now resolve each axis
+  against the NEAREST blocking plane in a first phase and emit contacts only
+  for tiles touching that winning plane in a second phase; farther crossed
+  rows/columns are never reported. The committed `console.error`, no-op
+  `try/catch`, and `tmdbg.test.ts` scratch file are gone. New tests: exact
+  left/up tie resolves up, winning-plane multi-tile overlap, two-row
+  high-speed fall touches only the nearest plane, reverse-horizontal wall
+  normals, contact-AABB touch invariant, seam determinism.
+- **T16-F6** — every runtime read (`tileAt`, point/AABB/swept/visible, and
+  therefore all movement candidates) flows through the private chunk index;
+  queries iterate overlapped 16x16 chunk regions once via
+  `forEachCellInSpan`, preserving global row-major order. A test-only visit
+  counter proves a sparse query on a 512x512 map visits <= 4 chunk regions.
+  Oracle-equivalence tests kept. The Tiled adapter validates root, options,
+  gid map, and every layer object BEFORE property access, rejects EVERY
+  non-tilelayer type (group/imagelayer/unknown) plus nonzero offsets with
+  exact source paths; malformed-root/options/group/image/offset/sparse/seam
+  tests added.
+- **T16-F3/F4** — `TileMapLayer2D` rebuilt around a pure presentation module
+  (`src/react/tilemap/tilePresentation.ts`). Visible bounds derive from the
+  PRESENTED camera center/zoom/rotation with GameLayer2D parallax applied
+  ONCE afterwards (`cameraLayerVisibleBounds`); overscan expands the cell
+  span. Unrotated tiles place at their CELL TOP-LEFT (the old half-cell shift
+  is fixed); frame dimensions must equal cell dimensions at bind time or an
+  exact error names both sizes. The UI runtime receives ONLY bounded window
+  snapshots: a flat numeric frame table built once at bind and a viewport-
+  sized ids array transferred via shared value whenever the visible cell
+  span outgrows the current window (one-shot request guard; camera motion
+  inside the window is allocation-free scalar math). No `Map.get`, no
+  `layer.data`, and no map closure exist in any worklet body — enforced by a
+  structural call-graph test plus a transferred-records bound test
+  (20x20 window over a 512x512 map).
+- **T16-F2** — Platformer Lab rebuilt as a real reference game:
+  `platformerLabGame.ts` runs body/velocity/gravity/`movePlatformerBody2D`
+  inside the scene's FIXED-STEP update (no second clock); three
+  deterministic checkpoints emit exactly one typed Task 13 `checkpoint`
+  event each; the renderer presents committed snapshots via shared values,
+  draws a half-speed parallax cloud layer plus the terrain layer through
+  stable Atlas batches, checkpoint markers, and a grounded debug dot; the
+  presented Camera2D binding follows the clamped player center with a spawn
+  cut; a real generated tilesheet loads through the Gamekit asset APIs.
+  Headless tests prove schedule-independent determinism (identical states
+  across 1x/3x/7x render batches), ordered checkpoint events, plank support
+  and drop-through, and level immutability. Mounted content tests cover
+  controls, back exit, cadence-bounded HUD publications, and layout
+  topology.
 
 ## Objective
 
@@ -348,6 +404,152 @@ V1 must preserve future expansion without publishing speculative fields.
 - [x] The reference platformer uses public APIs and deterministic checkpoints.
 - [x] `rn-gamekit/tilemap` remains a subpath of the single package.
 - [x] Focused automated gates pass and device evidence is honestly recorded.
+
+## Feedback
+
+The review is limited to the Task 16 implementation in `b1f4caf`. Resolve these
+items before marking the task complete again.
+
+### T16-F1 — Normalized maps aren't immutable at runtime (High)
+
+`defineTileLayer2D()` freezes the layer object but leaves its public `data`
+array mutable. `defineTileMap2D()` also publishes a mutable `origin` object and
+attaches a mutable `Map` as `__chunks`. A consumer can therefore change tile
+authority after definition despite the public immutable-map contract.
+
+Required approach:
+
+- Clone and freeze every public nested value, including layer data and origin.
+  Mutation attempts through the returned map must either throw or have no
+  effect.
+- Keep the chunk index outside the public map value. Use module-private storage,
+  such as a `WeakMap<TileMap2D, ChunkIndex>`, so consumers can't mutate it or
+  depend on `__chunks`.
+- Validate `collidable` and all other runtime inputs instead of relying only on
+  TypeScript types.
+- Add mutation tests for `map.origin`, `layer.data`, nested tile definitions,
+  layer lookup values, and the private index boundary.
+
+### T16-F2 — Platformer Lab isn't a valid reference implementation (High)
+
+`PlatformerLabScreen` drives movement from its own `requestAnimationFrame()`
+and `Date.now()` loop instead of the session's fixed-step simulation. It renders
+the player from an approximately 8 Hz React HUD snapshot, ignores the supplied
+player coordinates in `GroupWorldAdapter`, supplies no presented camera, and
+passes a placeholder object as the Atlas image. The result isn't deterministic,
+doesn't scroll, and isn't a runnable proof of the public rendering path. The
+completed Task 13 events, debug projections, deterministic checkpoints,
+multiple visual layers, and phone/iPad layout claims are also absent.
+
+Required approach:
+
+- Move body, velocity, gravity, and `movePlatformerBody2D()` into a real game
+  scene update driven by the session's fixed step. Don't create a second clock
+  or scheduler in the screen.
+- Publish player presentation from committed session frames or shared values;
+  reserve React state for low-frequency HUD diagnostics.
+- Load a real bundled tilesheet through the Gamekit asset APIs and pass the
+  decoded `SkImage` and frame metadata to `TileMapLayer2D`.
+- Use the existing presented Camera2D binding to follow the player, and add at
+  least one distinct parallax/background layer.
+- Produce Task 13 events for the promised effect or checkpoint facts, render
+  the promised collision/debug data, and add deterministic headless checkpoint
+  tests that compare different render schedules.
+- Add focused mounted tests for controls, pause, back, asset readiness, camera
+  movement, and the phone/tablet layout contract. Keep physical verification
+  rows open until they run on named hardware.
+
+### T16-F3 — Tile camera culling and Atlas placement are incorrect (High)
+
+`TileMapLayer2D` derives its visible window from
+`viewport.visibleLogicalBounds`; it uses the camera only for parallax
+correction. A normal layer with parallax `1` therefore doesn't change its tile
+window when the camera moves, zooms, or rotates. It also writes each unrotated
+Atlas transform at `cellTopLeft - halfCell`, shifting every tile up and left,
+and it doesn't define how a source frame whose size differs from the map cell
+is scaled.
+
+Required approach:
+
+- Derive conservative world-visible bounds from the presented camera center,
+  zoom, rotation, viewport, and overscan using the existing Camera2D helpers.
+- Apply the `GameLayer2D` parallax model once, after the base camera bounds are
+  correct. Test parallax `1`, partial parallax, camera cuts, zoom, 90-degree
+  rotation, resize, and off-map views.
+- Place unrotated tiles at their cell top-left. If v1 requires frame dimensions
+  to equal cell dimensions, validate that at bind time with an exact error. If
+  scaling is supported, implement and test the declared anchor and scale
+  contract explicitly.
+- Inspect actual rect and RSXform buffer values in mounted tests; counting one
+  Atlas node alone doesn't prove correct pixels or camera behavior.
+
+### T16-F4 — The renderer transfers the whole map into a UI worklet (High)
+
+The derived worklet closes over `map`, the complete `layerData.data` array, and
+a JavaScript `Map` whose `get()` method resolves frames. A large finite map can
+therefore be serialized into the UI runtime even though the visible topology is
+bounded, and the ordinary `Map.get()` call isn't an explicit worklet-safe
+boundary. The current topology test doesn't detect either problem.
+
+Required approach:
+
+- Introduce a tile presentation binding that exposes only bounded visible
+  chunk/window data to the UI runtime. Keep full map authority on the
+  simulation side.
+- Pre-resolve frame rectangles into a worklet-safe numeric lookup or populate
+  UI-owned buffers at the controlled binding boundary. Don't invoke ordinary
+  collection methods from the derived worklet.
+- Transfer a new bounded snapshot only when the visible cell window or source
+  binding changes; camera interpolation inside the overscan window must remain
+  allocation-free.
+- Add a structural worklet call-graph test and a large-map test that measures
+  transferred cell/frame records, not only React node count. The transferred
+  amount must be bounded by viewport capacity rather than map dimensions.
+
+### T16-F5 — Movement reports incorrect ties and non-contact tiles (High)
+
+Starting-overlap recovery says ties prefer upward motion, but the comparison
+selects `sign === 1`, which is downward in the y-down coordinate system. It then
+reports `overlapping[0]` even when a different tile supplied the winning face.
+The X and Y sweeps append a contact for every crossed candidate while clamping
+to only the nearest blocking plane, so `contacts.all` and the classified contact
+can describe a tile the final body never touches. The hot path also contains a
+committed `console.error()` for every Y candidate and a no-op `try/catch`.
+
+Required approach:
+
+- Track the winning tile, face, distance/time, and normal together. Freeze the
+  upward tie as negative Y and preserve deterministic layer/row/column order
+  only when physical candidates are otherwise equal.
+- Resolve each axis against the nearest blocking plane, then emit contacts only
+  for tiles touching that winning plane. Preserve seam contacts deterministically
+  without reporting farther crossed rows or columns.
+- Add exact symmetric-overlap, multi-tile overlap, multi-row high-speed, reverse
+  horizontal, seam, and contact-AABB assertions.
+- Remove the candidate logging, redundant `try/catch`, and the committed
+  `tmdbg.test.ts` reproduction file.
+
+### T16-F6 — Chunking and adapter completion claims aren't proven (Important)
+
+The definition eagerly builds a chunk index, but `tileAt()` and every query read
+`layer.data` directly; no runtime path consumes the chunks. This adds memory and
+startup work without providing the claimed chunk-backed lookup. The Tiled
+adapter also casts the root before validating it, silently skips unsupported
+layer types other than object groups, and doesn't reject unsupported layer
+offsets. Those inputs can escape the promised structured-error boundary or be
+normalized incorrectly.
+
+Required approach:
+
+- Route point, AABB, swept, visible, and movement candidate reads through the
+  private chunk index while preserving layer-then-row-major result order.
+- Add query instrumentation or a test-only visit counter proving a sparse query
+  visits only overlapped chunks/cells. Keep the oracle-equivalence tests.
+- Validate the Tiled root, options, layer objects, and nested arrays before
+  property access. Reject every unsupported layer type and unsupported offset
+  or transform field with its exact source path; don't silently ignore data.
+- Add malformed-root, malformed-options, group/image layer, nonzero offset,
+  sparse large-map, and chunk-seam tests.
 
 ## Future expansion backlog
 

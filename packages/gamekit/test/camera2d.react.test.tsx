@@ -58,6 +58,10 @@ mock.module('react-native-reanimated', {
     useSharedValue: (initial: unknown) => ({ value: initial }),
     useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
     useFrameCallback: () => {},
+    runOnJS:
+      (fn: (...args: never[]) => void) =>
+      (...args: never[]): void =>
+        fn(...args),
   },
 });
 mock.module('react-native-worklets', {
