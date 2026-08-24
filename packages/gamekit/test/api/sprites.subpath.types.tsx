@@ -15,7 +15,7 @@ import {
   type SpriteAnimationState,
   type SpriteClipNames,
 } from 'rn-gamekit/sprites';
-import { defineAssets, image, spriteSheet } from 'rn-gamekit/assets';
+import { defineAssets, spriteSheet } from 'rn-gamekit/assets';
 import type { SpriteClip } from 'rn-gamekit/assets';
 
 const handle = 42;

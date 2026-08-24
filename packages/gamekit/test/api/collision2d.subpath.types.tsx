@@ -34,6 +34,8 @@ import {
   type BuildSpatialHash2DOptions,
   type CollisionFilter2D,
   type CollisionHit2D,
+  type LocalCollider2D,
+  type SpatialHashIndex2D,
   type WorldCollider2D,
 } from 'rn-gamekit/collision2d';
 import type { Aabb2D, Circle2D, Point2D, Segment2D } from 'rn-gamekit/geometry';
@@ -59,10 +61,10 @@ void sweepAabbAabb2D({ aabb: a, displacement: { x: 1, y: 0 }, target: b });
 void sweepCircleAabb2D({ circle, displacement: { x: 1, y: 0 }, target: a });
 void canCollide2D(ALL_FILTER2D, NONE_FILTER2D);
 void buildSpatialHash2D({ items: [{ id: 'a', bounds: a }], cellSize: 16 });
-void querySpatialHash2D({} as unknown as import('rn-gamekit/collision2d').SpatialHashIndex2D, a);
+void querySpatialHash2D({} as unknown as SpatialHashIndex2D, a);
 void circleCollider2D({ offset: { x: 0, y: 0 }, radius: 5 });
 void rectangleCollider2D({ offset: { x: 0, y: 0 }, width: 10, height: 10 });
-void placeCollider2D({} as unknown as import('rn-gamekit/collision2d').LocalCollider2D, { x: 0, y: 0 });
+void placeCollider2D({} as unknown as LocalCollider2D, { x: 0, y: 0 });
 void collideWorldColliders2D({} as WorldCollider2D, {} as WorldCollider2D);
 void worldColliderBounds2D({} as WorldCollider2D);
 void worldColliderCircle2D({} as WorldCollider2D);

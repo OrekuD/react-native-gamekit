@@ -17,12 +17,12 @@ import {
   type InferGameEventMap,
 } from 'rn-gamekit/events';
 
-const events = defineGameEvents({
+const _events = defineGameEvents({
   hit: gameEvent<{ x: number }>(),
   chat: gameEvent<string>(),
 });
 
-type Map = InferGameEventMap<typeof events>;
+type Map = InferGameEventMap<typeof _events>;
 const _map: Map = { hit: { x: 1 }, chat: 'hi' };
 void _map;
 
@@ -65,6 +65,8 @@ void limits.MAX_PAYLOAD_DEPTH;
 
 // Negative: internal helper must not leak
 // @ts-expect-error — cloneAndValidatePayload is internal, not public
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { cloneAndValidatePayload } from 'rn-gamekit/events';
 // @ts-expect-error — GameView not in events
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import type { GameView } from 'rn-gamekit/events';

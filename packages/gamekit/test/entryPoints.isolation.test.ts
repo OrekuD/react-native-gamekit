@@ -11,7 +11,6 @@ import { createRequire } from 'node:module';
  */
 
 const nativePatterns = /skia|reanimated|gesture-handler|expo-asset|expo-modules-core/;
-const headlessPatterns = /react-native|skia|reanimated|worklets|expo-asset|audio|haptics|pulsar/;
 
 function freshCacheCheck(modulePath: string, forbidden: RegExp, label: string): void {
   const require = createRequire(import.meta.url);
