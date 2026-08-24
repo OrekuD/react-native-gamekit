@@ -8,7 +8,8 @@ This guide adds a typed `brick-hit` event to Brick Breaker, emits it when a bric
 ## 1. Declare the event map
 
 ```ts
-import { defineGameEvents, gameEvent, type Point2D } from 'rn-gamekit';
+import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
+import type { Point2D } from 'rn-gamekit/geometry';
 
 export const brickBreakerEvents = defineGameEvents({
   'brick-hit': gameEvent<{ brickId: string; point: Point2D }>(),
@@ -60,7 +61,7 @@ The emitter is valid only for that update — retaining it and calling `emit` af
 ## 3. Subscribe after the commit
 
 ```ts
-import { seedGameEvent } from 'rn-gamekit';
+import { seedGameEvent } from 'rn-gamekit/events';
 
 const session = createGameSession(brickBreakerDefinition);
 

@@ -7,21 +7,10 @@
  * game time through the headless clip helpers; the renderer only presents
  * it. Gameplay uses only the public package API.
  */
-import {
-  advanceSpriteAnimation,
-  clampCameraBounds2D,
-  filterCameraVisible2D,
-  followCamera2D,
-  createGameSession,
-  defineAssets,
-  defineGame,
-  defineScene,
-  image,
-  spriteSheet,
-  type GameAssetManifest,
-  type GameSession,
-  type SpriteAnimationState,
-} from 'rn-gamekit';
+import { createGameSession, defineGame, defineScene, type GameSession } from 'rn-gamekit';
+import { defineAssets, image, spriteSheet, type GameAssetManifest } from 'rn-gamekit/assets';
+import { advanceSpriteAnimation, type SpriteAnimationState } from 'rn-gamekit/sprites';
+import { clampCameraBounds2D, filterCameraVisible2D, followCamera2D } from 'rn-gamekit/camera2d';
 
 export const spriteFieldAssets = defineAssets({
   boot: {

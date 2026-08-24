@@ -7,6 +7,7 @@ The changelog lives with the package: [`packages/gamekit/CHANGELOG.md`](https://
 
 ## Unreleased (current main)
 
+- Package entry points: `rn-gamekit/geometry`, `rn-gamekit/collision2d`, `rn-gamekit/camera2d`, `rn-gamekit/events`, `rn-gamekit/assets`, and `rn-gamekit/sprites` are now explicit subpaths of the single `rn-gamekit` package — one `npm install`, one version, one `exports` map. Existing root imports remain valid (same symbols, no duplicate state); the new subpaths are the preferred organization.
 - Camera2D: one authoritative presented camera shared by rendering and pointer input, with follow, world bounds, cuts, deterministic shake, parallax layers, and visibility culling.
 - Typed game events: declared event names, typed envelopes with payload limits, deterministic seeding, and update-scoped emitters.
 - Particles: headless effect simulation with presentation-only Skia rendering and camera-aware culling.

@@ -9,7 +9,7 @@ import { describe, it } from 'node:test';
 (globalThis as { require?: (id: string) => number }).require = () => 42;
 
 import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
-import { canCollide2D, collideCircleAabb2D } from 'rn-gamekit';
+import { canCollide2D, collideCircleAabb2D } from 'rn-gamekit/collision2d';
 
 const { COLLISION_LAB_CONFIG, collisionLabDefinition } = await import('./collisionLabGame.ts');
 type CollisionLabSnapshot = {

@@ -4,7 +4,7 @@
  * spawn cut snaps on the first frame.
  */
 import { defineGameCamera2D } from 'rn-gamekit/react';
-import { createCamera2D } from 'rn-gamekit';
+import { createCamera2D } from 'rn-gamekit/camera2d';
 
 import {
   PLATFORMER_LAB_VIEW,

@@ -10,7 +10,7 @@ You don't need a physics engine to make a Pong, Breakout, or a simple platformer
 For a handful of shapes, one call per pair is enough:
 
 ```ts
-import { collideCircleAabb2D } from 'rn-gamekit';
+import { collideCircleAabb2D } from 'rn-gamekit/collision2d';
 
 // In your scene update, after moving the ball:
 const hit = collideCircleAabb2D(ball, brick);
@@ -32,7 +32,7 @@ The normal tells you which way to push the ball out of the brick, and `Math.abs(
 If an object can cross a thin wall in one tick, discrete overlap checks tunnel. Query the movement instead:
 
 ```ts
-import { sweepCircleAabb2D } from 'rn-gamekit';
+import { sweepCircleAabb2D } from 'rn-gamekit/collision2d';
 
 const hit = sweepCircleAabb2D({
   circle: ball,
@@ -54,7 +54,7 @@ if (hit !== undefined) {
 Keep collision data with the object, not the renderer:
 
 ```ts
-import { circleCollider2D, placeCollider2D, rectangleCollider2D } from 'rn-gamekit';
+import { circleCollider2D, placeCollider2D, rectangleCollider2D } from 'rn-gamekit/collision2d';
 
 const player = {
   position: { x: 120, y: 80 },
@@ -85,15 +85,15 @@ Past a few dozen shapes, check candidates before narrow-phase manifolds:
  */
 import {
   buildSpatialHash2D,
-  collideWorldColliders2D,
   circleCollider2D,
+  collideWorldColliders2D,
   placeCollider2D,
   querySpatialHash2D,
   rectangleCollider2D,
   worldColliderBounds2D,
   type CollisionHit2D,
   type WorldCollider2D,
-} from 'rn-gamekit';
+} from 'rn-gamekit/collision2d';
 
 interface BroadPhaseExampleResult {
   readonly hits: readonly { readonly otherId: string; readonly hit: CollisionHit2D }[];

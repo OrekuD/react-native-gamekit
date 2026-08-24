@@ -6,6 +6,7 @@ All notable changes to React Native GameKit will be documented in this file.
 
 ### Added
 
+- Package entry points normalized: `rn-gamekit/geometry`, `rn-gamekit/collision2d`, `rn-gamekit/camera2d`, `rn-gamekit/events`, `rn-gamekit/assets`, and `rn-gamekit/sprites` are now explicit subpaths of the single `rn-gamekit` package (one version, one tarball, `exports` map). Existing `import { … } from 'rn-gamekit'` compatibility re-exports remain and reference the same symbols (`===` / `instanceof` preserved); the new subpaths are the preferred organization (additive, no breaking change). Headless subpaths import no React/Skia/native peers.
 - `useGameSession(definition)` from `rn-gamekit/react`: React-owned session
   creation and terminal disposal, safe under Strict Mode, with exact
   scene/input type inference from the game definition.

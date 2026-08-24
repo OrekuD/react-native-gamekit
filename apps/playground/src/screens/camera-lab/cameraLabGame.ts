@@ -6,23 +6,20 @@
  * shake, explicit teleport cuts, debug overlay (visible world bounds), and
  * culling. Every value the renderer draws comes from the headless snapshot.
  */
+import { createGameSession, defineGame, defineScene, type GameSession } from 'rn-gamekit';
+import { resolveViewport2D } from 'rn-gamekit';
+import type { Aabb2D } from 'rn-gamekit/geometry';
 import {
   clampCameraBounds2D,
   createCamera2D,
-  createGameSession,
-  defineGame,
-  defineScene,
   filterCameraVisible2D,
   followCamera2D,
   getCameraVisibleBounds2D,
   sampleCameraShake2D,
   surfaceToWorld2D,
   worldToSurface2D,
-  type Aabb2D,
   type Camera2D,
-  type GameSession,
-} from 'rn-gamekit';
-import { resolveViewport2D } from 'rn-gamekit';
+} from 'rn-gamekit/camera2d';
 
 export const CAMERA_LAB_CONFIG = {
   logicalWidth: 320,

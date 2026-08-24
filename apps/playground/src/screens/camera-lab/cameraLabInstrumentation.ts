@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { surfaceToWorld2D, worldToSurface2D } from 'rn-gamekit';
+import { surfaceToWorld2D, worldToSurface2D } from 'rn-gamekit/camera2d';
 import type { GamePointerInstrumentation, GameViewInstrumentation } from 'rn-gamekit/react';
 
 /** The diagnostic publication cadence (T12-F7, T12-TF2): ~8 Hz. */

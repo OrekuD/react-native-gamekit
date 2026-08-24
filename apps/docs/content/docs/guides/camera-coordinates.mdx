@@ -8,7 +8,7 @@ Camera math is one set of pure functions. The runtime, your game code, and your 
 ## The three conversions
 
 ```ts
-import { worldToLogical2D, logicalToWorld2D, worldToSurface2D, surfaceToWorld2D } from 'rn-gamekit';
+import { logicalToWorld2D, surfaceToWorld2D, worldToLogical2D, worldToSurface2D } from 'rn-gamekit/camera2d';
 
 // World -> logical view (through the camera):
 const logical = worldToLogical2D(worldPoint, camera, LOGICAL_VIEW);

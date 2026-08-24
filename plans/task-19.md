@@ -2,12 +2,9 @@
 
 ## Status
 
-**Planned.** This task is additive and may be implemented before Tasks 17 and
-18 so their new subpaths follow the same tested package policy.
+**Complete.** Six headless subpaths (`geometry`, `collision2d`, `camera2d`, `events`, `assets`, `sprites`) are explicit exports of the single `rn-gamekit` package, root imports remain compatible with identity preserved, headless isolation and export-map are tested, docs and playground use preferred imports, and the packed tarball contains all modules/declarations.
 
-Task 19 is complete when the existing headless engine systems have intentional
-subpath exports, current root imports remain compatible, and the published
-tarball proves that every documented entry point resolves independently.
+Implementation commit: `TASK19-COMPLETE` (this commit). No separate packages created, no npm publish.
 
 ## Objective
 
@@ -203,15 +200,15 @@ becoming accidental public API.
 
 ### T19.0 — Freeze the public inventory
 
-- [ ] Record every runtime and type export currently owned by geometry,
+- [x] Record every runtime and type export currently owned by geometry,
       Collision2D, Camera2D, events, assets, and headless sprite animation.
-- [ ] Classify each symbol as public, React/presentation-only, or internal.
-- [ ] Resolve duplicate names and ambiguous ownership before adding barrels.
-- [ ] Add compile-only fixtures showing the intended imports from all six new
+- [x] Classify each symbol as public, React/presentation-only, or internal.
+- [x] Resolve duplicate names and ambiguous ownership before adding barrels.
+- [x] Add compile-only fixtures showing the intended imports from all six new
       subpaths.
-- [ ] Add negative type fixtures proving React/Skia presentation primitives do
+- [x] Add negative type fixtures proving React/Skia presentation primitives do
       not leak through headless subpaths.
-- [ ] Freeze the decision that session, scene, definition, input, and viewport
+- [x] Freeze the decision that session, scene, definition, input, and viewport
       contracts remain root-owned in v1.
 
 Required approach:
@@ -224,12 +221,12 @@ Required approach:
 
 ### T19.1 — Add the six headless entry barrels
 
-- [ ] Add `geometry.ts`, `collision2d.ts`, `camera2d.ts`, `events.ts`,
+- [x] Add `geometry.ts`, `collision2d.ts`, `camera2d.ts`, `events.ts`,
       `assets.ts`, and `sprites.ts` at the source root.
-- [ ] Re-export existing implementations without wrappers or copied logic.
-- [ ] Keep barrels declarative and side-effect-free.
-- [ ] Prevent internal validation and runtime bridge helpers from leaking.
-- [ ] Add source-boundary tests for each barrel.
+- [x] Re-export existing implementations without wrappers or copied logic.
+- [x] Keep barrels declarative and side-effect-free.
+- [x] Prevent internal validation and runtime bridge helpers from leaking.
+- [x] Add source-boundary tests for each barrel.
 
 Required approach:
 
@@ -240,12 +237,12 @@ to remove an import cycle and is covered by a focused test.
 
 ### T19.2 — Update the package export map and build outputs
 
-- [ ] Add explicit `react-native`, `source`, `types`, and `default` conditions
+- [x] Add explicit `react-native`, `source`, `types`, and `default` conditions
       for all six subpaths.
-- [ ] Confirm Builder Bob emits the matching ESM modules and declarations.
-- [ ] Verify type-only and runtime imports resolve from the built package.
-- [ ] Verify no export points directly at an unshipped or private path.
-- [ ] Keep `./package.json` and every existing subpath unchanged.
+- [x] Confirm Builder Bob emits the matching ESM modules and declarations.
+- [x] Verify type-only and runtime imports resolve from the built package.
+- [x] Verify no export points directly at an unshipped or private path.
+- [x] Keep `./package.json` and every existing subpath unchanged.
 
 Required approach:
 
@@ -255,12 +252,12 @@ fixture passing through workspace aliases is not sufficient evidence.
 
 ### T19.3 — Preserve root compatibility and module identity
 
-- [ ] Keep all currently published root exports available.
-- [ ] Prove representative root and subpath runtime exports are strict-equal.
-- [ ] Prove public error constructors preserve `instanceof` across import
+- [x] Keep all currently published root exports available.
+- [x] Prove representative root and subpath runtime exports are strict-equal.
+- [x] Prove public error constructors preserve `instanceof` across import
       paths.
-- [ ] Prove no duplicate mutable module state is created.
-- [ ] Add an export-name snapshot or equivalent inventory test so accidental
+- [x] Prove no duplicate mutable module state is created.
+- [x] Add an export-name snapshot or equivalent inventory test so accidental
       additions and removals are reviewed intentionally.
 
 Required approach:
@@ -272,15 +269,15 @@ explain the API change instead of blindly updating it.
 
 ### T19.4 — Enforce headless and optional-system isolation
 
-- [ ] Prove each new headless subpath imports without React, React Native,
+- [x] Prove each new headless subpath imports without React, React Native,
       Skia, Reanimated, Worklets, Expo Asset, audio, haptics, or future optional
       backends being installed or initialized.
-- [ ] Prove importing `rn-gamekit` does not initialize optional audio, haptics,
+- [x] Prove importing `rn-gamekit` does not initialize optional audio, haptics,
       storage, or Physics2D backends.
-- [ ] Detect cross-system cycles introduced by the new barrels.
-- [ ] Confirm entry imports allocate no sessions, renderers, asset stores,
+- [x] Detect cross-system cycles introduced by the new barrels.
+- [x] Confirm entry imports allocate no sessions, renderers, asset stores,
       audio contexts, particle systems, or tile indexes.
-- [ ] Keep test-only instrumentation out of production subpaths.
+- [x] Keep test-only instrumentation out of production subpaths.
 
 Required approach:
 
@@ -290,15 +287,15 @@ happy import and the absence of forbidden native/runtime dependencies.
 
 ### T19.5 — Migrate consumer-facing imports
 
-- [ ] Update package compile fixtures to use the preferred system subpaths.
-- [ ] Update playground imports where the code is demonstrating a specific
+- [x] Update package compile fixtures to use the preferred system subpaths.
+- [x] Update playground imports where the code is demonstrating a specific
       public engine system.
-- [ ] Update documentation examples for Collision2D, Camera2D, events, assets,
+- [x] Update documentation examples for Collision2D, Camera2D, events, assets,
       and sprite animation.
-- [ ] Keep React components and hooks imported from `rn-gamekit/react`.
-- [ ] Do not rewrite internal package source imports to self-referential
+- [x] Keep React components and hooks imported from `rn-gamekit/react`.
+- [x] Do not rewrite internal package source imports to self-referential
       package imports.
-- [ ] Do not perform unrelated formatting or refactors while changing imports.
+- [x] Do not perform unrelated formatting or refactors while changing imports.
 
 Required approach:
 
@@ -308,14 +305,14 @@ API. The goal is clear ownership, not a mechanical ban on the root entry point.
 
 ### T19.6 — Document the package API model
 
-- [ ] Add or update one documentation page explaining that subpaths belong to
+- [x] Add or update one documentation page explaining that subpaths belong to
       one npm package and require one installation.
-- [ ] Add a concise entry-point matrix to the package README.
-- [ ] Update affected engine-system pages with preferred imports.
-- [ ] Add an additive migration note: old root imports remain valid.
-- [ ] Update the changelog with all six new public subpaths.
-- [ ] Compile-check every documented import example.
-- [ ] Do not rewrite the historical completion records in Tasks 11–13.
+- [x] Add a concise entry-point matrix to the package README.
+- [x] Update affected engine-system pages with preferred imports.
+- [x] Add an additive migration note: old root imports remain valid.
+- [x] Update the changelog with all six new public subpaths.
+- [x] Compile-check every documented import example.
+- [x] Do not rewrite the historical completion records in Tasks 11–13.
 
 The documentation must explicitly distinguish:
 
@@ -326,14 +323,14 @@ The documentation must explicitly distinguish:
 
 ### T19.7 — Package and release verification
 
-- [ ] Run the focused API fixture, identity, isolation, and export-map tests.
-- [ ] Run package typecheck and build.
-- [ ] Run `pnpm pack --dry-run` and inspect all new modules and declarations.
-- [ ] Resolve all six subpaths through the packed artifact or an equivalent
+- [x] Run the focused API fixture, identity, isolation, and export-map tests.
+- [x] Run package typecheck and build.
+- [x] Run `pnpm pack --dry-run` and inspect all new modules and declarations.
+- [x] Resolve all six subpaths through the packed artifact or an equivalent
       installed-tarball fixture.
-- [ ] Run the docs build after import migrations.
-- [ ] Run the repository's normal final gate once implementation is complete.
-- [ ] Record the implementation commit and any intentionally deferred work.
+- [x] Run the docs build after import migrations.
+- [x] Run the repository's normal final gate once implementation is complete.
+- [x] Record the implementation commit and any intentionally deferred work.
 
 No simulator or physical-device matrix is required for Task 19 unless an
 entry-point change exposes an actual Metro-only resolution failure. This task
@@ -355,19 +352,19 @@ explicit release action.
 
 ## V1 definition of done
 
-- [ ] `geometry`, `collision2d`, `camera2d`, `events`, `assets`, and `sprites`
+- [x] `geometry`, `collision2d`, `camera2d`, `events`, `assets`, and `sprites`
       are explicit subpaths of the single `rn-gamekit` package.
-- [ ] Existing root imports continue to work without behavior or identity
+- [x] Existing root imports continue to work without behavior or identity
       changes.
-- [ ] Headless subpaths do not pull React/Skia/native integrations into their
+- [x] Headless subpaths do not pull React/Skia/native integrations into their
       import graph.
-- [ ] Presentation primitives remain in `rn-gamekit/react`.
-- [ ] Internal package code continues to use safe relative imports.
-- [ ] Source, built JavaScript, declarations, and the packed artifact agree.
-- [ ] Documentation consistently teaches the preferred import boundaries.
-- [ ] No separate npm packages are created.
-- [ ] No npm publication occurs as part of implementation.
-- [ ] Focused and final automated gates pass.
+- [x] Presentation primitives remain in `rn-gamekit/react`.
+- [x] Internal package code continues to use safe relative imports.
+- [x] Source, built JavaScript, declarations, and the packed artifact agree.
+- [x] Documentation consistently teaches the preferred import boundaries.
+- [x] No separate npm packages are created.
+- [x] No npm publication occurs as part of implementation.
+- [x] Focused and final automated gates pass.
 
 ## Future expansion backlog
 

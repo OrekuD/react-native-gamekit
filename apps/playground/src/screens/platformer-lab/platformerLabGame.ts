@@ -8,21 +8,11 @@
  * positions; crossing one emits a typed Task 13 event and records it in
  * scene state. The renderer only presents committed snapshots.
  */
-import {
-  clampCameraBounds2D,
-  createCamera2D,
-  createGameSession,
-  defineAssets,
-  defineGame,
-  defineGameEvents,
-  defineScene,
-  gameEvent,
-  image,
-  type Aabb2D,
-  type Camera2D,
-  type GameAssetManifest,
-  type GameSession,
-} from 'rn-gamekit';
+import { createGameSession, defineGame, defineScene, type GameSession } from 'rn-gamekit';
+import type { Aabb2D } from 'rn-gamekit/geometry';
+import { clampCameraBounds2D, createCamera2D, type Camera2D } from 'rn-gamekit/camera2d';
+import { defineAssets, image, type GameAssetManifest } from 'rn-gamekit/assets';
+import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
 import {
   defineTileMap2D,
   defineTileSet2D,

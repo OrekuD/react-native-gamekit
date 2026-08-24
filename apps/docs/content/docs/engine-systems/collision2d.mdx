@@ -10,7 +10,7 @@ Collision2D is the headless collision system: pure geometry functions that repor
 Five immutable plain-data values, all in logical world units:
 
 ```ts
-import { type Aabb2D, type Circle2D, type Segment2D, type Vector2D } from 'rn-gamekit';
+import { type Aabb2D, type Circle2D, type Segment2D, type Vector2D } from 'rn-gamekit/geometry';
 
 const brick: Aabb2D = { x: 144, y: 72, width: 32, height: 12 };
 const ball: Circle2D = { x: 152, y: 80, radius: 6 };
@@ -25,7 +25,7 @@ const delta: Vector2D = { x: 90, y: 70 };
 One function per shape pair, with a consistent result:
 
 ```ts
-import { collideCircleAabb2D } from 'rn-gamekit';
+import { collideCircleAabb2D } from 'rn-gamekit/collision2d';
 
 const hit = collideCircleAabb2D(ball, brick);
 
@@ -46,7 +46,7 @@ if (hit !== undefined) {
 For fast objects, query the movement before it happens:
 
 ```ts
-import { sweepCircleAabb2D } from 'rn-gamekit';
+import { sweepCircleAabb2D } from 'rn-gamekit/collision2d';
 
 const hit = sweepCircleAabb2D({
   circle: ball,
@@ -67,7 +67,7 @@ if (hit !== undefined) {
 A collider is local data attached to an authored object; placement is the only local-to-world step:
 
 ```ts
-import { circleCollider2D, placeCollider2D, rectangleCollider2D } from 'rn-gamekit';
+import { circleCollider2D, placeCollider2D, rectangleCollider2D } from 'rn-gamekit/collision2d';
 
 const player = {
   position: { x: 120, y: 80 },
@@ -83,7 +83,7 @@ const body = placeCollider2D(player.colliders.body, player.position);
 `LocalCollider2D` and `WorldCollider2D` are distinct discriminated types: world-only operations reject local colliders at compile time, so double translation is impossible. Colliders are translation-only — no rotation or nonuniform scale — and the `sensor` flag is metadata that never changes geometry results. Filters use symmetric unsigned-32-bit category/mask sets:
 
 ```ts
-import { canCollide2D } from 'rn-gamekit';
+import { canCollide2D } from 'rn-gamekit/collision2d';
 
 canCollide2D({ categoryBits: 0b1, maskBits: 0b10 }, { categoryBits: 0b10, maskBits: 0b1 }); // true
 ```
@@ -95,7 +95,7 @@ canCollide2D({ categoryBits: 0b1, maskBits: 0b10 }, { categoryBits: 0b10, maskBi
 For many objects, index once and query candidates:
 
 ```ts
-import { buildSpatialHash2D, querySpatialHash2D } from 'rn-gamekit';
+import { buildSpatialHash2D, querySpatialHash2D } from 'rn-gamekit/collision2d';
 
 const index = buildSpatialHash2D({ items, cellSize: 32 });
 const candidates = querySpatialHash2D(index, bounds);

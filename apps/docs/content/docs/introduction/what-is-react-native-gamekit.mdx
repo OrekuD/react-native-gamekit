@@ -60,6 +60,39 @@ function GameScreen() {
 }
 ```
 
+## One package, many entry points
+
+`rn-gamekit` is one npm package. The paths below are package export subpaths — not separate packages. They share one version, one peer-dependency policy, and one `exports` map, and they all ship in the same tarball. One `npm install rn-gamekit` is enough.
+
+| Entry point | What lives there | Must not load |
+| --- | --- | --- |
+| `rn-gamekit` | Game & scene definitions, session, viewport, and compatibility re-exports | — |
+| `rn-gamekit/geometry` | Points, vectors, AABBs, circles, segments, `GeometryError` | React / Skia / native |
+| `rn-gamekit/collision2d` | Predicates, manifolds, sweeps, filters, colliders, spatial hash, debug | React / Skia |
+| `rn-gamekit/camera2d` | Pure camera values, transforms, follow, clamp, shake, interpolation, visibility | React / Skia |
+| `rn-gamekit/events` | `defineGameEvents` / `gameEvent`, envelopes, `PAYLOAD_LIMITS`, `seedGameEvent`, `GameEventError` | React / native |
+| `rn-gamekit/assets` | `defineAssets` / `image` / `spriteSheet`, descriptor types, `GameAssetError` | React / Skia |
+| `rn-gamekit/sprites` | `sampleSpriteClip*`, `start/advance/…SpriteAnimation` | React components / Atlas |
+| `rn-gamekit/react` | `GameView`, `GameWorld2D`, `Sprite`, hooks, asset/particle/tilemap rendering | — |
+| `rn-gamekit/audio` · `haptics` · `particles` · `tilemap` | Opt-in or existing system subpaths | — |
+| `rn-gamekit/testing` | Deterministic frame driver (test-only) | — |
+
+Headless entries import no React, React Native, Skia, Reanimated, or Expo Asset. `rn-gamekit/react` is the only entry that loads the native renderer.
+
+**Preferred imports**
+
+```ts
+import type { Aabb2D } from 'rn-gamekit/geometry';
+import { collideCircleAabb2D } from 'rn-gamekit/collision2d';
+import { createCamera2D } from 'rn-gamekit/camera2d';
+import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
+import { defineAssets, image, spriteSheet } from 'rn-gamekit/assets';
+import { sampleSpriteClipFrame, startSpriteAnimation } from 'rn-gamekit/sprites';
+import { GameView, GameWorld2D } from 'rn-gamekit/react';
+```
+
+**Compatibility:** `import { collideCircleAabb2D } from 'rn-gamekit'` and other existing root imports continue to work. Root and subpath exports are the same symbols (`===`, `instanceof` preserved). No deprecation is announced in this release — the subpaths are the preferred organization, not a breaking change.
+
 ## What's included
 
 - Fixed-step headless sessions with named scenes and deterministic transitions

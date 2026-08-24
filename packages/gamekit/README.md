@@ -134,12 +134,42 @@ fresh clock baseline, gameplay input is cancelled and rejected while paused,
 and `useGameSessionStatus(session)` drives pause UI without a second state
 source.
 
-`rn-gamekit` contains the headless definition, session, viewport,
-asset-manifest, animation, and Collision2D (shapes, contacts, sweeps,
-filters, broad phase) APIs. `rn-gamekit/react` contains the
-Skia renderer, native pointer adapter, asset loader, sprites, and sprite
-batching. `rn-gamekit/testing` contains deterministic frame drivers
-for Node tests.
+`rn-gamekit` is one npm package. Paths like `rn-gamekit/collision2d` are package export subpaths — they are not separately versioned or published, they share the same `rn-gamekit` version, peer policy, and `exports` map, and they ship in the same tarball.
+
+### Entry points (one package, one install)
+
+| Entry point | What lives there | Must not load |
+| --- | --- | --- |
+| `rn-gamekit` | Game & scene definitions, session creation, viewport contracts, and compatibility re-exports for all headless systems | — |
+| `rn-gamekit/geometry` | Points, vectors, AABBs, circles, segments, immutable geometry helpers, `GeometryError` | React / Skia / native peers |
+| `rn-gamekit/collision2d` | Predicates, manifolds, sweeps, filters, colliders, spatial hash, debug projections | React / Skia / physics backends |
+| `rn-gamekit/camera2d` | Pure camera values, transforms, follow, clamp, shake, interpolation, visibility | React hooks / Skia / Reanimated |
+| `rn-gamekit/events` | `defineGameEvents` / `gameEvent`, envelopes, `PAYLOAD_LIMITS`, `seedGameEvent`, `GameEventError` | Effect consumers / React / native peers |
+| `rn-gamekit/assets` | `defineAssets` / `image` / `spriteSheet`, descriptor & loaded-value types, `GameAssetError` | React hooks / Skia decoding / Expo Asset |
+| `rn-gamekit/sprites` | `sampleSpriteClip*` & playback-state helpers (`start/advance/…SpriteAnimation`) | React components / Skia Atlas |
+| `rn-gamekit/react` | `GameView`, `GameWorld2D`, `Sprite`, `GameSprite`, `SpriteBatch`, `defineGameCamera2D`, asset/particle/tilemap rendering, pointer input, hooks | — |
+| `rn-gamekit/audio` · `rn-gamekit/haptics` · `rn-gamekit/particles` · `rn-gamekit/tilemap` | Audio, haptics, particle effects, tilemaps (existing ownership) | — |
+| `rn-gamekit/testing` | Deterministic frame drivers for Node tests (test-only, never production) | — |
+
+Headless entries (`geometry`, `collision2d`, `camera2d`, `events`, `assets`, `sprites`) import no React, React Native, Skia, Reanimated, Worklets, Expo Asset, or optional native peers. `rn-gamekit/react` is the only entry that loads Skia/Reanimated/Gesture Handler.
+
+**Preferred imports (new code):**
+
+```ts
+import type { Aabb2D } from 'rn-gamekit/geometry';
+import { collideCircleAabb2D } from 'rn-gamekit/collision2d';
+import { createCamera2D } from 'rn-gamekit/camera2d';
+import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
+import { defineAssets, image, spriteSheet } from 'rn-gamekit/assets';
+import { sampleSpriteClipFrame, startSpriteAnimation } from 'rn-gamekit/sprites';
+import { GameView, GameWorld2D, Sprite } from 'rn-gamekit/react';
+```
+
+**Compatibility:** `import { collideCircleAabb2D } from 'rn-gamekit'` and other existing root imports continue to work. Root and subpath exports reference the same underlying symbols (`===` and `instanceof` preserved, no duplicate state). No deprecation or removal is announced in this release — the new subpaths are the preferred organization, not a breaking change.
+
+See the [repository documentation](https://github.com/OrekuD/rn-gamekit/tree/main/apps/docs/content/docs)
+and [Expo playground](https://github.com/OrekuD/rn-gamekit/tree/main/apps/playground)
+for complete examples.
 
 See the [repository documentation](https://github.com/OrekuD/rn-gamekit/tree/main/apps/docs/content/docs)
 and [Expo playground](https://github.com/OrekuD/rn-gamekit/tree/main/apps/playground)

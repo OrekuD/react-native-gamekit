@@ -53,7 +53,7 @@ One mounted system owns fixed slot storage per effect, allocated exactly once at
 ## Emission from committed events
 
 ```ts
-import { seedGameEvent } from 'rn-gamekit';
+import { seedGameEvent } from 'rn-gamekit/events';
 
 session.addGameEventListener('brick-hit', (event) => {
   particles.emit('brickBurst', {

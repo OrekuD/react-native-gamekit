@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { before, describe, it } from 'node:test';
 
 import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
-import { surfaceToWorld2D, worldToSurface2D } from 'rn-gamekit';
+import { surfaceToWorld2D, worldToSurface2D } from 'rn-gamekit/camera2d';
 
 let cameraLabDefinition: unknown;
 let PointerBinding: new (

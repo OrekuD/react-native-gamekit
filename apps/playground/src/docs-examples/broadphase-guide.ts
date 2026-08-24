@@ -8,15 +8,15 @@
  */
 import {
   buildSpatialHash2D,
-  collideWorldColliders2D,
   circleCollider2D,
+  collideWorldColliders2D,
   placeCollider2D,
   querySpatialHash2D,
   rectangleCollider2D,
   worldColliderBounds2D,
   type CollisionHit2D,
   type WorldCollider2D,
-} from 'rn-gamekit';
+} from 'rn-gamekit/collision2d';
 
 interface BroadPhaseExampleResult {
   readonly hits: readonly { readonly otherId: string; readonly hit: CollisionHit2D }[];

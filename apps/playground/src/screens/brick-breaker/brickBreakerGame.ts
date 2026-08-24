@@ -11,21 +11,10 @@
  * deliberate result-free screen: it demonstrates that scenes cannot share
  * results until a typed payload design lands.
  */
-import {
-  collideCircleAabb2D,
-  createGameSession,
-  defineGame,
-  defineGameEvents,
-  defineScene,
-  expandAabb2D,
-  gameEvent,
-  intersectsAabbAabb2D,
-  type Aabb2D,
-  type CommitFrame,
-  type GameSession,
-  type Point2D,
-  type SceneSnapshot,
-} from 'rn-gamekit';
+import { createGameSession, defineGame, defineScene, type CommitFrame, type GameSession, type SceneSnapshot } from 'rn-gamekit';
+import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
+import { collideCircleAabb2D, intersectsAabbAabb2D } from 'rn-gamekit/collision2d';
+import { expandAabb2D, type Aabb2D, type Point2D } from 'rn-gamekit/geometry';
 
 export const BRICK_BREAKER_CONFIG = {
   /** Authored logical world size, resolved onto the surface by Viewport2D. */

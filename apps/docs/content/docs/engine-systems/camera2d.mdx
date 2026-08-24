@@ -20,7 +20,7 @@ world point -> camera transform -> logical view point -> viewport -> surface
 The forward transform is `logical = L + rotate(P - C, -R) * Z`, where `C` is the camera center, `Z` the zoom, `R` the rotation, and `L` the logical view center. The inverse reverses the same operations in reverse order, and the same pure functions back rendering and pointer input, so they cannot drift apart.
 
 ```ts
-import { createCamera2D, worldToLogical2D, logicalToWorld2D } from 'rn-gamekit';
+import { createCamera2D, worldToLogical2D, logicalToWorld2D } from 'rn-gamekit/camera2d';
 
 const camera = createCamera2D({ center: { x: 100, y: 200 }, zoom: 2 });
 const logical = worldToLogical2D({ x: 105, y: 195 }, camera, LOGICAL_VIEW);
@@ -60,7 +60,7 @@ Center and zoom interpolate linearly; rotation takes the shortest arc. The prese
 The follow, bounds, and shake helpers are pure and headless — games call them inside the scene update and store the returned camera in scene state:
 
 ```ts
-import { clampCameraBounds2D, followCamera2D, sampleCameraShake2D } from 'rn-gamekit';
+import { clampCameraBounds2D, followCamera2D, sampleCameraShake2D } from 'rn-gamekit/camera2d';
 
 const followed = followCamera2D(camera, player, { deadZone: { x: -60, y: -80, width: 120, height: 160 } });
 const clamped = clampCameraBounds2D(followed, WORLD_BOUNDS, LOGICAL_VIEW);

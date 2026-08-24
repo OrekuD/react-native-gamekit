@@ -12,7 +12,8 @@ Use events for one-off facts: a brick broke, a life was lost, the game was won. 
 Declare the map once, at the game level:
 
 ```ts
-import { defineGameEvents, gameEvent, type Point2D } from 'rn-gamekit';
+import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
+import type { Point2D } from 'rn-gamekit/geometry';
 
 export const brickBreakerEvents = defineGameEvents({
   'brick-hit': gameEvent<{ brickId: string; point: Point2D }>(),
@@ -78,7 +79,7 @@ interface GameEventEnvelope<TName extends string, TPayload> {
 - `payload` is the cloned, frozen plain value you emitted. `tick`, `scene`, `sceneTick`, and `ordinal` are numbers and strings, never wall time, UUIDs, React renders, or display frames.
 
 ```ts
-import { seedGameEvent } from 'rn-gamekit';
+import { seedGameEvent } from 'rn-gamekit/events';
 
 session.addGameEventListener('brick-hit', (event) => {
   particles.emit(burst, { position: event.payload.point, seed: seedGameEvent(event) });

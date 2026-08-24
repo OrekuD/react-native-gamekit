@@ -10,7 +10,7 @@ This guide turns a fixed-screen game into a scrolling one: authored camera in sc
 The authored camera is game data. `create` seeds it, `update` advances it, and `snapshot` publishes it:
 
 ```ts
-import { createCamera2D, followCamera2D, clampCameraBounds2D } from 'rn-gamekit';
+import { createCamera2D, followCamera2D, clampCameraBounds2D } from 'rn-gamekit/camera2d';
 
 const LOGICAL_VIEW = { x: 0, y: 0, width: 320, height: 480 };
 const WORLD = { x: 0, y: 0, width: 2400, height: 1600 };
@@ -70,7 +70,7 @@ A cut snaps presentation for one boundary — scene transitions and session repl
 ## 5. Shake deterministically
 
 ```ts
-import { sampleCameraShake2D } from 'rn-gamekit';
+import { sampleCameraShake2D } from 'rn-gamekit/camera2d';
 
 // In update, once a shake is active:
 const shaken = sampleCameraShake2D(baseCamera, {

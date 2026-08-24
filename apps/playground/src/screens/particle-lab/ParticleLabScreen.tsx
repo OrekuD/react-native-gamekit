@@ -6,8 +6,9 @@ import { useSharedValue } from 'react-native-reanimated';
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
 import { ParticleView, useParticlePresentation } from 'rn-gamekit/react';
 import { GameWorld2D } from 'rn-gamekit/react';
-import type { CameraCut2D, ResolvedViewport2D } from 'rn-gamekit';
-import { defineAssets, spriteSheet } from 'rn-gamekit';
+import type { ResolvedViewport2D } from 'rn-gamekit';
+import type { CameraCut2D } from 'rn-gamekit/camera2d';
+import { defineAssets, spriteSheet } from 'rn-gamekit/assets';
 import { useGameAssets } from 'rn-gamekit/react';
 
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';

@@ -69,6 +69,42 @@
       "source": "./src/tilemap.ts",
       "types": "./lib/typescript/src/tilemap.d.ts",
       "default": "./lib/module/tilemap.js"
+    },
+    "./geometry": {
+      "react-native": "./src/geometry.ts",
+      "source": "./src/geometry.ts",
+      "types": "./lib/typescript/src/geometry.d.ts",
+      "default": "./lib/module/geometry.js"
+    },
+    "./collision2d": {
+      "react-native": "./src/collision2d.ts",
+      "source": "./src/collision2d.ts",
+      "types": "./lib/typescript/src/collision2d.d.ts",
+      "default": "./lib/module/collision2d.js"
+    },
+    "./camera2d": {
+      "react-native": "./src/camera2d.ts",
+      "source": "./src/camera2d.ts",
+      "types": "./lib/typescript/src/camera2d.d.ts",
+      "default": "./lib/module/camera2d.js"
+    },
+    "./events": {
+      "react-native": "./src/events.ts",
+      "source": "./src/events.ts",
+      "types": "./lib/typescript/src/events.d.ts",
+      "default": "./lib/module/events.js"
+    },
+    "./assets": {
+      "react-native": "./src/assets.ts",
+      "source": "./src/assets.ts",
+      "types": "./lib/typescript/src/assets.d.ts",
+      "default": "./lib/module/assets.js"
+    },
+    "./sprites": {
+      "react-native": "./src/sprites.ts",
+      "source": "./src/sprites.ts",
+      "types": "./lib/typescript/src/sprites.d.ts",
+      "default": "./lib/module/sprites.js"
     }
   },
   "react-native": "./src/index.ts",

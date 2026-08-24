@@ -34,7 +34,7 @@ Screen-space chrome — scores, pause overlays, back buttons — is a React Nati
 Culling is presentation-only. Off-screen entities keep simulating, colliding, and re-entering view.
 
 ```ts
-import { getCameraVisibleBounds2D, intersectsCameraView2D, filterCameraVisible2D } from 'rn-gamekit';
+import { filterCameraVisible2D, getCameraVisibleBounds2D, intersectsCameraView2D } from 'rn-gamekit/camera2d';
 
 const visible = getCameraVisibleBounds2D(camera, LOGICAL_VIEW); // conservative world AABB
 const onScreen = intersectsCameraView2D(shape, camera, LOGICAL_VIEW, padding);

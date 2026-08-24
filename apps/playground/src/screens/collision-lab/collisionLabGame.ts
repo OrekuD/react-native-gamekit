@@ -7,6 +7,8 @@
  * colliders placed and projected through the public debug API), and proves
  * that changing the sprite animation never changes the colliders.
  */
+import { createGameSession, defineGame, defineScene, type GameSession } from 'rn-gamekit';
+import { defineAssets, spriteSheet } from 'rn-gamekit/assets';
 import {
   buildSpatialHash2D,
   canCollide2D,
@@ -14,20 +16,14 @@ import {
   collideAabbAabb2D,
   collideCircleAabb2D,
   collideCircleCircle2D,
-  createGameSession,
-  defineAssets,
-  defineGame,
-  defineScene,
   placeCollider2D,
   projectWorldCollider2D,
   querySpatialHash2D,
   rectangleCollider2D,
-  spriteSheet,
   sweepCircleAabb2D,
   type CollisionHit2D,
   type DebugPrimitive2D,
-  type GameSession,
-} from 'rn-gamekit';
+} from 'rn-gamekit/collision2d';
 
 export const labAssets = defineAssets({
   gameplay: {
