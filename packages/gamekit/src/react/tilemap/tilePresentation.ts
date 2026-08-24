@@ -236,8 +236,10 @@ export interface FillParams {
  * - Tiles place UNROTATED at their CELL TOP-LEFT: the RSXform translation
  *   is the cell's world top-left corner.
  * - Stale slots past the filled count are hidden atomically (zero-size).
- * - Returns the filled slot count; returns -1 when the window does not
- *   cover the visible span (caller should request a new window).
+ * - Returns the filled slot count on success; returns -1 when the window
+ *   does not cover the visible span (caller should request a new window)
+ *   and -2 when the visible span exceeds the fixed capacity (caller must
+ *   hide the whole layer and never claim partial success) — T16-SF2.
  */
 export function fillTileSlots(
   snap: TileWindowSnapshot,
@@ -260,6 +262,14 @@ export function fillTileSlots(
     hideRange(rects, 0, capacity);
     return 0;
   }
+  // Preflight the span against capacity so a rotated AABB never produces a
+  // partial visible region (T16-SF2). Every cell in the span could be
+  // occupied, so compare the worst-case span size to the fixed buffer.
+  const spanCells = (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
+  if (spanCells > capacity) {
+    hideRange(rects, 0, capacity);
+    return -2;
+  }
   if (!windowCovers(snap, cx0, cy0, cx1, cy1)) {
     return -1;
   }
@@ -268,7 +278,10 @@ export function fillTileSlots(
     for (let cx = cx0; cx <= cx1; cx++) {
       const id = snap.ids[(cy - snap.y0) * snap.w + (cx - snap.x0)]!;
       if (id === 0) continue;
-      if (slot >= capacity) return slot;
+      if (slot >= capacity) {
+        hideRange(rects, 0, capacity);
+        return -2;
+      }
       const rectSlot = rects[slot];
       const xformSlot = xforms[slot];
       if (rectSlot === undefined || xformSlot === undefined) continue;

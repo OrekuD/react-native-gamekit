@@ -128,8 +128,8 @@ let batchVisibleBounds2D: (camera: unknown, viewport: unknown, padding: number) 
 let intersectsBounds2D: (first: unknown, second: unknown) => boolean;
 
 before(async () => {
-  const gk = await import('rn-gamekit');
-  const react = await import('rn-gamekit/react');
+  const gk = await import('../src/index.ts');
+  const react = await import('../src/react.ts');
   const binding = await import('../src/react/camera2d/usePresentedCameraBinding.ts');
   const pointer = await import('../src/react/pointerBinding.ts');
   const world = await import('../src/react/sprites/GameWorld2D.tsx');
@@ -592,10 +592,10 @@ describe('GameView camera surface (T12.3)', () => {
   }>;
 
   before(async () => {
-    const testing = await import('rn-gamekit/testing');
+    const testing = await import('../src/testing.ts');
     createGameSessionWithDriver = testing.createGameSessionWithDriver as unknown as typeof createGameSessionWithDriver;
     ManualFrameDriver = testing.ManualFrameDriver as unknown as typeof ManualFrameDriver;
-    const react = await import('rn-gamekit/react');
+    const react = await import('../src/react.ts');
     GameViewComponent = react.GameView as unknown as typeof GameViewComponent;
   });
 

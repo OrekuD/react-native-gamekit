@@ -99,9 +99,27 @@ export function TileMapLayer2D({
   if (!(minZoom > 0) || !Number.isFinite(minZoom)) {
     throw new Error(`[rn-gamekit/tilemap] minZoom must be a finite number > 0; got ${String(minZoom)}`);
   }
+  if (!Number.isFinite(width) || width <= 0) {
+    throw new Error(`[rn-gamekit/tilemap] width must be a finite number > 0; got ${String(width)}`);
+  }
+  if (!Number.isFinite(height) || height <= 0) {
+    throw new Error(`[rn-gamekit/tilemap] height must be a finite number > 0; got ${String(height)}`);
+  }
+  if (!Number.isFinite(overscan) || overscan < 0 || !Number.isInteger(overscan)) {
+    throw new Error(`[rn-gamekit/tilemap] overscan must be a finite integer >= 0; got ${String(overscan)}`);
+  }
+  const px = parallax?.x ?? 1;
+  const py = parallax?.y ?? 1;
+  if (!Number.isFinite(px)) {
+    throw new Error(`[rn-gamekit/tilemap] parallax.x must be a finite number; got ${String(px)}`);
+  }
+  if (!Number.isFinite(py)) {
+    throw new Error(`[rn-gamekit/tilemap] parallax.y must be a finite number; got ${String(py)}`);
+  }
 
   const cw = map.cellSize.width;
   const ch = map.cellSize.height;
+  // px/py already validated above
 
   // Resolve frames ONCE at bind time (structured errors for missing
   // frames and frame/cell size mismatches — T16-F3).
@@ -110,9 +128,11 @@ export function TileMapLayer2D({
     [map, source, cw, ch],
   );
 
-  // Slot capacity covers the widest visible span: zoomed out to 1/minZoom.
-  const slotsX = Math.ceil(width / (cw * minZoom)) + overscan * 2 + 1;
-  const slotsY = Math.ceil(height / (ch * minZoom)) + overscan * 2 + 1;
+  // Slot capacity covers the worst rotated AABB at minZoom (T16-SF2):
+  // conservative extents approach the viewport diagonal at 45 degrees.
+  const diagonal = Math.hypot(width, height);
+  const slotsX = Math.ceil(diagonal / (cw * minZoom)) + overscan * 2 + 1;
+  const slotsY = Math.ceil(diagonal / (ch * minZoom)) + overscan * 2 + 1;
   const capacity = slotsX * slotsY;
 
   const rects = useRectBuffer(capacity, (rect) => {
@@ -124,12 +144,13 @@ export function TileMapLayer2D({
     xform.set(1, 0, 0, 0);
   });
 
-  // Bounded transferred window + one-shot request guard (T16-F4). The
-  // scratch bounds object is written by the worklet every frame — one
-  // stable allocation, never per-frame objects (T16-RF2).
+  // Bounded transferred window + guards (T16-F4, T16-SF1). The scratch
+  // bounds object is written by the worklet every frame — one stable
+  // allocation, never per-frame objects (T16-RF2).
   const windowSV = useSharedValue<TileWindowSnapshot>(EMPTY_TILE_WINDOW);
   const pendingSV = useSharedValue(false);
   const warnedCapacitySV = useSharedValue(false);
+  const capacityWarnPendingSV = useSharedValue(false);
   const boundsScratch = useSharedValue({ minX: 0, minY: 0, maxX: 0, maxY: 0 });
 
   // Stable fill params: built once per binding, never per frame.
@@ -160,17 +181,18 @@ export function TileMapLayer2D({
 
   // One-shot RN-side diagnostic when a presented camera zooms beyond the
   // declared capacity (T16-RF2): the layer hides instead of under-filling.
+  // Uses its own pending guard so the warning never blocks window requests
+  // (T16-SF1).
   const onBeyondCapacity = useCallback(() => {
+    capacityWarnPendingSV.value = false;
     if (!warnedCapacitySV.value) {
       warnedCapacitySV.value = true;
       console.warn(
         '[rn-gamekit/tilemap] presented camera zoom is below minZoom; tile layer hides until the camera returns inside the declared capacity',
       );
     }
-  }, [warnedCapacitySV]);
+  }, [warnedCapacitySV, capacityWarnPendingSV]);
 
-  const px = parallax?.x ?? 1;
-  const py = parallax?.y ?? 1;
   const originX = map.origin.x;
   const originY = map.origin.y;
   const padWorld = overscan * Math.max(cw, ch);
@@ -183,8 +205,8 @@ export function TileMapLayer2D({
       for (let i = 0; i < capacity; i++) {
         rects.value[i]?.setXYWH(0, 0, 0, 0);
       }
-      if (!pendingSV.value) {
-        pendingSV.value = true;
+      if (!warnedCapacitySV.value && !capacityWarnPendingSV.value) {
+        capacityWarnPendingSV.value = true;
         scheduleOnRN(onBeyondCapacity);
       }
       return -2;
@@ -205,12 +227,22 @@ export function TileMapLayer2D({
       return 0;
     }
     // Fill from the transferred window when it covers the visible span.
+    // fillTileSlots returns -1 for a missing window (request it) and -2
+    // for insufficient capacity (hide, never claim success) — T16-SF2.
     const snap = windowSV.value;
     const filled = fillTileSlots(snap, bounds, rects.value, xforms.value, fillParams);
-    if (filled < 0 && !pendingSV.value) {
+    if (filled === -1 && !pendingSV.value) {
       pendingSV.value = true;
       scheduleOnRN(requestWindow, cx0, cy0, cx1, cy1);
       return -1;
+    }
+    if (filled === -2) {
+      // Capacity insufficient even at a valid zoom (e.g. extreme rotation
+      // on a fully occupied span) — hide everything, never partial.
+      for (let i = 0; i < capacity; i++) {
+        rects.value[i]?.setXYWH(0, 0, 0, 0);
+      }
+      return -2;
     }
     return filled;
   });

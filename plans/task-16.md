@@ -2,10 +2,40 @@
 
 ## Status
 
-**Follow-up changes requested.** T16-F1 through T16-F6 are substantially
-addressed, but the focused re-review of `ccb931e` found four remaining runtime
-and contract gaps below. Device performance rows remain open until they run on
-named hardware.
+**Third follow-up resolved (this change), re-review pending.** T16-F1
+through T16-SF3 are now addressed as described below. Device performance
+rows remain open until they run on named hardware.
+
+### Third follow-up resolution summary (SF1-SF3)
+
+- **T16-SF1** — `TileMapLayer2D` now keeps window acquisition and capacity
+  diagnostics on separate state: `pendingSV` guards only `requestWindow`,
+  while `capacityWarnPendingSV` guards the one-shot `onBeyondCapacity`
+  warning. `onBeyondCapacity` is RN-owned and clears only its own pending
+  guard; it never touches `pendingSV`. A mounted lifecycle test fills one
+  window, enters a below-capacity zoom, moves the camera beyond the window,
+  returns to a valid zoom, and proves a new `scheduleOnRN(requestWindow)`
+  fills the new cells.
+- **T16-SF2** — Fixed buffers are now sized for the worst rotated AABB at
+  `minZoom` using the viewport diagonal per cell axis plus overscan, so a
+  45-degree view at `minZoom` never exceeds capacity when `zoom >=
+  minZoom`. `width`, `height`, `overscan`, and both parallax values are
+  validated at the public boundary with exact errors before any buffers
+  allocate. `fillTileSlots` preflights the span against capacity and
+  returns `-2` for insufficient capacity (hiding the whole layer) distinct
+  from `-1` for a missing window; the worklet never claims partial success.
+  Portrait and tablet tests at 45 degrees with every visible cell occupied
+  assert the complete span is present.
+- **T16-SF3** — `GameSurface` no longer mounts gameplay content with the
+  placeholder session: while `slot.status === 'loading'` it renders a
+  blocking `AssetGateOverlay` (loading spinner or error + retry/back) that
+  prevents every gameplay control from receiving touches. Content mounts
+  only with the ready session and lease, preserving request-ID and
+  retirement rules. `PlatformerLabContent.release` now dispatches only when
+  `heldActions.delete` returns true, so duplicate `onTouchEnd` +
+  `onPressOut` edges collapse to one. Tests cover loading-gate blocking,
+  ready handoff, error-retry, close-while-error, and duplicate-release
+  suppression.
 
 Task 16 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
@@ -694,6 +724,89 @@ Required approach:
 - Move visit-count instrumentation behind an internal injection or the existing
   testing subpath. Don't publish double-underscore diagnostics from the public
   tilemap entry point.
+
+## Second follow-up feedback
+
+The isolated review covers only the four repairs in `2ec017d`. RF1 and RF4 are
+resolved as implemented. Address the remaining lifecycle, capacity, and loading
+issues below.
+
+### T16-SF1 — Invalid zoom permanently blocks later window requests (High)
+
+`TileMapLayer2D` reuses `pendingSV` for two unrelated jobs: an in-flight tile
+window request and the one-shot below-`minZoom` warning. When the camera zooms
+below `minZoom`, the worklet sets `pendingSV.value = true` before scheduling
+`onBeyondCapacity`. That callback sets the warning flag but never clears
+`pendingSV`. After the camera returns to a valid zoom, an uncovered tile window
+can no longer schedule `requestWindow`, leaving the layer stale or blank.
+
+Required approach:
+
+- Give window acquisition and capacity diagnostics separate state. A warning
+  must never modify the in-flight window-request guard.
+- Keep the one-shot warning state RN-owned, or use a dedicated UI scheduling
+  guard that the RN callback clears after delivery.
+- Reset only the state that belongs to the completed operation. Don't clear a
+  real window request when delivering a warning, and don't let a warning block
+  future camera windows.
+- Add a mounted lifecycle test that fills one window, enters a below-capacity
+  zoom, moves the camera beyond the current window, returns to a valid zoom,
+  and proves a new `scheduleOnRN(requestWindow, ...)` call fills the new cells.
+
+### T16-SF2 — Rotated cameras can still produce a partial Atlas (High)
+
+Slot capacity uses the unrotated `width / minZoom` and `height / minZoom` cell
+counts. A rectangular viewport rotated near 45 degrees has a conservative AABB
+whose width and height can both approach the viewport diagonal. That span can
+contain more cells than `capacity` even when `zoom >= minZoom`. In that case,
+`fillTileSlots()` returns as soon as `slot >= capacity`, presenting a partial
+visible region despite the documented never-partial contract. The current
+rotation test checks that some tiles render, not that the complete visible span
+fits.
+
+Required approach:
+
+- Size fixed buffers for the worst supported rotated AABB at `minZoom`, using
+  the viewport diagonal and each cell axis, plus overscan. Alternatively,
+  preflight the actual visible cell span and hide the whole layer when it
+  exceeds capacity; never stop halfway and report success.
+- Validate `width`, `height`, `overscan`, and both parallax values at the public
+  boundary. Reject non-finite, negative, or otherwise unsupported values with
+  exact errors before allocating buffers.
+- Make `fillTileSlots()` distinguish a complete fill from insufficient
+  capacity. An early capacity exit must not look like a valid filled count.
+- Add portrait and tablet tests at 45-degree rotation and `minZoom`, with every
+  visible cell occupied. Assert either every expected tile is present or every
+  slot is hidden according to the chosen contract.
+
+### T16-SF3 — Loading content dispatches into the placeholder session (High)
+
+The generic asset acquirer now starts Platformer Lab correctly, but
+`GameSurface` mounts the game content for both loading and ready slots. During
+loading, `PlatformerLabContent` receives `slot.session`, which is the idle
+placeholder, and renders active movement controls. Pressing one calls
+`placeholder.input.press('left' | 'jump' | ...)`, so the loading UI can dispatch
+unknown actions or mutate the wrong session. Platformer Lab also ignores the
+loading/error/retry `assetState`. In addition, **Jump** binds both `onTouchEnd`
+and `onPressOut`; a normal touch can invoke both and dispatch duplicate release
+edges because `release()` doesn't check whether the action was still held.
+
+Required approach:
+
+- Put loading and error behavior at the generic asset boundary. Don't mount
+  gameplay content with the placeholder session, or render a generic blocking
+  loading/error overlay that prevents every gameplay control from receiving
+  touches and exposes retry/back behavior.
+- Publish gameplay content only with the ready session and matching asset
+  lease. Preserve the existing request-ID and retirement rules.
+- Make `release(action)` dispatch only when `heldActions.delete(action)` returns
+  true. Apply the same cancel-safe lifecycle consistently to every held
+  control.
+- Add a mounted shell test that opens Platformer Lab, presses where a control
+  would be while loading, and proves no placeholder input is dispatched. Then
+  deliver ready assets and prove the same control reaches the gameplay session.
+- Add loading-error-retry and close-while-error coverage, plus a touch sequence
+  that invokes both `onTouchEnd` and `onPressOut` but produces one release edge.
 
 ## Future expansion backlog
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
-import { BackHandler, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
 import Animated, { useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 
 import {
@@ -319,6 +319,13 @@ function GameSurface({
 
   const Renderer = slot.renderer;
   const Content = slot.content as ComponentType<PlaygroundGameContentProps> | undefined;
+  // T16-SF3: never mount gameplay content with the placeholder session.
+  // While the slot is loading (asset-backed), render a blocking gate that
+  // prevents every gameplay control from receiving touches and exposes
+  // retry/back. Content mounts only with the ready session and lease.
+  const showAssetGate = slot.status === 'loading';
+  const assetGateRetry = assetState?.status === 'error' ? (assetState as { retry: () => void }).retry : undefined;
+  const assetGateError = assetState?.status === 'error' ? (assetState as { error: unknown }).error : undefined;
 
   return (
     <Animated.View
@@ -353,7 +360,14 @@ function GameSurface({
             instrumentation={bound.instrumentation?.pointer ?? slot.run?.pointer}
           />
         ) : null}
-        {Content !== undefined ? (
+        {showAssetGate ? (
+          <AssetGateOverlay
+            gameId={slot.gameId}
+            error={assetGateError}
+            onRetry={assetGateRetry}
+            onExit={onExit}
+          />
+        ) : Content !== undefined ? (
           <Content
             game={slot.session}
             onExit={onExit}
@@ -446,6 +460,61 @@ function disposeSession(session: GameSession): void {
   }
 }
 
+function AssetGateOverlay({
+  gameId,
+  error,
+  onRetry,
+  onExit,
+}: {
+  readonly gameId: string | null;
+  readonly error?: unknown;
+  readonly onRetry?: () => void;
+  readonly onExit: () => void;
+}) {
+  const isError = error !== undefined;
+  return (
+    <View
+      style={styles.assetGate}
+      pointerEvents="auto"
+      testID="asset-gate-overlay"
+      accessibilityViewIsModal
+    >
+      <View style={styles.assetGateCard}>
+        <Text style={styles.assetGateTitle}>
+          {isError ? 'Failed to load' : `Loading ${gameId ?? 'game'}…`}
+        </Text>
+        {isError ? (
+          <Text style={styles.assetGateError} testID="asset-gate-error">
+            {String((error as { message?: string })?.message ?? error)}
+          </Text>
+        ) : (
+          <ActivityIndicator testID="asset-gate-loading" />
+        )}
+        <View style={styles.assetGateRow}>
+          {isError && onRetry !== undefined ? (
+            <Pressable
+              onPress={onRetry}
+              testID="asset-gate-retry"
+              accessibilityRole="button"
+              style={styles.assetGateButton}
+            >
+              <Text style={styles.assetGateButtonText}>Retry</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={onExit}
+            testID="asset-gate-back"
+            accessibilityRole="button"
+            style={styles.assetGateButton}
+          >
+            <Text style={styles.assetGateButtonText}>Back</Text>
+          </Pressable>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   shell: {
     flex: 1,
@@ -458,5 +527,48 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     top: 0,
+  },
+  assetGate: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    backgroundColor: 'rgba(8, 11, 18, 0.92)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  assetGateCard: {
+    alignItems: 'center',
+    backgroundColor: '#1e293b',
+    borderRadius: 12,
+    gap: 12,
+    maxWidth: 320,
+    padding: 20,
+    width: '100%',
+  },
+  assetGateTitle: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  assetGateError: {
+    color: '#fca5a5',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  assetGateRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 4,
+  },
+  assetGateButton: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  assetGateButtonText: {
+    color: 'white',
+    fontWeight: '700',
+    textAlign: 'center',
   },
 });

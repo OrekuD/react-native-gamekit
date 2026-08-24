@@ -488,4 +488,145 @@ describe('tilemap layer mounted contract', () => {
     assert.ok(second > 0, `expected filled slots after transfer (${second})`);
     assert.ok(second <= 40 * 40, 'filled slots bounded by capacity');
   });
+
+  it('below-capacity zoom warning does not block the next window request (T16-SF1)', async () => {
+    const map = makeMap(64, 64);
+    scheduleOnRNCalls.length = 0;
+    const camSV = cameraAt(400, 400, 1);
+    const { lastDerived } = await mountWith(map, { camera: camSV, viewport: viewportAt() });
+    // First fill
+    lastDerived()();
+    const afterFirst = scheduleOnRNCalls.length;
+    assert.ok(afterFirst >= 1, 'first window scheduled');
+
+    // Enter below-capacity zoom (minZoom default 1, so 0.5 is below)
+    (camSV as { value: unknown }).value = {
+      cutId: 2,
+      camera: { center: { x: 400, y: 400 }, zoom: 0.5, rotationRadians: 0 },
+    };
+    const warnResult = lastDerived()();
+    assert.equal(warnResult, -2, 'below-capacity zoom hides');
+    const warnCalls = scheduleOnRNCalls.length;
+    // Warning scheduled, but window-request guard must stay clear
+    assert.ok(warnCalls > afterFirst, 'warning scheduled');
+
+    // While still below capacity, move camera far beyond the current window
+    // but still inside the map (64*16=1024 world bounds).
+    (camSV as { value: unknown }).value = {
+      cutId: 3,
+      camera: { center: { x: 900, y: 900 }, zoom: 0.5, rotationRadians: 0 },
+    };
+    lastDerived()();
+    // Still hidden, no new window request should have been scheduled while
+    // below capacity (pending window guard untouched)
+    const afterMoveWhileInvalid = scheduleOnRNCalls.length;
+    assert.equal(afterMoveWhileInvalid, warnCalls, 'no window request while below capacity');
+
+    // Return to a valid zoom at the new location — must schedule a NEW window
+    (camSV as { value: unknown }).value = {
+      cutId: 4,
+      camera: { center: { x: 900, y: 900 }, zoom: 1, rotationRadians: 0 },
+    };
+    const beforeReturn = scheduleOnRNCalls.length;
+    const ret = lastDerived()();
+    // First evaluation after return sees uncovered window -> schedules request (-1)
+    assert.equal(ret, -1, 'uncovered window at new location requests');
+    assert.ok(scheduleOnRNCalls.length > beforeReturn, 'new window request scheduled after valid zoom returns');
+    const second = lastDerived()();
+    assert.ok(second > 0, 'new window fills after invalid-zoom excursion');
+  });
+
+  it('rotated 45-degree view at minZoom fills every occupied cell (T16-SF2)', async () => {
+    // Fully occupied map so every cell in the visible span must be drawn;
+    // a partial Atlas would be immediately visible.
+    function makeFullMap(w: number, h: number) {
+      const ts = Core.defineTileSet2D({ tiles: { grass: { frame: 'g', collision: 'solid' } } });
+      const data = new Array(w * h).fill(1);
+      return Core.defineTileMap2D({
+        cellSize: { width: 16, height: 16 },
+        tileset: ts,
+        layers: [{ id: 't', width: w, height: h, data }],
+      });
+    }
+    const rotation = Math.PI / 4;
+    for (const [vw, vh, label] of [
+      [320, 480, 'portrait'],
+      [1024, 768, 'tablet'],
+    ] as const) {
+      const map = makeFullMap(96, 96);
+      const camSV = cameraAt(800, 800, 0.5, rotation);
+      const vp = viewportAt(0, 0, vw, vh);
+      const { lastDerived } = await mountWith(map, { camera: camSV, viewport: vp }, { width: vw, height: vh, minZoom: 0.5 });
+      const filled = lastDerived()();
+      // With diagonal-sized capacity, the rotated span must fully fit;
+      // the contract is either all present or all hidden — never partial.
+      // At zoom == minZoom the span is within capacity, so expect a full fill.
+      assert.ok(filled > 0, `${label} 45deg at minZoom must fill (${filled})`);
+      // Verify the pure helper agrees: span cells at this rotation equals filled count for a full map
+      const out = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+      Presentation.writeLayerVisibleBounds(camSV as never, vp as never, 1, 1, 16, out);
+      const cx0 = Math.max(0, Math.floor(out.minX / 16));
+      const cy0 = Math.max(0, Math.floor(out.minY / 16));
+      const cx1 = Math.min(95, Math.floor(out.maxX / 16));
+      const cy1 = Math.min(95, Math.floor(out.maxY / 16));
+      const spanCells = (cx1 - cx0 + 1) * (cy1 - cy0 + 1);
+      assert.equal(filled, spanCells, `${label} fully occupied span must be complete`);
+    }
+  });
+
+  it('public boundary validates width/height/overscan/parallax before allocation', async () => {
+    const map = makeMap(8, 8);
+    const badWidths: unknown[] = [0, -1, NaN, Infinity, '320' as unknown];
+    for (const w of badWidths) {
+      let threw = false;
+      try {
+        await act(async () => {
+          create(createElement(
+            GameWorld2D as never,
+            { viewport: viewportAt(), camera: cameraAt(0, 0) } as never,
+            createElement(TileMapLib.TileMapLayer2D as never, {
+              map, layer: 't', source: { image: {}, frames: FRAMES }, width: w as number, height: 480,
+            } as never),
+          ));
+        });
+      } catch (e) {
+        threw = /width must be.*finite.*> 0/.test((e as Error).message);
+      }
+      assert.equal(threw, true, `width ${String(w)} must throw`);
+    }
+    {
+      let threw = false;
+      try {
+        await act(async () => {
+          create(createElement(
+            GameWorld2D as never,
+            { viewport: viewportAt(), camera: cameraAt(0, 0) } as never,
+            createElement(TileMapLib.TileMapLayer2D as never, {
+              map, layer: 't', source: { image: {}, frames: FRAMES }, width: 320, height: 480, overscan: -1,
+            } as never),
+          ));
+        });
+      } catch (e) {
+        threw = /overscan must be/.test((e as Error).message);
+      }
+      assert.equal(threw, true, 'overscan -1 must throw');
+    }
+    {
+      let threw = false;
+      try {
+        await act(async () => {
+          create(createElement(
+            GameWorld2D as never,
+            { viewport: viewportAt(), camera: cameraAt(0, 0) } as never,
+            createElement(TileMapLib.TileMapLayer2D as never, {
+              map, layer: 't', source: { image: {}, frames: FRAMES }, width: 320, height: 480, parallax: { x: NaN, y: 1 },
+            } as never),
+          ));
+        });
+      } catch (e) {
+        threw = /parallax\.x.*finite/.test((e as Error).message);
+      }
+      assert.equal(threw, true, 'parallax.x NaN must throw');
+    }
+  });
 });

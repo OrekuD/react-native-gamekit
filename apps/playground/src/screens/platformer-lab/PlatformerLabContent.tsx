@@ -69,8 +69,9 @@ export default function PlatformerLabContent({
     (session.input as unknown as { press: (action: string) => void }).press(action);
   };
   const release = (action: string): void => {
-    heldActions.current.delete(action);
-    (session.input as unknown as { release: (action: string) => void }).release(action);
+    if (heldActions.current.delete(action)) {
+      (session.input as unknown as { release: (action: string) => void }).release(action);
+    }
   };
 
   // Quantized HUD publication driven by commit notifications; React state
