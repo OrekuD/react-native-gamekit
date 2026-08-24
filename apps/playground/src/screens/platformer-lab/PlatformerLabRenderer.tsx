@@ -6,7 +6,7 @@
  */
 import { Circle, Rect } from '@shopify/react-native-skia';
 import { useDerivedValue } from 'react-native-reanimated';
-import { GameLayer2D, GameWorld2D, TileMapLayer2D, type GameRendererProps } from 'rn-gamekit/react';
+import { GameWorld2D, TileMapLayer2D, type GameRendererProps } from 'rn-gamekit/react';
 
 import {
   PLATFORMER_LAB_CONFIG,
@@ -80,17 +80,18 @@ export function PlatformerLabRenderer({ frame, viewport, camera, assets }: Rende
 
   return (
     <GameWorld2D viewport={viewport} camera={camera}>
-      {/* Parallax background: decorative clouds move at half speed. */}
-      <GameLayer2D parallax={{ x: 0.5, y: 0.5 }}>
-        <TileMapLayer2D
-          map={platformerLabLevel}
-          layer="clouds"
-          source={{ image: tiles as never, frames: PLATFORMER_LAB_FRAMES }}
-          width={PLATFORMER_LAB_CONFIG.logicalWidth}
-          height={PLATFORMER_LAB_CONFIG.logicalHeight}
-          overscan={1}
-        />
-      </GameLayer2D>
+      {/* Parallax background: decorative clouds move at half speed. The
+          layer owns the whole parallax contract — visual transform AND
+          culling derive from the same factor (T16-RF2). */}
+      <TileMapLayer2D
+        map={platformerLabLevel}
+        layer="clouds"
+        source={{ image: tiles as never, frames: PLATFORMER_LAB_FRAMES }}
+        width={PLATFORMER_LAB_CONFIG.logicalWidth}
+        height={PLATFORMER_LAB_CONFIG.logicalHeight}
+        overscan={1}
+        parallax={{ x: 0.5, y: 0.5 }}
+      />
       {/* Primary terrain layer locked to the world (parallax 1). */}
       <TileMapLayer2D
         map={platformerLabLevel}

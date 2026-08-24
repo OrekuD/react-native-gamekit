@@ -93,17 +93,20 @@ Gravity, jump rules, coyote time, buffering, animation, and input stay game-owne
 ## Rendering
 
 ```tsx
-import { GameLayer2D, GameWorld2D, TileMapLayer2D } from 'rn-gamekit/react';
+import { GameWorld2D, TileMapLayer2D } from 'rn-gamekit/react';
 
+{/* Viewport-only world: no camera needed. */}
 <GameWorld2D viewport={viewport}>
+  {/* Parallax is ONE coherent factor: it drives both the visual
+      correction and the culling bounds — no outer GameLayer2D wrapper. */}
   <TileMapLayer2D map={level} layer="background" parallax={{ x: 0.5, y: 0.5 }}
     source={{ image, frames }} width={320} height={480} />
   <TileMapLayer2D map={level} layer="terrain"
-    source={{ image, frames }} width={320} height={480} />
+    source={{ image, frames }} width={320} height={480} minZoom={1} />
 </GameWorld2D>
 ```
 
-Frame rectangles resolve once at bind time; missing frames throw a structured error naming the tile. Slot capacity derives from surface bounds + overscan + cell size — never from map dimensions — and slots refill/hide in place as the camera moves. Parallax applies only to presentation layers using the same correction formula as `GameLayer2D`. Culling here can never affect simulation: collision queries read full layer data regardless of visibility.
+Frame rectangles resolve once at bind time; missing frames throw a structured error naming the tile, and frame sizes must equal cell sizes. Slot capacity derives from surface bounds + `minZoom` + overscan + cell size — never from map dimensions — and slots refill/hide in place as the camera moves. A presented camera zooming below `minZoom` is rejected (the layer hides and warns once) rather than silently under-filling. Parallax uses the same correction formula as `GameLayer2D`, applied to both the visual transform and the selected window. Window requests cross to React through `scheduleOnRN`; UI-to-React delivery never uses `runOnJS`. Culling here can never affect simulation: collision queries read full layer data regardless of visibility.
 
 React does not re-render per tile; each layer is one stable Atlas node whose UI-runtime worklet refills slots from the presented camera bounds.
 

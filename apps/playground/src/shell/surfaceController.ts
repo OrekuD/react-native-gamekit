@@ -29,6 +29,16 @@ import {
 import type { GameCamera2DDefinition } from 'rn-gamekit/react';
 
 /** One catalogued game: how the controller opens, renders, and binds it. */
+/**
+ * One asset-backed catalog entry's acquisition declaration (T16-RF3).
+ * `manifest` is a Gamekit asset manifest value; `groups` names the groups
+ * the shell waits for before publishing the ready slot.
+ */
+export interface SlotAssetRequest {
+  readonly manifest: unknown;
+  readonly groups: readonly string[];
+}
+
 export interface SurfaceGameEntry {
   readonly renderer: ComponentType<GameRendererProps<never>>;
   readonly content: ComponentType<PlaygroundGameContentProps>;
@@ -41,8 +51,13 @@ export interface SurfaceGameEntry {
    * Defaults to `primary` (the reference-game convention).
    */
   readonly pointerAction?: string;
-  /** Asset-backed games publish a loading slot and wait for asset-ready. */
-  readonly assetBacked?: boolean;
+  /**
+   * Asset-backed games publish a loading slot and wait for asset-ready
+   * (T16-RF3). Every asset-backed entry DECLARES its acquisition here —
+   * manifest plus groups — so the shell can run one generic acquirer
+   * instead of per-game special cases.
+   */
+  readonly assets?: SlotAssetRequest;
   /**
    * Optional camera binding (T12.7): supplied to the shell's GameView when
    * this game is active. The renderer receives the presented camera and
@@ -111,7 +126,7 @@ export class SurfaceController {
     const requestId = this.allocateRequestId();
     const generation = this.allocateGeneration();
     this.pauseReplaced();
-    if (entry.assetBacked === true) {
+    if (entry.assets !== undefined) {
       this.publish({
         kind: 'open-loading',
         requestId,

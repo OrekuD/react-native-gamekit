@@ -1,14 +1,17 @@
 /**
- * TileMapLayer2D mounted contract tests (T16.4, T16-F3/F4).
+ * TileMapLayer2D mounted contract tests (T16.4, T16-F3/F4, T16-RF1/RF2).
  *
  * - One Atlas node per layer; slot capacity derives from surface bounds +
- *   overscan — never from map dimensions.
- * - Visible slots derive from the PRESENTED camera (center/zoom/rotation)
- *   with parallax applied once afterwards; off-map views hide everything.
+ *   minZoom + overscan — never from map dimensions.
+ * - Visible slots derive from the PRESENTED camera (center/zoom/rotation);
+ *   without a camera the viewport-only world path applies. Parallax is one
+ *   coherent factor driving BOTH the visual transform and the culling
+ *   bounds. Off-map views and beyond-capacity zooms hide everything.
  * - Unrotated tiles place at their cell top-left; frame rects come from
  *   the flat bind-time table (missing/mismatched frames throw).
- * - The UI runtime only ever receives bounded window snapshots: structural
- *   worklet call-graph checks + transferred-record bound tests.
+ * - The UI runtime only ever receives bounded window snapshots; UI->RN
+ *   delivery uses react-native-worklets' scheduleOnRN (never runOnJS), and
+ *   every UI-runtime helper carries a worklet directive.
  */
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
@@ -17,10 +20,8 @@ import { join } from 'node:path';
 import { act, createElement } from 'react';
 import { create } from 'react-test-renderer';
 
-type HostProps = Record<string, unknown> & { readonly children?: unknown };
-
 function host(tag: string) {
-  const Component = ({ children, ...props }: HostProps) =>
+  const Component = ({ children, ...props }: Record<string, unknown>): unknown =>
     createElement(tag, props as never, children as never);
   Component.displayName = tag;
   return Component;
@@ -33,6 +34,7 @@ interface Call {
 const rectCallLog: Call[][] = [];
 const xformCallLog: Call[][] = [];
 const derivedClosures: Array<() => number> = [];
+const scheduleOnRNCalls: Array<{ readonly name: string; readonly args: readonly unknown[] }> = [];
 
 mock.module('react-native', {
   namedExports: {
@@ -84,8 +86,19 @@ mock.module('react-native-reanimated', {
         return { value: 0 };
       }
     },
-    runOnJS: (fn: (...args: never[]) => void) =>
-      ((...args: never[]) => fn(...args)) as never,
+  },
+});
+mock.module('react-native-worklets', {
+  namedExports: {
+    // RF1: UI->RN delivery MUST go through scheduleOnRN. The mock executes
+    // synchronously so mounted tests observe the full request cycle.
+    scheduleOnRN: (fn: (...args: never[]) => void, ...args: never[]) => {
+      scheduleOnRNCalls.push({
+        name: (fn as { name?: string }).name ?? 'anonymous',
+        args,
+      });
+      (fn as (...a: never[]) => void)(...args);
+    },
   },
 });
 
@@ -96,9 +109,9 @@ type PresentationModule = typeof import('../src/react/tilemap/tilePresentation')
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports
 type CoreModule = typeof import('../src/tilemap/index');
 const TileMapLib: TileMapModule = {} as never;
-let GameWorld2D: (...args: readonly never[]) => unknown = () => null;
 const Presentation: PresentationModule = {} as never;
 const Core: CoreModule = {} as never;
+let GameWorld2D: (...args: readonly never[]) => unknown = () => null;
 
 describe('tilemap layer mounted contract', () => {
   it('loads modules after mocks', async () => {
@@ -108,8 +121,7 @@ describe('tilemap layer mounted contract', () => {
     ({ GameWorld2D } = await import('../src/react/sprites/GameWorld2D'));
   });
 
-  type TileMap2DType = Awaited<ReturnType<typeof Core.defineTileMap2D>>;
-  function makeMap(w: number, h: number): TileMap2DType {
+  function makeMap(w: number, h: number): ReturnType<typeof Core.defineTileMap2D> {
     const tileset = Core.defineTileSet2D({
       tiles: { grass: { frame: 'g', collision: 'solid' } },
     });
@@ -128,8 +140,9 @@ describe('tilemap layer mounted contract', () => {
   async function mountWith(
     map: ReturnType<typeof makeMap>,
     world: { camera?: { value?: unknown }; viewport?: { value?: unknown } },
+    extraProps: Record<string, unknown> = {},
   ) {
-    const before = { rects: rectCallLog.length, xforms: xformCallLog.length, derived: derivedClosures.length };
+    const beforeCount = derivedClosures.length;
     let r: ReturnType<typeof create> | null = null;
     await act(async () => {
       r = create(createElement(
@@ -139,15 +152,20 @@ describe('tilemap layer mounted contract', () => {
           map, layer: 't',
           source: { image: { __image: true } as never, frames: FRAMES },
           width: 320, height: 480, overscan: 1,
+          ...extraProps,
         } as never),
       ));
     });
-    void before;
+    // Hook order per mount: GameWorld2D's transform first, then OUR fill
+    // closure, then our visual-transform closure. Target the fill by index.
+    const fillIndex = beforeCount + 1;
     return {
       renderer: r!,
-      // GameWorld2D also creates a derived value; OURS is the last one.
-      lastDerived: () => derivedClosures[derivedClosures.length - 1]!,
-      // Same last-instance rule: each mount appends new buffers.
+      lastDerived: (): (() => number) => {
+        const fn = derivedClosures[fillIndex];
+        assert.ok(typeof fn === 'function', 'fill derived closure must exist');
+        return fn as () => number;
+      },
       rectLog: () => rectCallLog[rectCallLog.length - 1]!,
       xformLog: () => xformCallLog[xformCallLog.length - 1]!,
     };
@@ -202,7 +220,7 @@ describe('tilemap layer mounted contract', () => {
     renderer.unmount();
   });
 
-  it('slot capacity is bounded by surface+overscan, not map size', async () => {
+  it('slot capacity is bounded by surface+minZoom+overscan, not map size', async () => {
     const big = makeMap(512, 512);
     const small = makeMap(4, 4);
     const { renderer: r1 } = await mountWith(big, {
@@ -217,16 +235,31 @@ describe('tilemap layer mounted contract', () => {
     r2.unmount();
   });
 
+  it('VIEWPORT-ONLY world renders when no presented camera exists', async () => {
+    const map = makeMap(32, 32);
+    // No camera at all: the viewport path drives selection.
+    const { lastDerived, rectLog, xformLog } = await mountWith(map, {
+      viewport: viewportAt(),
+    });
+    lastDerived()();
+    const placed = rectLog().filter(
+      (c) => !(c.args[0] === 0 && c.args[1] === 0 && c.args[2] === 0 && c.args[3] === 0),
+    );
+    // Viewport (0,0,320x480) covers diagonal cells (0..20, 0..29) clamped.
+    assert.ok(placed.length >= 10, `viewport-only fill expected (${placed.length})`);
+    // Transforms sit on cell corners within the viewport span.
+    for (const c of xformLog()) {
+      const [, , tx, ty] = c.args;
+      if (tx === 0 && ty === 0 && c.args.length === 4) continue; // hidden slot
+      assert.ok(tx! < 320 + 64 && ty! < 480 + 64, 'cells selected inside the viewport window');
+    }
+  });
+
   it('places unrotated tiles at their CELL TOP-LEFT with the sheet-frame rect', async () => {
-    // 16x16 map; diagonal tiles at (i,i). Camera centered exactly on cell
-    // (4,4)'s center: world (72,72); view 320x480 -> visible cells span
-    // cx -10..9 clamped, cy -15..14 clamped. Diagonal tiles inside view:
-    // cells (0..9, 0..9) minus clamping.
     const map = makeMap(16, 16);
     const { lastDerived, rectLog, xformLog } = await mountWith(map, {
       camera: cameraAt(72, 72), viewport: viewportAt(),
     });
-    // Re-evaluate now that the initial window transfer completed.
     lastDerived()();
     const xformCalls = xformLog();
     assert.ok(xformCalls.length > 0, 'expected filled slots');
@@ -237,9 +270,8 @@ describe('tilemap layer mounted contract', () => {
       assert.equal(tx! % 16, 0, `tx ${String(tx)} must be a cell top-left`);
       assert.equal(ty! % 16, 0, `ty ${String(ty)} must be a cell top-left`);
     }
-    // Rect calls carry the sheet-frame position (32,48,16,16) when filled.
     for (const c of rectLog()) {
-      if (c.args[0] === 32 && c.args[1] === 48 && c.args[4 - 2] === 16) {
+      if (c.args[0] === 32 && c.args[1] === 48 && c.args[2] === 16) {
         assert.deepEqual(c.args.slice(2), [16, 16]);
       }
     }
@@ -260,11 +292,9 @@ describe('tilemap layer mounted contract', () => {
         (c) => !(c.args[0] === 0 && c.args[1] === 0 && c.args[2] === 0 && c.args[3] === 0),
       ).length;
 
-    // Re-evaluate now that the initial transfer completed; on-map fills.
     lastDerived()();
     assert.ok(filledCount() > 0);
 
-    // Move the camera far off the map: every slot hides.
     (camSV as { value: unknown }).value = {
       cutId: 2,
       camera: { center: { x: -5000, y: -5000 }, zoom: 1, rotationRadians: 0 },
@@ -273,18 +303,14 @@ describe('tilemap layer mounted contract', () => {
     lastDerived()();
     assert.equal(filledCount(), 0, 'off-map view must hide every slot');
 
-    // Zoomed-in camera near tiles: still fills.
     (camSV as { value: unknown }).value = {
       cutId: 3,
       camera: { center: { x: 80, y: 80 }, zoom: 2, rotationRadians: 0 },
     };
     clear();
     lastDerived()();
-    assert.ok(filledCount() > 0, 'zoomed view fills');
+    assert.ok(filledCount() > 0, 'zoomed-in view fills');
 
-    // 90-degree rotated camera: conservative bounds still cover tiles.
-    // The wider rotated span may outgrow the transferred window; the first
-    // evaluation schedules the bounded transfer and the next fills.
     (camSV as { value: unknown }).value = {
       cutId: 4,
       camera: { center: { x: 80, y: 80 }, zoom: 1, rotationRadians: Math.PI / 2 },
@@ -297,28 +323,98 @@ describe('tilemap layer mounted contract', () => {
     renderer.unmount();
   });
 
-  it('parallax 1 tracks the base camera; partial parallax shifts less', () => {
-    // Pure presentation math: parallax applied AFTER base bounds.
+  it('ZOOM OUT beyond the declared capacity hides everything (never partial)', async () => {
+    const map = makeMap(64, 64);
+    const camSV = cameraAt(1024, 1024, 1);
+    const { lastDerived, rectLog } = await mountWith(
+      map,
+      { camera: camSV, viewport: viewportAt() },
+      { minZoom: 0.5 },
+    );
+    const clear = (): void => {
+      rectLog().length = 0;
+    };
+    const filledCount = (): number =>
+      rectLog().filter(
+        (c) => !(c.args[0] === 0 && c.args[1] === 0 && c.args[2] === 0 && c.args[3] === 0),
+      ).length;
+
+    // Zoom 0.75 >= declared minZoom 0.5: fills.
+    (camSV as { value: unknown }).value = {
+      cutId: 1,
+      camera: { center: { x: 1024, y: 1024 }, zoom: 0.75, rotationRadians: 0 },
+    };
+    lastDerived()(); // may schedule the window transfer...
+    lastDerived()(); // ...then fill
+    assert.ok(filledCount() > 0, 'zoom within the declared capacity fills');
+
+    // Zoom 0.25 < declared minZoom 0.5: rejected state hides ALL slots.
+    (camSV as { value: unknown }).value = {
+      cutId: 2,
+      camera: { center: { x: 1024, y: 1024 }, zoom: 0.25, rotationRadians: 0 },
+    };
+    clear();
+    lastDerived()();
+    assert.equal(filledCount(), 0, 'beyond-capacity zoom must hide every slot, never under-fill');
+
+    // Default minZoom=1 rejects any zoom below 1.
+    const tight = await mountWith(map, {
+      camera: cameraAt(1024, 1024, 0.9), viewport: viewportAt(),
+    });
+    tight.lastDerived()();
+    assert.equal(
+      tight.rectLog().filter(
+        (c) => !(c.args[0] === 0 && c.args[1] === 0 && c.args[2] === 0 && c.args[3] === 0),
+      ).length,
+      0,
+      'default minZoom=1 rejects sub-1 zooms',
+    );
+  });
+
+  it('PARALLAX is coherent: same factor drives the visual transform and the bounds', async () => {
+    // Pure level: parallax applied AFTER base bounds; p=0 is camera-fixed.
     const cam = { value: { camera: { center: { x: 200, y: 100 }, zoom: 1, rotationRadians: 0 } } };
     const vp = { value: { visibleLogicalBounds: { x: 0, y: 0, width: 320, height: 480 } } };
-    const full = Presentation.cameraLayerVisibleBounds(cam, vp, 1, 1, 0)!;
-    assert.equal(full.minX, 200 - 160);
-    assert.equal(full.maxX, 200 + 160);
-    // p=0: camera-fixed layer centered on the logical view center.
-    const fixed = Presentation.cameraLayerVisibleBounds(cam, vp, 0, 0, 0)!;
-    assert.equal(fixed.minX, 0);
-    assert.equal(fixed.maxX, 320);
-    // Partial: halfway between.
-    const half = Presentation.cameraLayerVisibleBounds(cam, vp, 0.5, 0.5, 0)!;
-    assert.equal(half.minX, (200 - 160 + 0) / 2);
+    const out = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    assert.equal(Presentation.writeLayerVisibleBounds(cam, vp, 1, 1, 0, out), true);
+    assert.equal(out.minX, 200 - 160);
+    const fixedOut = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    Presentation.writeLayerVisibleBounds(cam, vp, 0, 0, 0, fixedOut);
+    assert.equal(fixedOut.minX, 0);
+    assert.equal(fixedOut.maxX, 320);
+    const halfOut = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    Presentation.writeLayerVisibleBounds(cam, vp, 0.5, 0.5, 0, halfOut);
+    assert.equal(halfOut.minX, (200 - 160 + 0) / 2);
+
+    // Component level: a parallax layer mounts WITHOUT an outer GameLayer2D
+    // and still selects cells around the corrected center.
+    const map = makeMap(64, 64);
+    let r: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      r = create(createElement(
+        GameWorld2D as never,
+        { viewport: viewportAt(), camera: cameraAt(2000, 2000) } as never,
+        createElement(TileMapLib.TileMapLayer2D as never, {
+          map, layer: 't',
+          source: { image: {}, frames: FRAMES },
+          width: 320, height: 480, overscan: 1,
+          parallax: { x: 0.5, y: 0.5 },
+        } as never),
+      ));
+    });
+    const groupNodes = r!.root.findAll((n: { type: unknown }) => String(n.type) === 'group');
+    assert.ok(groupNodes.length >= 1, 'parallax visual transform wraps the Atlas');
+    r!.unmount();
+
     // Rotation grows the conservative extents.
-    const rot = Presentation.cameraLayerVisibleBounds(
+    const rotOut = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    Presentation.writeLayerVisibleBounds(
       { value: { camera: { center: { x: 200, y: 100 }, zoom: 1, rotationRadians: Math.PI / 2 } } },
-      vp, 1, 1, 0,
-    )!;
+      vp, 1, 1, 0, rotOut,
+    );
     const w = (b: { minX: number; maxX: number }): number => b.maxX - b.minX;
     const h = (b: { minY: number; maxY: number }): number => b.maxY - b.minY;
-    assert.ok(w(rot) > w(full) || h(rot) > h(full));
+    assert.ok(w(rotOut) > w(out) || h(rotOut) > h(out));
   });
 
   it('bind rejects missing frames AND frame/cell size mismatches with exact errors', () => {
@@ -336,41 +432,60 @@ describe('tilemap layer mounted contract', () => {
   it('transferred snapshots are bounded by viewport capacity, not map dimensions', () => {
     const big = makeMap(512, 512);
     const table = Presentation.buildFrameTable(big.tileset, FRAMES, 16, 16);
-    // A viewport-sized window over the huge map stays tiny.
     const snap = Presentation.buildTileWindowSnapshot(big, 't', 250, 250, 269, 269, table);
-    assert.equal(snap.ids.length, 20 * 20, 'ids sized by the requested range only');
+    assert.equal(snap.ids.length, 20 * 20);
     assert.equal(snap.frameFlat.length, (big.tileset.names.length + 1) * 4);
     assert.ok(snap.ids.length < 512 * 512);
-    // Coverage check drives the request logic.
     assert.equal(Presentation.windowCovers(snap, 255, 255, 260, 260), true);
     assert.equal(Presentation.windowCovers(snap, 0, 0, 10, 10), false);
   });
 
-  it('the derived worklet closes over NO map data, JS Map, or full arrays', () => {
+  it('the worklet uses scheduleOnRN, NEVER runOnJS, and helpers carry worklets', () => {
     const src = readFileSync(
       join(import.meta.dirname, '../src/react/tilemap/TileMapLayer2D.tsx'),
       'utf8',
     );
-    // Extract each 'worklet' callback body heuristically.
-    const workletBodies = src.split("'worklet';").slice(1);
-    assert.ok(workletBodies.length >= 2);
+    // RF1: the removed runtime bridge must not appear anywhere in the tile
+    // renderer, and the supported bridge must be present.
+    assert.doesNotMatch(src, /runOnJS/);
+    assert.match(src, /scheduleOnRN/);
+    // The worklet body must not reference maps, data arrays, or JSON.
     const derivedBody = src.slice(src.indexOf('useDerivedValue'));
     const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    for (const forbidden of ['.get(', 'frameOf', '.data[', 'map.layers', '__chunks', 'JSON.stringify']) {
+    for (const forbidden of ['.get(', '.data[', 'map.layers', '__chunks', 'JSON.stringify']) {
       assert.doesNotMatch(derivedBody, new RegExp(esc(forbidden)), `worklet must not reference ${forbidden}`);
     }
-    // Presentation helpers are explicitly worklet-callable.
+    // Every exported helper in the presentation module that participates in
+    // the per-frame path carries an explicit worklet directive.
     const pres = readFileSync(
       join(import.meta.dirname, '../src/react/tilemap/tilePresentation.ts'),
       'utf8',
     );
-    for (const fn of ['export function cameraLayerVisibleBounds', 'export function fillTileSlots']) {
+    for (const fn of ['export function writeLayerVisibleBounds', 'export function fillTileSlots']) {
       const at = pres.indexOf(fn);
       assert.ok(at >= 0, `${fn} exists`);
       const nextWorklet = pres.indexOf("'worklet';", at);
       assert.ok(nextWorklet > at && nextWorklet - at < 400, `${fn} carries a 'worklet' directive`);
     }
-    // No RN/Reanimated imports in the pure presentation module.
-    assert.doesNotMatch(pres, /from '(react-native|react-native-reanimated|@shopify)/);
+    // No RN/Reanimated/Worklets imports in the pure presentation module.
+    assert.doesNotMatch(pres, /from '(react-native|react-native-reanimated|react-native-worklets|@shopify)/);
+  });
+
+  it('window REQUEST flows worklet -> scheduleOnRN -> bounded snapshot -> filled slots', async () => {
+    const map = makeMap(48, 48);
+    scheduleOnRNCalls.length = 0;
+    const { lastDerived } = await mountWith(map, {
+      camera: cameraAt(400, 400), viewport: viewportAt(),
+    });
+    // The mount-time evaluation finds an uncovered window and schedules the
+    // RN request; the synchronous mock delivers it, binding the snapshot.
+    // One request carrying the uncovered cell range (minified builds strip
+    // function names, so match on shape: exactly four cell scalars).
+    assert.equal(scheduleOnRNCalls.length, 1);
+    assert.equal(scheduleOnRNCalls[0]!.args.length, 4);
+    // The next evaluation fills from the transferred bounded snapshot.
+    const second = lastDerived()();
+    assert.ok(second > 0, `expected filled slots after transfer (${second})`);
+    assert.ok(second <= 40 * 40, 'filled slots bounded by capacity');
   });
 });

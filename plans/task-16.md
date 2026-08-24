@@ -2,13 +2,56 @@
 
 ## Status
 
-**Changes requested — all six findings resolved (this change), re-review
-pending.** T16-F1 through T16-F6 are addressed as specified below. Device
-performance rows remain honestly open until they run on named hardware.
+**Follow-up changes requested.** T16-F1 through T16-F6 are substantially
+addressed, but the focused re-review of `ccb931e` found four remaining runtime
+and contract gaps below. Device performance rows remain open until they run on
+named hardware.
 
 Task 16 is complete when the v1 definition of done is satisfied. The future
 expansion backlog remains documented but does not block completion and must not
 be implemented without a separate approved task.
+
+### Follow-up resolution summary (RF1-RF4)
+
+- **T16-RF1** — `TileMapLayer2D` now imports `scheduleOnRN` from
+  `react-native-worklets`; `runOnJS` appears nowhere in the tile renderer.
+  `requestWindow` stays RN-owned and stable (`useCallback`, captures only the
+  map/layer ids and frame table). The structural contract rejects the token
+  `runOnJS`, requires `scheduleOnRN`, and verifies `writeLayerVisibleBounds`
+  and `fillTileSlots` carry worklet directives. The mounted window-request
+  test drives uncovered window -> scheduleOnRN delivery -> bounded snapshot
+  -> filled slots end to end.
+- **T16-RF2** — One coherent parallax contract: `TileMapLayer2D` applies the
+  visual correction itself via `layerParallaxTransform2D` and derives culling
+  from the same factor; Platformer Lab no longer wraps its cloud layer in an
+  outer `GameLayer2D`. Without a presented camera, bounds derive from
+  `viewport.visibleLogicalBounds` (the viewport-only world path renders and
+  fills). New `minZoom` prop sizes capacity for zoomed-out cameras; a camera
+  beyond the declared capacity hides every slot and fires a one-shot RN-side
+  warning instead of under-filling. `writeLayerVisibleBounds` writes into a
+  caller-owned scratch object (one stable allocation) and fill params are
+  frozen per binding — no per-frame objects. Mounted assertions cover
+  viewport-only rendering, parallax 0/0.5/1, camera motion, zoom above and
+  below the bound, rotation, and a window transition, asserting both selected
+  cells and final transforms.
+- **T16-RF3** — The shell's asset boundary is generic: catalog entries
+  declare `assets: { manifest, groups }` (sprite-field, collision-lab,
+  platformer-lab), one `GameAssetAcquirer` mounts per request keyed by the
+  request id, leases pass through unchanged, stale readiness never wins, and
+  the loading slot retires cleanly on close-while-loading. Camera Lab drops
+  its bogus asset-backed flag. Jump releases on `onPressOut`/
+  `onTouchEnd`/`onTouchCancel`, and screen unmount releases every held
+  control. Tests: controller flow open -> loading -> asset-ready -> playable
+  for Platformer Lab, close-while-loading, superseded-ready; mounted
+  two-jump-press test asserting two distinct press edges plus cancel release.
+- **T16-RF4** — `forEachCellInSpan` fetches intersecting chunk references
+  once per chunk-Y band, then iterates GLOBAL rows visiting chunk-X segments
+  left to right: true global row-major order with one lookup per chunk. An
+  oracle test plants interleaved cells across three horizontal chunks and
+  five rows and asserts exact returned identity order. The visit counters
+  moved to `src/tilemap/chunkStats.ts`, re-exported only through
+  `rn-gamekit/testing`; the public tilemap entry exports no double-underscore
+  seams (enforced by a test).
 
 ### Resolution summary
 
@@ -550,6 +593,107 @@ Required approach:
   or transform field with its exact source path; don't silently ignore data.
 - Add malformed-root, malformed-options, group/image layer, nonzero offset,
   sparse large-map, and chunk-seam tests.
+
+## Follow-up feedback
+
+The re-review is limited to the repairs in `ccb931e`. Keep the resolved work
+above and address these remaining issues.
+
+### T16-RF1 — The UI worklet uses the removed runtime bridge (High)
+
+`TileMapLayer2D` imports `runOnJS` from Reanimated and calls it when the camera
+outgrows the transferred tile window. Gamekit targets Reanimated 4 and
+`react-native-worklets`; UI-to-React-Native delivery must use `scheduleOnRN`.
+The current path can fail exactly when camera motion requests the next window,
+leaving the Atlas stale or blank.
+
+Required approach:
+
+- Replace `runOnJS(requestWindow)(...)` with the supported
+  `scheduleOnRN(requestWindow, ...)` API from `react-native-worklets`.
+- Keep `requestWindow` stable and RN-owned. Don't capture the map or build a
+  snapshot inside the worklet.
+- Add a focused source/call-graph contract that rejects `runOnJS` in the tile
+  renderer and verifies every UI-runtime helper carries a `worklet` directive.
+- Add a mounted request test that starts with an uncovered camera window,
+  delivers the RN callback, publishes the bounded snapshot, and then fills the
+  expected Atlas slots.
+
+### T16-RF2 — Parallax and camera-less rendering remain incorrect (High)
+
+The `parallax` prop changes only the culling bounds; `TileMapLayer2D` never
+applies the corresponding `GameLayer2D` transform to its Atlas. Platformer Lab
+wraps the cloud layer in `GameLayer2D` but doesn't pass the same factor to
+`TileMapLayer2D`, so its visual transform and selected tile window disagree.
+Also, `cameraLayerVisibleBounds()` returns no bounds when a camera is absent,
+although `GameWorld2D` explicitly supports a viewport-only path and the public
+docs show that usage. Finally, capacity is based on the unzoomed surface, so
+zooming below `1` can expose more cells than the Atlas owns and silently drop
+tiles.
+
+Required approach:
+
+- Make `TileMapLayer2D` own one coherent parallax contract: apply the visual
+  correction and derive culling from the same factor. Avoid requiring callers
+  to duplicate the factor in an outer `GameLayer2D`.
+- When no presented camera exists, derive bounds from
+  `viewport.visibleLogicalBounds` and render the viewport-only world normally.
+- Define a bounded zoom-out contract. Either size capacity from a validated
+  minimum zoom or reject camera states that exceed the declared capacity; don't
+  return a partially filled visible region as if it were complete.
+- Remove per-frame object creation from `cameraLayerVisibleBounds()` and the
+  inline `FillParams` value if the implementation continues to claim an
+  allocation-free camera path.
+- Add mounted buffer assertions for viewport-only rendering, parallax `0`,
+  `0.5`, and `1`, camera motion, zoom below and above `1`, rotation, and a
+  window transition. Assert both selected cells and final transforms.
+
+### T16-RF3 — Platformer Lab never receives its tilesheet (High)
+
+The catalog marks Platformer Lab as `assetBacked`, so `SurfaceController`
+publishes a loading slot and waits for `assetReady()`. `PlaygroundShell` mounts
+an asset controller only for Sprite Field; no code acquires
+`platformerLabAssets` or completes the Platformer Lab request. The rebuilt game
+therefore can't reach its real session or renderer. Separately, the **Jump**
+button presses the action on `onPressIn` but never releases it, so a successful
+load would still leave jump held and prevent later press edges.
+
+Required approach:
+
+- Generalize the shell's asset acquisition boundary so every asset-backed
+  catalog entry declares its manifest and groups. Don't add another game-ID
+  special case.
+- Key acquisition by request ID, forward ready/error state only to the matching
+  request, preserve the lease through retirement, and ignore stale completion
+  using the existing controller rules.
+- Release `jump` on `onPressOut` and `onTouchCancel`, or expose and use an
+  explicit one-tick pulse API. Ensure unmount releases every held control.
+- Drive a focused shell/controller test through open → loading → asset-ready →
+  playable for Platformer Lab, plus close-while-loading and stale-ready cases.
+  Add a mounted test that performs two separate jump presses and observes two
+  distinct press edges.
+
+### T16-RF4 — Chunk traversal breaks global row-major order (Important)
+
+`forEachCellInSpan()` iterates chunk X before local rows. For a query spanning
+two horizontal chunks, it emits every row from the left chunk before returning
+to the first row of the right chunk. That is chunk-major order, not the frozen
+global row-major order promised by every public query. Existing seam tests
+don't cover a multi-row, multi-column chunk span. The `__chunkReadCount` and
+`__resetChunkReadStats` seams are also re-exported through
+`rn-gamekit/tilemap`, despite being documented as test-only.
+
+Required approach:
+
+- For each chunk-Y band, fetch the intersecting chunk references once, then
+  iterate global rows and visit the chunk-X segments from left to right for
+  each row. Preserve the bounded one-lookup-per-chunk property.
+- Add an oracle test whose non-empty cells interleave across at least two
+  horizontal chunks and several rows. Assert the exact returned identity order,
+  not a sorted comparison.
+- Move visit-count instrumentation behind an internal injection or the existing
+  testing subpath. Don't publish double-underscore diagnostics from the public
+  tilemap entry point.
 
 ## Future expansion backlog
 

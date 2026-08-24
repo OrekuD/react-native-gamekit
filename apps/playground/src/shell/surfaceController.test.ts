@@ -29,6 +29,10 @@ function session(marker: string): SessionStub {
 const RENDERER = (() => null) as never;
 const CONTENT = (() => null) as never;
 
+// T16-RF3: the Platformer Lab declares its tilesheet acquisition through the
+// same generic boundary as every other asset-backed game.
+const platformerLabManifestStub = { kind: 'platformer-tiles-manifest' };
+
 interface Harness {
   readonly controller: SurfaceController;
   readonly recorded: readonly SessionStub[];
@@ -71,7 +75,19 @@ function makeHarness(): Harness {
           return session('sf-real') as never;
         },
         pointer: true,
-        assetBacked: true,
+        assets: { manifest: { kind: 'test-manifest' }, groups: ['gameplay'] },
+      },
+      'platformer-lab': {
+        renderer: RENDERER,
+        content: CONTENT,
+        createSession: () => {
+          sfSessions += 1;
+          return session('pl-real') as never;
+        },
+        pointer: false,
+        // The real declaration shape (T16-RF3): manifest + groups declared
+        // by the entry, acquired by the generic shell boundary.
+        assets: { manifest: platformerLabManifestStub, groups: ['world'] },
       },
     },
     neutral: { session: neutralSession as never, renderer: RENDERER },
@@ -295,6 +311,60 @@ describe('surface controller (T8.4 single lifecycle owner)', () => {
     controller.open('brick-breaker');
     controller.close();
     assert.equal(paused?.marker, 'pausable', 'the retired game is paused at the close boundary');
+  });
+});
+
+describe('Platformer Lab asset-backed lifecycle through the controller (T16-RF3)', () => {
+  it('open -> loading -> asset-ready -> playable uses the real session', () => {
+    const harness = makeHarness();
+    harness.controller.open('platformer-lab');
+    const loading = harness.controller.current;
+    assert.equal(loading.status, 'loading');
+    assert.equal(loading.gameId, 'platformer-lab');
+    assert.equal(loading.pointer, false, 'pointer disabled while loading');
+
+    const createdBefore = harness.sfCreateCount();
+    const lease = { descriptor: 'platformer-tiles-lease' };
+    harness.controller.assetReady(loading.requestId, lease);
+    const ready = harness.controller.current;
+    assert.equal(ready.status, 'ready');
+    assert.equal(ready.gameId, 'platformer-lab');
+    assert.equal(ready.assets, lease, 'the exact lease passes through unchanged');
+    assert.notEqual(ready.session, loading.session, 'real gameplay session replaces the placeholder');
+    assert.equal(harness.sfCreateCount(), createdBefore + 1);
+  });
+
+  it('close while loading disposes the placeholder and never creates a game', () => {
+    const harness = makeHarness();
+    harness.controller.open('platformer-lab');
+    assert.equal(harness.controller.current.status, 'loading');
+    const createdBefore = harness.sfCreateCount();
+
+    harness.controller.close();
+    assert.equal(harness.controller.current.status, 'neutral');
+
+    // A late ready after close is stale: ignored, no session created.
+    harness.controller.assetReady(harness.latest.requestId, { descriptor: 'late' });
+    assert.equal(harness.controller.current.status, 'neutral');
+    assert.equal(harness.sfCreateCount(), createdBefore);
+  });
+
+  it('stale readiness for a superseded platformer request never wins the slot', () => {
+    const harness = makeHarness();
+    harness.controller.open('platformer-lab');
+    const firstRequestId = harness.controller.current.requestId;
+    harness.controller.open('sprite-field');
+    const second = harness.controller.current;
+    assert.equal(second.status, 'loading');
+
+    harness.controller.assetReady(firstRequestId, { descriptor: 'superseded' });
+    assert.equal(harness.controller.current.gameId, 'sprite-field');
+    assert.equal(harness.sfCreateCount(), 0, 'no gameplay session for the superseded request');
+
+    // Completing the CURRENT request works.
+    harness.controller.assetReady(second.requestId, { descriptor: 'current' });
+    assert.equal(harness.controller.current.status, 'ready');
+    assert.equal(harness.controller.current.gameId, 'sprite-field');
   });
 });
 

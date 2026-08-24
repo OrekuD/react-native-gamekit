@@ -8,6 +8,7 @@ import type {
   TileMapInput2D,
 } from './types';
 import type { Aabb2D } from '../geometry/types';
+import { recordChunkRead } from './chunkStats';
 
 /** Frozen internal chunk size in cells (both axes). T16.0 contract. */
 export const TILE_CHUNK_SIZE = 16;
@@ -26,23 +27,13 @@ export function floorDiv(a: number, b: number): number {
 // The index is stored in a module-private WeakMap keyed by the map value, so
 // consumers can neither mutate it nor depend on it through the public map.
 // Every runtime tile read flows through `tileAt`, which consults this index.
+// Visit instrumentation lives in ./chunkStats and is re-exported only via
+// rn-gamekit/testing (T16-RF4).
 // ---------------------------------------------------------------------------
 
 type ChunkIndex = Map<string, Int32Array>;
 
 const chunkIndexes = new WeakMap<TileMap2D, ChunkIndex>();
-
-let chunkReads = 0;
-
-/** Test-only: reset the chunk-visit counter. */
-export function __resetChunkReadStats(): void {
-  chunkReads = 0;
-}
-
-/** Test-only: number of chunk lookups since the last reset. */
-export function __chunkReadCount(): number {
-  return chunkReads;
-}
 
 function buildChunkIndex(layers: readonly TileLayer2D[]): ChunkIndex {
   const chunks: ChunkIndex = new Map<string, Int32Array>();
@@ -228,7 +219,7 @@ export function tileAt(map: TileMap2D, layerId: string, cx: number, cy: number):
   if (chunks === undefined) return 0;
   const ccx = floorDiv(cx, TILE_CHUNK_SIZE);
   const ccy = floorDiv(cy, TILE_CHUNK_SIZE);
-  chunkReads++;
+  recordChunkRead();
   const chunk = chunks.get(`${layerId}|${ccx},${ccy}`);
   if (chunk === undefined) return 0;
   return chunk[(cy - ccy * TILE_CHUNK_SIZE) * TILE_CHUNK_SIZE + (cx - ccx * TILE_CHUNK_SIZE)]!;
@@ -252,20 +243,33 @@ export function forEachCellInSpan(
   const bandY1 = floorDiv(y1, TILE_CHUNK_SIZE);
   const bandX0 = floorDiv(x0, TILE_CHUNK_SIZE);
   const bandX1 = floorDiv(x1, TILE_CHUNK_SIZE);
+  // T16-RF4: GLOBAL row-major order. For each chunk-Y band we fetch the
+  // intersecting chunk references ONCE (one lookup per chunk), then iterate
+  // global rows; within a row we visit the chunk-X segments left to right.
+  // This is exactly global row-major while keeping lookups bounded by the
+  // overlapped chunk regions.
+  const bandRefs: (Int32Array | undefined)[] = [];
   for (let bcy = bandY0; bcy <= bandY1; bcy++) {
-    const lyStart = Math.max(y0, bcy * TILE_CHUNK_SIZE);
-    const lyEnd = Math.min(y1, (bcy + 1) * TILE_CHUNK_SIZE - 1);
+    const rowStart = Math.max(y0, bcy * TILE_CHUNK_SIZE);
+    const rowEnd = Math.min(y1, (bcy + 1) * TILE_CHUNK_SIZE - 1);
+    // Fetch every intersecting chunk reference once per band.
+    bandRefs.length = 0;
     for (let bcx = bandX0; bcx <= bandX1; bcx++) {
-      chunkReads++;
-      const chunk = chunks.get(`${layerId}|${bcx},${bcy}`);
-      if (chunk === undefined) continue;
-      const lxStart = Math.max(x0, bcx * TILE_CHUNK_SIZE) - bcx * TILE_CHUNK_SIZE;
-      const lxEnd = Math.min(x1, (bcx + 1) * TILE_CHUNK_SIZE - 1) - bcx * TILE_CHUNK_SIZE;
-      for (let ly = lyStart - bcy * TILE_CHUNK_SIZE; ly <= lyEnd - bcy * TILE_CHUNK_SIZE; ly++) {
+      recordChunkRead();
+      bandRefs.push(chunks.get(`${layerId}|${bcx},${bcy}`));
+    }
+    for (let cy = rowStart; cy <= rowEnd; cy++) {
+      const ly = cy - bcy * TILE_CHUNK_SIZE;
+      const rowBase = ly * TILE_CHUNK_SIZE;
+      for (let bcx = bandX0; bcx <= bandX1; bcx++) {
+        const chunk = bandRefs[bcx - bandX0];
+        if (chunk === undefined) continue;
+        const lxStart = Math.max(x0, bcx * TILE_CHUNK_SIZE) - bcx * TILE_CHUNK_SIZE;
+        const lxEnd = Math.min(x1, (bcx + 1) * TILE_CHUNK_SIZE - 1) - bcx * TILE_CHUNK_SIZE;
         for (let lx = lxStart; lx <= lxEnd; lx++) {
-          const v = chunk[ly * TILE_CHUNK_SIZE + lx]!;
+          const v = chunk[rowBase + lx]!;
           if (v === 0) continue;
-          const stop = visit(bcx * TILE_CHUNK_SIZE + lx, bcy * TILE_CHUNK_SIZE + ly, v);
+          const stop = visit(bcx * TILE_CHUNK_SIZE + lx, cy, v);
           if (stop === false) return;
         }
       }

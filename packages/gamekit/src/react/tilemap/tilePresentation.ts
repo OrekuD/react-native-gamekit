@@ -11,7 +11,7 @@ import type { TileMap2D, TileSet2D } from '../../tilemap/types';
  * - `buildTileWindowSnapshot` runs on JS whenever the visible cell window
  *   or source binding changes and produces a BOUNDED snapshot sized by the
  *   viewport capacity, never by map dimensions.
- * - `cameraLayerVisibleBounds` / `fillTileSlots` are worklet-callable and
+ * - `writeLayerVisibleBounds` / `fillTileSlots` are worklet-callable and
  *   allocation-free: camera interpolation inside the transferred window
  *   only reads scalars and pre-transferred arrays.
  *
@@ -141,32 +141,48 @@ export type SharedViewportRef = SharedLike<
 >;
 
 export interface LayerBounds {
-  readonly minX: number;
-  readonly minY: number;
-  readonly maxX: number;
-  readonly maxY: number;
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
 /**
- * Conservative world-space bounds visible through the PRESENTED camera
- * (T16-F3), with the GameLayer2D parallax model applied ONCE afterwards:
- * the effective layer center is C′ = L + (C − L)·p where L is the logical
- * view center; zoom and rotation apply fully at every factor. Padding is
- * in world units (precomputed from the cell size and cell overscan).
+ * Write the conservative world-space bounds visible through the PRESENTED
+ * camera into `out` (T16-F3, reworked per T16-RF2).
  *
- * Worklet-callable; allocation-free scalar math only.
+ * - With a presented camera: the logical view rect is rotated/zoomed by the
+ *   camera, so its axis-aligned world bounds are the center plus rotated
+ *   half-extents; the GameLayer2D parallax model applies ONCE afterwards
+ *   (effective layer center C′ = L + (C − L)·p; zoom and rotation apply
+ *   fully at every factor). Padding is world units.
+ * - WITHOUT a presented camera, GameWorld2D's viewport-only path applies:
+ *   the bounds are `viewport.visibleLogicalBounds` expanded by the padding.
+ *
+ * Worklet-callable and allocation-free on the steady path: scalars only,
+ * results written into the caller-owned `out` scratch object. Returns false
+ * when no viewport bounds exist yet.
  */
-export function cameraLayerVisibleBounds(
+export function writeLayerVisibleBounds(
   camera: SharedCameraRef | null,
   viewport: SharedViewportRef | null,
   parallaxX: number,
   parallaxY: number,
   paddingWorld: number,
-): LayerBounds | undefined {
+  out: LayerBounds,
+): boolean {
   'worklet';
   const view = viewport?.value?.visibleLogicalBounds;
+  if (view === undefined) return false;
   const cam = camera?.value?.camera;
-  if (view === undefined || cam === undefined) return undefined;
+  if (cam === undefined) {
+    // Viewport-only world: no zoom, no rotation, no parallax correction.
+    out.minX = view.x - paddingWorld;
+    out.minY = view.y - paddingWorld;
+    out.maxX = view.x + view.width + paddingWorld;
+    out.maxY = view.y + view.height + paddingWorld;
+    return true;
+  }
   const hx = view.width / (2 * cam.zoom);
   const hy = view.height / (2 * cam.zoom);
   const t = cam.rotationRadians;
@@ -183,12 +199,11 @@ export function cameraLayerVisibleBounds(
     centerX = logicalCx + (centerX - logicalCx) * parallaxX;
     centerY = logicalCy + (centerY - logicalCy) * parallaxY;
   }
-  return {
-    minX: centerX - ex,
-    minY: centerY - ey,
-    maxX: centerX + ex,
-    maxY: centerY + ey,
-  };
+  out.minX = centerX - ex;
+  out.minY = centerY - ey;
+  out.maxX = centerX + ex;
+  out.maxY = centerY + ey;
+  return true;
 }
 
 /** Slot-buffer contract shared by the component and tests. */

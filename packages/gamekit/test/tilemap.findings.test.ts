@@ -29,7 +29,7 @@ import type { TileMap2D } from '../src/tilemap/types';
 import {
   __resetChunkReadStats,
   __chunkReadCount,
-} from '../src/tilemap/definitions';
+} from '../src/testing';
 import { TileMapError } from '../src/tilemap/errors';
 
 function makeTileset() {
@@ -454,6 +454,46 @@ describe('T16-F6 chunk index backs every runtime read', () => {
       () => parseTiledMap2D({ ...base, layers: [{ type: 'wat', name: 'm' }] }, ts, opts),
       (e: unknown) => e instanceof TileMapError && /\.type/.test((e as Error).message),
     );
+  });
+
+  it('multi-chunk traversal preserves EXACT global row-major identity order', () => {
+    // 40 columns spans three horizontal 16-cell chunks. Non-empty cells
+    // interleave across chunk boundaries and several rows.
+    const ts = defineTileSet2D({ tiles: { g: { frame: 'g', collision: 'solid' } } });
+    const W = 40;
+    const H = 5;
+    const data = new Array(W * H).fill(0);
+    // Deliberately scattered: (x, y) pairs crossing the x=16 and x=32 seams.
+    const planted: readonly (readonly [number, number])[] = [
+      [14, 0], [17, 0], [33, 0],
+      [15, 1], [16, 1], [31, 1], [34, 1],
+      [2, 2], [18, 2], [32, 2], [39, 2],
+      [16, 3], [17, 3],
+      [0, 4], [30, 4], [35, 4],
+    ];
+    for (const [x, y] of planted) data[y * W + x] = 1;
+    const m = defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset: ts,
+      layers: [{ id: 't', width: W, height: H, data }],
+    });
+    const result = cellsInAabb(m, { x: 0, y: 0, width: W * 16, height: H * 16 }, ['t']);
+    // Expected order computed independently: sort by row then column.
+    const expected = [...planted]
+      .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+      .map(([x, y]) => `${x},${y}`);
+    const actual = result.map((c) => `${c.cell.x},${c.cell.y}`);
+    assert.deepEqual(actual, expected);
+  });
+
+  it('chunk stats live behind rn-gamekit/testing, not the public entry', async () => {
+    const entry = await import('../src/tilemap/index');
+    for (const key of Object.keys(entry)) {
+      assert.match(key, /^(?!__)/, `public tilemap export must not start with __: ${key}`);
+    }
+    const testing = await import('../src/testing');
+    assert.equal(typeof testing.__resetChunkReadStats, 'function');
+    assert.equal(typeof testing.__chunkReadCount, 'function');
   });
 
   it('cellsAtPoint still resolves decorated and collision layers correctly', () => {

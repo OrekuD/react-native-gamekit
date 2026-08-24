@@ -75,7 +75,11 @@ function fakeSession() {
     ticks += 1;
     for (const fn of listeners) fn();
   };
+  const pressEdges: string[] = [];
+  const releaseEdges: string[] = [];
   return {
+    pressEdges,
+    releaseEdges,
     commitFrame,
     getRenderFrame: (): { current: unknown } => ({
       current: {
@@ -95,8 +99,14 @@ function fakeSession() {
       return { remove: (): void => void listeners.delete(fn) };
     },
     input: {
-      press: (action: string): void => void held.add(action),
-      release: (action: string): void => void held.delete(action),
+      press: (action: string): void => {
+        held.add(action);
+        pressEdges.push(action);
+      },
+      release: (action: string): void => {
+        held.delete(action);
+        releaseEdges.push(action);
+      },
     },
     dispose: (): void => undefined,
   };
@@ -156,6 +166,42 @@ describe('Platformer Lab mounted controls (T16-F2)', () => {
       back.props.onPress?.();
     });
     assert.equal(exited, true);
+    act(() => session.dispose());
+  });
+
+  it('JUMP releases on press-out so two presses yield two distinct press edges (T16-RF3)', () => {
+    const { session } = harness();
+    let renderer: ReturnType<typeof create> | null = null;
+    act(() => {
+      renderer = create(
+        createElement(PlatformerLabContent, {
+          game: session as never,
+          onExit: () => undefined,
+          onOpenGame: () => undefined,
+        } as never),
+      );
+    });
+    const root = renderer!.root;
+    const jump = root.findAll(
+      (n: { props?: { testID?: string; onPressIn?: () => void; onPressOut?: () => void; onTouchCancel?: () => void } }) =>
+        n.props?.testID === 'platformer-jump',
+    )[0]!;
+    assert.equal(typeof jump.props.onPressOut, 'function', 'jump declares a release edge');
+    assert.equal(typeof jump.props.onTouchCancel, 'function', 'jump releases on touch cancel');
+
+    // Two full press cycles.
+    jump.props.onPressIn?.();
+    jump.props.onPressOut?.();
+    jump.props.onPressIn?.();
+    jump.props.onPressOut?.();
+    assert.deepEqual(session.pressEdges.filter((a) => a === 'jump'), ['jump', 'jump']);
+    assert.deepEqual(session.releaseEdges.filter((a) => a === 'jump'), ['jump', 'jump']);
+
+    // Touch cancel also releases a held jump.
+    jump.props.onPressIn?.();
+    jump.props.onTouchCancel?.();
+    assert.equal(session.pressEdges.filter((a) => a === 'jump').length, 3);
+    assert.equal(session.releaseEdges.filter((a) => a === 'jump').length, 3);
     act(() => session.dispose());
   });
 

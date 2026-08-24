@@ -63,10 +63,23 @@ export default function PlatformerLabContent({
   const session = game as GameSession;
   const [hud, setHud] = useState<LabHudRecord | null>(null);
 
+  const heldActions = useRef<Set<string>>(new Set());
+  const press = (action: string): void => {
+    heldActions.current.add(action);
+    (session.input as unknown as { press: (action: string) => void }).press(action);
+  };
+  const release = (action: string): void => {
+    heldActions.current.delete(action);
+    (session.input as unknown as { release: (action: string) => void }).release(action);
+  };
+
   // Quantized HUD publication driven by commit notifications; React state
   // only changes at the control-frequency cadence.
   const lastRef = useRef<{ at: number; record: LabHudRecord | null }>({ at: -Infinity, record: null });
   useEffect(() => {
+    // The SAME Set instance lives for the whole screen lifetime; capturing
+    // it here keeps the cleanup valid without depending on the ref box.
+    const held = heldActions.current;
     const update = (): void => {
       const envelope = session.getRenderFrame() as unknown as {
         current?: PlatformerSnapshotLike;
@@ -92,19 +105,15 @@ export default function PlatformerLabContent({
     };
     update();
     const subscription = session.addCommitListener(update);
-    return () => subscription.remove();
+    return () => {
+      subscription.remove();
+      // Unmount releases every held control: no input outlives this screen.
+      for (const action of [...held]) {
+        held.delete(action);
+        (session.input as unknown as { release: (action: string) => void }).release(action);
+      }
+    };
   }, [session, onHudPublish]);
-
-  const press = (action: string): void => {
-    (session.input as unknown as {
-      press: (action: string) => void;
-    }).press(action);
-  };
-  const release = (action: string): void => {
-    (session.input as unknown as {
-      release: (action: string) => void;
-    }).release(action);
-  };
 
   return (
     <View style={styles.screen} testID="platformer-lab-content">
@@ -140,6 +149,11 @@ export default function PlatformerLabContent({
           testID="platformer-jump"
           accessibilityRole="button"
           onPressIn={() => press('jump')}
+          // T16-RF3: a jump is a one-tick pulse — the release edge MUST
+          // fire so later presses register as new press edges.
+          onPressOut={() => release('jump')}
+          onTouchEnd={() => release('jump')}
+          onTouchCancel={() => release('jump')}
           style={[styles.button, styles.wide]}
         >
           <Text style={styles.buttonText}>Jump</Text>

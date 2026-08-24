@@ -59,3 +59,7 @@ export class ManualFrameDriver implements FrameDriver {
     callback(timestampMs);
   }
 }
+
+// Test-only tilemap chunk-read instrumentation (T16-RF4): intentionally NOT
+// re-exported from rn-gamekit/tilemap.
+export { __resetChunkReadStats, __chunkReadCount } from './tilemap/chunkStats';

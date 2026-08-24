@@ -36,6 +36,8 @@ import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRende
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
 import { createLabSession } from '../screens/lab/labSession';
 import { createSpriteFieldSession, spriteFieldAssets } from '../screens/sprite-field/spriteFieldGame';
+import { labAssets } from '../screens/collision-lab/collisionLabGame';
+import { platformerLabAssets } from '../screens/platformer-lab/platformerLabGame';
 import { createIdleSession } from './idleSession';
 import { isPlaygroundGameId, type PlaygroundGameId } from '../catalog/games';
 import { usePlaygroundStore } from '../state/playgroundStore';
@@ -178,19 +180,27 @@ export function PlaygroundShell() {
   );
 
   const gameVisible = currentGameId !== null;
-  const spriteFieldActive = slot.gameId === 'sprite-field' && slot.status !== 'neutral';
+  // T16-RF3: ONE generic acquisition boundary. Every asset-backed catalog
+  // entry declares its manifest and groups; the acquirer mounts for the
+  // whole request lifetime regardless of which game is active.
+  const activeAssets =
+    slot.status !== 'neutral' && slot.gameId !== null
+      ? GAME_CONTENTS[slot.gameId as keyof typeof GAME_CONTENTS]?.assets
+      : undefined;
   const contentAssetState =
-    slot.gameId === 'sprite-field' && assetState?.requestId === slot.requestId
+    activeAssets !== undefined && assetState?.requestId === slot.requestId
       ? assetState.state
       : undefined;
 
   return (
     <View style={styles.shell}>
       {!gameVisible ? <HomeScreen onOpenGame={handleOpenGame} /> : null}
-      {spriteFieldActive ? (
-        <SpriteFieldAssetController
+      {activeAssets !== undefined ? (
+        <GameAssetAcquirer
           key={slot.requestId}
           requestId={slot.requestId}
+          manifest={activeAssets.manifest}
+          groups={activeAssets.groups}
           onReady={handleAssetReady}
           onStateChange={handleAssetState}
         />
@@ -211,25 +221,30 @@ export function PlaygroundShell() {
 const INITIAL_GENERATION = 1;
 
 /**
- * The Sprite Field asset controller: mounts for the whole Sprite Field
- * request lifetime (loading AND ready) and unmounts only when the slot
- * leaves the game — so the lease the renderer borrows stays alive until the
- * replacement binding commits (T8.5). It is keyed by the request id: every
- * request owns a fresh acquisition, and a superseded request's lease is
- * released exactly once by unmount. The readiness callback carries the
- * request id; the controller ignores it when the request is no longer
- * current and never creates a gameplay session for a stale request.
+ * The generic asset acquirer (T16-RF3): mounts for the whole request
+ * lifetime (loading AND ready) of ANY asset-backed catalog entry and
+ * unmounts only when the slot leaves the game — so the lease the renderer
+ * borrows stays alive until the replacement binding commits (T8.5). It is
+ * keyed by the request id: every request owns a fresh acquisition, and a
+ * superseded request's lease is released exactly once by unmount. The
+ * readiness callback carries the request id; the shell ignores it when the
+ * request is no longer current and never creates a gameplay session for a
+ * stale request.
  */
-function SpriteFieldAssetController({
+function GameAssetAcquirer({
+  manifest,
+  groups,
   requestId,
   onReady,
   onStateChange,
 }: {
+  readonly manifest: unknown;
+  readonly groups: readonly string[];
   readonly requestId: number;
   readonly onReady: (requestId: number, assets: SlotAssets) => void;
   readonly onStateChange: (requestId: number, state: unknown) => void;
 }) {
-  const state = useGameAssets(spriteFieldAssets, { groups: ['boot', 'gameplay'] });
+  const state = useGameAssets(manifest as never, { groups: groups as never[] });
   useEffect(() => {
     onStateChange(requestId, state);
     if (state.status === 'ready') {
@@ -378,7 +393,7 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     content: SpriteFieldContent,
     createSession: () => createSpriteFieldSession() as unknown as GameSession,
     pointer: true,
-    assetBacked: true,
+    assets: { manifest: spriteFieldAssets as unknown, groups: ['boot', 'gameplay'] },
     camera2D: spriteFieldCamera as unknown as GameCamera2DDefinition<never>,
   },
   'paddle': {
@@ -393,7 +408,7 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     content: CollisionLabContent,
     createSession: () => createGameSession(collisionLabDefinition) as unknown as GameSession,
     pointer: true,
-    assetBacked: true,
+    assets: { manifest: labAssets as unknown, groups: ['gameplay'] },
   },
   'camera-lab': {
     renderer: CameraLabRenderer as unknown as ComponentType<GameRendererProps<never>>,
@@ -409,7 +424,7 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     createSession: () => createPlatformerLabSession() as unknown as GameSession,
     pointer: false,
     camera2D: platformerLabCamera as unknown as GameCamera2DDefinition<never>,
-    assetBacked: true,
+    assets: { manifest: platformerLabAssets as unknown, groups: ['world'] },
   },
   'particle-lab': {
     renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
