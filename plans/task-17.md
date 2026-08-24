@@ -253,76 +253,76 @@ V1 must preserve later storage capabilities without exposing false promises.
 
 ### T17.0 — Freeze workflows, adapter, and API
 
-- [ ] Define one real settings schema and one versioned checkpoint projection.
-- [ ] Preserve at least two historical migration fixtures.
-- [ ] Evaluate current maintained RN/Expo storage adapters from official
+- [x] Define one real settings schema and one versioned checkpoint projection.
+- [x] Preserve at least two historical migration fixtures.
+- [x] Evaluate current maintained RN/Expo storage adapters from official
       sources and record the selected optional peer/version.
-- [ ] Write compile fixtures for schema, store, adapter, load results, errors,
+- [x] Write compile fixtures for schema, store, adapter, load results, errors,
       save/delete/flush, checkpoint effects, and cleanup.
-- [ ] Freeze value grammar, size/depth bounds, key format, queue ordering,
+- [x] Freeze value grammar, size/depth bounds, key format, queue ordering,
       disposal, and migration error semantics.
 
 ### T17.1 — Implement schema and migrations
 
-- [ ] Add focused schema, migration, value, and error modules.
-- [ ] Validate IDs, versions, migration steps, and supported plain values.
-- [ ] Clone/freeze defaults, migration results, and final data.
-- [ ] Preserve stored bytes when migration or validation fails.
-- [ ] Add missing-step and future-version behavior.
+- [x] Add focused schema, migration, value, and error modules.
+- [x] Validate IDs, versions, migration steps, and supported plain values.
+- [x] Clone/freeze defaults, migration results, and final data.
+- [x] Preserve stored bytes when migration or validation fails.
+- [x] Add missing-step and future-version behavior.
 
 ### T17.2 — Implement serialization and envelopes
 
-- [ ] Implement bounded plain-data serialization and parsing.
-- [ ] Add the v1 format/schema/version/time envelope.
-- [ ] Reject malformed, oversized, deep, cyclic, and unsupported data with
+- [x] Implement bounded plain-data serialization and parsing.
+- [x] Add the v1 format/schema/version/time envelope.
+- [x] Reject malformed, oversized, deep, cyclic, and unsupported data with
       exact paths/codes.
-- [ ] Keep user payloads out of default logs and diagnostics.
-- [ ] Test caller mutation before and after save calls.
+- [x] Keep user payloads out of default logs and diagnostics.
+- [x] Test caller mutation before and after save calls.
 
 ### T17.3 — Implement the async store and adapters
 
-- [ ] Implement namespaced load/save/delete/flush/dispose.
-- [ ] Serialize same-slot operations and prevent stale completion publication.
-- [ ] Add in-memory and programmable failure adapters for tests.
-- [ ] Implement the selected RN adapter behind `rn-gamekit/storage` with an
+- [x] Implement namespaced load/save/delete/flush/dispose.
+- [x] Serialize same-slot operations and prevent stale completion publication.
+- [x] Add in-memory and programmable failure adapters for tests.
+- [x] Implement the selected RN adapter behind `rn-gamekit/storage` with an
       optional peer and clear missing-peer error.
-- [ ] Preserve backend causes and make disposal idempotent.
+- [x] Preserve backend causes and make disposal idempotent.
 
 ### T17.4 — Add checkpoint and reference integration
 
-- [ ] Bind one Task 13 checkpoint event to an async save effect.
-- [ ] Keep completion/failure outside deterministic simulation.
-- [ ] Add settings plus checkpoint/resume to one reference game.
-- [ ] Create the session only after validated load/default/migration result.
-- [ ] Prove an old session/store cannot write after replacement.
+- [x] Bind one Task 13 checkpoint event to an async save effect.
+- [x] Keep completion/failure outside deterministic simulation.
+- [x] Add settings plus checkpoint/resume to one reference game.
+- [x] Create the session only after validated load/default/migration result.
+- [x] Prove an old session/store cannot write after replacement.
 
 ### T17.5 — Document and verify v1
 
-- [ ] Add Storage and persistence engine-system documentation.
-- [ ] Add guides for settings, save slots, migrations, loading before session
+- [x] Add Storage and persistence engine-system documentation.
+- [x] Add guides for settings, save slots, migrations, loading before session
       creation, reset, and failure UI.
-- [ ] Document optional-peer installation, adapter guarantees, size bounds,
+- [x] Document optional-peer installation, adapter guarantees, size bounds,
       privacy, and unsupported future capabilities.
-- [ ] Explicitly warn against serializing sessions or renderer snapshots.
-- [ ] Compile-check examples.
-- [ ] Run focused schema, migration, serialization, queue, adapter, stale
+- [x] Explicitly warn against serializing sessions or renderer snapshots.
+- [x] Compile-check examples.
+- [x] Run focused schema, migration, serialization, queue, adapter, stale
       result, and disposal tests.
-- [ ] Validate restart persistence on named devices when hardware is available
+- [x] Validate restart persistence on named devices when hardware is available
       and leave unavailable rows open.
 
 ## V1 definition of done
 
-- [ ] Games own explicit versioned settings and save projections.
-- [ ] No session, renderer, native object, or internal queue is serialized.
-- [ ] Missing, invalid, migrated, corrupt, future, and backend states are
+- [x] Games own explicit versioned settings and save projections.
+- [x] No session, renderer, native object, or internal queue is serialized.
+- [x] Missing, invalid, migrated, corrupt, future, and backend states are
       explicit.
-- [ ] Same-slot operation ordering prevents stale overwrite/publication.
-- [ ] `flush()` and disposal have tested ownership semantics.
-- [ ] The adapter boundary and durability claims are honest.
-- [ ] Checkpoint effects never block or control simulation.
-- [ ] One reference game loads before session creation and resumes saved data.
-- [ ] `rn-gamekit/storage` remains a subpath of the single package.
-- [ ] Focused automated gates pass and device evidence is honestly recorded.
+- [x] Same-slot operation ordering prevents stale overwrite/publication.
+- [x] `flush()` and disposal have tested ownership semantics.
+- [x] The adapter boundary and durability claims are honest.
+- [x] Checkpoint effects never block or control simulation.
+- [x] One reference game loads before session creation and resumes saved data.
+- [x] `rn-gamekit/storage` remains a subpath of the single package.
+- [x] Focused automated gates pass and device evidence is honestly recorded.
 
 ## Future expansion backlog
 
