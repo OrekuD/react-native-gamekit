@@ -2,9 +2,26 @@
 
 ## Status
 
-**All findings resolved (TF1 and TF2 addressed in this change), re-review
-pending.** T16-SF1 through T16-TF2 are now addressed as described below.
-Device performance rows remain open until they run on named hardware.
+**All findings resolved — re-review pending.** T16-F1 through T16-VF1 are
+now addressed as described below. Device performance rows remain open until
+they run on named hardware.
+
+### Fifth follow-up resolution summary (VF1)
+
+- **T16-VF1** — Extracted `GameSurface` to
+  `apps/playground/src/shell/GameSurface.tsx` so the real loading gate
+  can be mounted without the full `PlaygroundShell`. Added
+  `apps/playground/src/shell/GameSurface.test.tsx` (4 tests) mounting
+  the real `GameSurface` with spy `Content` and fake sessions: loading
+  slot proves overlay present, `Content` not mounted, placeholder input
+  receives no gameplay action, and Back remains usable; rerender to ready
+  proves the gate disappears and `Content` mounts exactly once with the
+  ready session and exact asset lease; error state proves Retry calls the
+  exact active request's retry once while `Content` stays absent and
+  Back/close remain safe; a stale asset state/request ID proves it cannot
+  supply error/retry/ready to the current surface. The test fails against
+  the pre-`cb74f81` composition that mounted `Content` for both loading
+  and ready slots.
 
 ### Fourth follow-up resolution summary (TF1-TF2)
 
@@ -897,6 +914,48 @@ Required approach:
   release edge. Repeat a second press to prove the held state was cleared.
 - Update the third follow-up resolution summary only after these named tests
   exist and fail against the pre-fix behavior.
+
+## Fourth follow-up feedback
+
+This isolated review covers only `a31c6db`. T16-TF1's capacity math and its
+non-square complete-span tests are consistent with the chosen scalar-padding
+contract. The real duplicate `onTouchEnd` plus `onPressOut` sequence is also
+covered. One verification gap remains.
+
+### T16-VF1 — The real GameSurface gate is still not mounted-tested (Important)
+
+`assetGate.test.tsx` mounts `AssetGateOverlay` by itself, proving only that the
+overlay displays a spinner/error and invokes its callbacks. The existing
+`surfaceController` tests prove that the controller publishes loading and ready
+slots, but they never render `GameSurface`.
+
+No test currently exercises the conditional in `PlaygroundShell.tsx` that must
+choose the overlay instead of `Content` while loading and then hand the real
+session/lease to `Content` when ready. Removing or reversing that conditional
+would allow the original placeholder-session bug to return while both test
+suites remained green. The resolution summary's claim that this composition is
+verified is therefore not yet supported.
+
+Required approach:
+
+- Extract `GameSurface` into a focused internal module, or export a test-only
+  internal seam that mounts the real component without mounting the entire
+  playground application. Do not replace the component decision with a test
+  replica.
+- Mount a real loading `SurfaceSlot` with a spy `Content`. Assert the overlay
+  is present, `Content` is not mounted, and the placeholder session receives no
+  gameplay input.
+- Rerender the same mounted surface with the matching ready slot. Assert the
+  overlay disappears and `Content` mounts exactly once with the ready session
+  and exact asset lease.
+- Rerender with an error state for the active request and prove Retry and Back
+  reach the active callbacks while gameplay content remains absent.
+- Include a stale asset state/request ID and prove it cannot supply error,
+  retry, or ready data to the current surface.
+- Make the test fail against the original loading-and-content composition from
+  before `cb74f81`; do not rely only on source-text assertions.
+- Correct the fourth follow-up resolution summary only after this mounted
+  composition test exists.
 
 ## Future expansion backlog
 

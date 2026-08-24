@@ -1,20 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
 import { BackHandler, StyleSheet, View } from 'react-native';
-import { AssetGateOverlay } from './AssetGateOverlay';
-import Animated, { useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
-
-import {
-  GamePointerInput,
-  GameView,
-  type GameAssetsState,
-  type GameCamera2DDefinition,
-  type GameRendererProps,
-} from 'rn-gamekit/react';
 import type {
-  GameSession,
-  PointerInputAction,
-  SceneDefinitionMarker,
-} from 'rn-gamekit';
+  GameAssetsState,
+  GameCamera2DDefinition,
+  GameRendererProps,
+} from 'rn-gamekit/react';
+import type { GameSession, SceneDefinitionMarker } from 'rn-gamekit';
+import { GameSurface } from './GameSurface';
 import { useGameAssets } from 'rn-gamekit/react';
 
 import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreakerGame';
@@ -257,128 +249,6 @@ function GameAssetAcquirer({
   return null;
 }
 
-/**
- * The shell's long-lived surface. GameView remains mounted while its slot
- * changes; the per-binding presentation and pointer layers are keyed by the
- * slot generation and reset for every new session (T8.6). The rendered
- * generation is acknowledged after React commits it, which is what makes
- * retired sessions disposable.
- */
-export function GameSurface({
-  slot,
-  hidden,
-  onBindingCommitted,
-  onExit,
-  onOpenGame,
-  onRunSurfaceEvent,
-  assetState,
-}: {
-  readonly slot: SurfaceSlot;
-  readonly hidden: boolean;
-  readonly onBindingCommitted: (generation: number) => void;
-  readonly onExit: () => void;
-  readonly onOpenGame: (gameId: PlaygroundGameId) => void;
-  readonly onRunSurfaceEvent?: (event: RunSurfaceEvent) => void;
-  readonly assetState?: GameAssetsState<import('rn-gamekit').AssetGroupMap>;
-}) {
-  const reduceMotion = useReducedMotion();
-  // Explicit two-state visibility: opening fades to 1; closing fades to 0
-  // (or snaps when reduced motion is enabled). The surface never stays at 1
-  // just because the component itself did not remount (R1).
-  const opacity = useSharedValue(0);
-  // One derivation for every consumer: GameView, pointer, and instrumentation
-  // bind the same session; the dev invariant fails close to the binding site
-  // if a ready slot would publish a disposed session.
-  const bound = effectiveBinding(slot);
-
-  // T8.4: acknowledge the generation this render committed. Repeated
-  // acknowledgment is idempotent, so a stale effect firing late is safe.
-  useEffect(() => {
-    onBindingCommitted(slot.generation);
-  }, [onBindingCommitted, slot.generation]);
-
-  useEffect(() => {
-    if (reduceMotion) {
-      opacity.value = hidden ? 0 : 1;
-      return;
-    }
-    opacity.value = withTiming(hidden ? 0 : 1, { duration: FADE_DURATION_MS });
-  }, [opacity, reduceMotion, hidden]);
-
-  useEffect(() => {
-    const game = bound.game;
-    if (hidden) {
-      if (game.status === 'running') {
-        game.pause();
-      }
-      return;
-    }
-    if (game.status !== 'disposed') {
-      game.start();
-    }
-  }, [hidden, bound.game]);
-
-  const Renderer = slot.renderer;
-  const Content = slot.content as ComponentType<PlaygroundGameContentProps> | undefined;
-  // T16-SF3: never mount gameplay content with the placeholder session.
-  // While the slot is loading (asset-backed), render a blocking gate that
-  // prevents every gameplay control from receiving touches and exposes
-  // retry/back. Content mounts only with the ready session and lease.
-  const showAssetGate = slot.status === 'loading';
-
-  return (
-    <Animated.View
-      accessibilityElementsHidden={hidden}
-      accessibilityViewIsModal={!hidden}
-      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
-      onAccessibilityEscape={onExit}
-      pointerEvents={hidden ? 'none' : 'auto'}
-      style={[styles.gameSurface, { opacity }]}
-    >
-      <GameView
-        game={bound.game}
-        presentationKey={slot.generation}
-        assets={bound.assets as never}
-        renderer={Renderer as unknown as ComponentType<GameRendererProps<SceneDefinitionMarkerMap>>}
-        camera2D={bound.camera2D as never}
-        instrumentation={bound.instrumentation?.view ?? slot.run?.view}
-        style={StyleSheet.absoluteFill}
-      >
-        {bound.pointerEnabled ? (
-          <GamePointerInput
-            // T8.6: the pointer rebinds with the same generation as the
-            // presentation — a fresh RNGH detector per binding, never
-            // object stringification.
-            key={slot.generation}
-            game={bound.pointerGame as GameSession<SceneDefinitionMarkerMap, Record<string, PointerInputAction>>}
-            action={
-              slot.gameId !== null && isPlaygroundGameId(slot.gameId)
-                ? (GAME_CONTENTS[slot.gameId]?.pointerAction ?? 'primary')
-                : 'primary'
-            }
-            instrumentation={bound.instrumentation?.pointer ?? slot.run?.pointer}
-          />
-        ) : null}
-        {showAssetGate ? (
-          <AssetGateOverlay
-            gameId={slot.gameId}
-            assetState={assetState}
-            onExit={onExit}
-          />
-        ) : Content !== undefined ? (
-          <Content
-            game={slot.session}
-            onExit={onExit}
-            onOpenGame={onOpenGame}
-            onRunSurfaceEvent={onRunSurfaceEvent}
-            assetState={assetState}
-          />
-        ) : null}
-      </GameView>
-    </Animated.View>
-  );
-}
-
 /** Content registry: the catalog id maps to content, renderer, session
  * factory, pointer capability, and asset backing. */
 const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
@@ -462,13 +332,5 @@ const styles = StyleSheet.create({
   shell: {
     flex: 1,
     backgroundColor: '#080b12',
-  },
-  gameSurface: {
-    backgroundColor: '#080b12',
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
   },
 });
