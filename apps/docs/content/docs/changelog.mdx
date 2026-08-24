@@ -12,6 +12,7 @@ The changelog lives with the package: [`packages/gamekit/CHANGELOG.md`](https://
 - Typed game events: declared event names, typed envelopes with payload limits, deterministic seeding, and update-scoped emitters.
 - Particles: headless effect simulation with presentation-only Skia rendering and camera-aware culling.
 - Optional audio (`rn-gamekit/audio`) and haptics (`rn-gamekit/haptics`) subpath entries with lifecycle-aware playback and bounded presets.
+- Tilemaps and storage: chunked tile worlds with platformer movement and `TileMapLayer2D`; versioned `rn-gamekit/storage` with `defineGameSave` / `createGameSaveStore`, `createMemoryStorageAdapter` and optional `createGameStorageAdapter` (`@react-native-async-storage/async-storage`), per-slot ordering, `flush()` / `dispose()`, migrations, and `GameStorageError`.
 - `useGameSession(definition)` from `rn-gamekit/react`: React-owned session creation and terminal disposal, Strict Mode safe, with exact scene/input type inference.
 - Observable pause/resume lifecycle: `GameSession.addStatusListener()` and `useGameSessionStatus()`.
 - Paused-input policy: gameplay input is cancelled on pause and rejected while paused.

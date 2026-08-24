@@ -105,6 +105,12 @@
       "source": "./src/sprites.ts",
       "types": "./lib/typescript/src/sprites.d.ts",
       "default": "./lib/module/sprites.js"
+    },
+    "./storage": {
+      "react-native": "./src/storage.ts",
+      "source": "./src/storage.ts",
+      "types": "./lib/typescript/src/storage.d.ts",
+      "default": "./lib/module/storage.js"
     }
   },
   "react-native": "./src/index.ts",
@@ -138,7 +144,8 @@
     "react-native-reanimated": "4.5.3",
     "react-native-worklets": "0.10.3",
     "react-native-audio-api": "^0.13.3",
-    "react-native-pulsar": "^1.7.0"
+    "react-native-pulsar": "^1.7.0",
+    "@react-native-async-storage/async-storage": "^2.1.0"
   },
   "devDependencies": {
     "@shopify/react-native-skia": "2.11.0",
@@ -162,7 +169,8 @@
     "typescript": "catalog:",
     "typescript-eslint": "^8.0.0",
     "react-native-audio-api": "0.13.3",
-    "react-native-pulsar": "1.7.0"
+    "react-native-pulsar": "1.7.0",
+    "@react-native-async-storage/async-storage": "2.1.2"
   },
   "react-native-builder-bob": {
     "source": "src",
@@ -187,6 +195,9 @@
       "optional": true
     },
     "react-native-pulsar": {
+      "optional": true
+    },
+    "@react-native-async-storage/async-storage": {
       "optional": true
     }
   }

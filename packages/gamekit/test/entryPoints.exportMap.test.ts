@@ -9,8 +9,8 @@ const pkgRoot = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(pkgRoot, 'package.json'), 'utf8'));
 
 describe('entry-points: export-map and build outputs', () => {
-  it('package.json has explicit exports for all six new subpaths', () => {
-    const expected = ['geometry', 'collision2d', 'camera2d', 'events', 'assets', 'sprites'];
+  it('package.json has explicit exports for all seven new subpaths', () => {
+    const expected = ['geometry', 'collision2d', 'camera2d', 'events', 'assets', 'sprites', 'storage'];
     for (const name of expected) {
       const key = `./${name}`;
       const entry = pkg.exports[key];
@@ -52,7 +52,7 @@ describe('entry-points: export-map and build outputs', () => {
   it('Builder Bob emitted ESM and declarations for every export target', () => {
     const modules = fs.readdirSync(path.join(pkgRoot, 'lib/module'));
     const types = fs.readdirSync(path.join(pkgRoot, 'lib/typescript/src'));
-    for (const name of ['geometry', 'collision2d', 'camera2d', 'events', 'assets', 'sprites']) {
+    for (const name of ['geometry', 'collision2d', 'camera2d', 'events', 'assets', 'sprites', 'storage']) {
       assert.ok(modules.includes(`${name}.js`), `missing lib/module/${name}.js`);
       assert.ok(types.includes(`${name}.d.ts`), `missing lib/typescript/src/${name}.d.ts`);
       const js = fs.readFileSync(path.join(pkgRoot, `lib/module/${name}.js`), 'utf8');
@@ -60,7 +60,7 @@ describe('entry-points: export-map and build outputs', () => {
       const dts = fs.readFileSync(path.join(pkgRoot, `lib/typescript/src/${name}.d.ts`), 'utf8');
       assert.ok(dts.length > 0, `${name}.d.ts empty`);
       // Smoke: ensure no React import leaked into headless built modules
-      if (['geometry', 'collision2d', 'camera2d', 'events', 'assets', 'sprites'].includes(name)) {
+      if (['geometry', 'collision2d', 'camera2d', 'events', 'assets', 'sprites', 'storage'].includes(name)) {
         assert.ok(!/react-native-reanimated|@shopify\/react-native-skia/.test(js), `${name}.js leaked native import`);
       }
     }

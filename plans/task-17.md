@@ -2,12 +2,11 @@
 
 ## Status
 
-**Planned — Task 13 is recommended for checkpoint requests.** The storage
-system remains async application I/O outside the fixed-step loop.
+**Complete — T17.0–T17.5 done.** The storage system remains async application I/O outside the fixed-step loop.
 
-Task 17 is complete when the v1 definition of done is satisfied. The future
-expansion backlog remains documented but does not block completion and must not
-be implemented without a separate approved task.
+V1 is complete: versioned `rn-gamekit/storage` with envelope, migrations, per-slot queue, flush/dispose, explicit errors, adapter boundary, checkpoint effect, and reference game (Storage Lab). Future expansion backlog remains documented and non-blocking.
+
+Implementation commit: this commit (see `packages/gamekit/src/storage/*`, `apps/playground/src/screens/storage-lab`, docs `engine-systems/storage` + `guides/save-and-load`).
 
 ## Objective
 

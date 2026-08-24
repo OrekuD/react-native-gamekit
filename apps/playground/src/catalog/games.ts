@@ -73,6 +73,12 @@ export const PLAYGROUND_GAMES = [
     description: 'T14.0 spike — audio/haptics wiring, volume/mute, lifecycle (device-gated output).',
     label: 'Run',
   },
+  {
+    id: 'storage-lab',
+    title: 'Storage Lab',
+    description: 'Versioned settings and checkpoint saves: migrations, envelope, per-slot queue, flush/dispose.',
+    label: 'Run',
+  },
 ] as const;
 
 /** Every canonical game id, used for runtime validation at the untyped boundary. */

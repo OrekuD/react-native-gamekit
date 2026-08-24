@@ -1,0 +1,156 @@
+---
+title: Save and load
+description: Persist settings and checkpoint saves with versioned schemas, migrations, and async stores — load before you create the session, save after a tick commits.
+---
+
+Your game owns its save data as small plain projections. The engine owns the envelope, the ordering, and the adapter — never the `GameSession` itself.
+
+## Install the optional peer
+
+Headless logic works with the in-memory adapter (great for tests). On device, install the maintained peer:
+
+```sh
+npx expo install @react-native-async-storage/async-storage
+```
+
+```ts
+import { createGameSaveStore, createMemoryStorageAdapter, createGameStorageAdapter } from 'rn-gamekit/storage';
+
+const adapter = __DEV__ ? createMemoryStorageAdapter() : createGameStorageAdapter();
+```
+
+Importing `rn-gamekit/storage` never eagerly loads the native module.
+
+## Define two schemas
+
+One for small preferences, one for the resumable save. Keep two migrations to preserve history.
+
+```ts
+import { defineGameSave } from 'rn-gamekit/storage';
+
+export const settingsSchema = defineGameSave({
+  id: 'com.example.game.settings',
+  version: 1,
+  createDefault: () => ({ volume: 1, muted: false, language: 'en' as string }),
+  validate: (value) => {
+    const v = value as Record<string, unknown>;
+    if (typeof v.volume !== 'number') throw new Error('volume must be finite');
+    return value as { volume: number; muted: boolean; language: string };
+  },
+  migrations: {},
+});
+
+export const saveSchema = defineGameSave({
+  id: 'com.example.game.save',
+  version: 3,
+  createDefault: () => ({ highScore: 0, unlockedLevels: ['level-1'], coins: 0, checkpointIndex: -1 }),
+  validate: (value) => {
+    // check highScore, unlockedLevels, coins, checkpointIndex — throw with exact path
+    return value as never;
+  },
+  migrations: {
+    1: (v) => ({ ...(v as object), coins: 0 }),
+    2: (v) => ({ ...(v as object), checkpointIndex: -1 }),
+  },
+});
+```
+
+`validate` returns a newly owned, frozen current value or throws. Migrations are synchronous, pure, `N -> N+1`, and never mutate their input.
+
+## Load before you create the session
+
+```ts
+const settingsStore = createGameSaveStore({ schema: settingsSchema, adapter, namespace: 'my-game-settings' });
+const saveStore = createGameSaveStore({ schema: saveSchema, adapter, namespace: 'my-game-save' });
+
+const [settingsRes, saveRes] = await Promise.all([
+  settingsStore.load('player'),
+  saveStore.load('profile-1'),
+]);
+
+// saveRes.status is 'default' | 'stored' | 'migrated' — all are validated and frozen
+const session = createGameSession(game, {
+  // seed your scene from saveRes.data — never JSON.stringify(session)
+});
+```
+
+Do this at your app root or before the surface mounts. Pause never auto-saves; you decide when a boundary commits.
+
+## Save after a checkpoint commits
+
+Emit a typed event from the fixed step and handle it outside simulation:
+
+```ts
+export const events = defineGameEvents({
+  checkpoint: gameEvent<{ index: number; x: number }>(),
+});
+
+const play = defineScene({
+  emits: ['checkpoint'],
+  events,
+  update: ({ state, events }) => {
+    if (crossed(state, next)) events.emit('checkpoint', { index, x });
+    return next;
+  },
+  // ...
+});
+
+session.addGameEventListener('checkpoint', async (event) => {
+  const snap = session.getRenderFrame().current;
+  const projected = projectSave(snap); // plain projection, not session
+  await saveStore.save('profile-1', projected);
+  await saveStore.flush(); // wait for this slot's write to land
+});
+```
+
+Never save every tick or every frame. Save on committed boundaries (checkpoint, level end, explicit save button). Simulation never awaits your async save.
+
+Settings are similar — save on user change:
+
+```ts
+await settingsStore.save('player', { volume, muted: volume === 0, language });
+await settingsStore.flush();
+```
+
+## Reset and failure UI
+
+```ts
+await saveStore.remove('profile-1'); // or saveStore.delete('profile-1')
+await saveStore.flush();
+
+try {
+  const res = await saveStore.load('profile-1');
+} catch (error) {
+  if (error instanceof GameStorageError) {
+    switch (error.code) {
+      case 'CORRUPT_ENVELOPE': // stored JSON is not our envelope
+      case 'SCHEMA_ID_MISMATCH':
+      case 'FUTURE_VERSION': // stored version is newer than your current code
+      case 'MISSING_MIGRATION':
+      case 'MIGRATION_FAILED':
+      case 'VALIDATION_FAILED':
+        // show “save is corrupt or from a newer version” and offer Reset
+        break;
+      case 'BACKEND_READ_FAILED':
+      case 'BACKEND_WRITE_FAILED':
+        // show “storage unavailable” — cause is preserved as error.cause
+        break;
+      case 'DISPOSED':
+        // you used a disposed store after navigation — create a fresh store
+        break;
+    }
+  }
+}
+```
+
+Failed loads and migrations never overwrite the stored bytes — the next `load()` still sees the original record. Failed saves never leave a half-written envelope. Surface `path` tells you the exact field that failed.
+
+## Size, privacy, and lifecycle
+
+- Keep saves small and plain: depth ≤ 16, nodes ≤ 4096, serialized bytes ≤ 256 KiB. Large worlds need sharding.
+- This adapter is **not secure storage** — never store auth tokens, passwords, payment or health data here. Use Keychain/Keystore for secrets.
+- `flush()` waits for operations accepted before the call, not for future ones.
+- `dispose()` rejects new work; accepted writes still complete. After navigation or a store replacement, old promises that resolve late are ignored — they cannot publish stale results.
+- `savedAtMs` in the envelope is metadata; never copy it into `state`.
+
+See `engine-systems/storage` for the full contract and the Storage Lab at `apps/playground/src/screens/storage-lab` for the reference integration that loads before session creation, resumes `checkpointIndex`, saves on checkpoint events, and proves stale writes are rejected after `dispose()`.

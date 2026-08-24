@@ -1,0 +1,230 @@
+---
+title: Storage
+description: Versioned, adapter-backed persistence for settings and save slots — plain-data envelopes, migrations, per-slot ordering, flush/dispose, and privacy.
+---
+
+Settings and saves are **game-owned plain projections** that are loaded before a session is created and saved after a tick commits. The engine never serializes a `GameSession`, scene closures, renderer snapshots, or native handles. Storage is async application I/O outside the fixed step.
+
+## One package, one install
+
+Storage ships as `rn-gamekit/storage`, a subpath of the single `rn-gamekit` package — not a separate npm package.
+
+```ts
+import { createGameSaveStore, defineGameSave } from 'rn-gamekit/storage';
+import { createGameStorageAdapter } from 'rn-gamekit/storage'; // optional RN peer
+import { createMemoryStorageAdapter } from 'rn-gamekit/storage'; // in-memory for tests
+```
+
+Importing `rn-gamekit` or `rn-gamekit/storage` does **not** eagerly load the native storage backend. The adapter is loaded on the first `read`/`write`/`remove`.
+
+Install the optional peer only if you use the RN adapter:
+
+```sh
+npx expo install @react-native-async-storage/async-storage
+```
+
+The validated line is `@react-native-async-storage/async-storage@2.1.2` with peer range `^2.1.0`. The in-memory adapter requires no native module and is ideal for tests and for apps that already own their storage backend — pass any `GameStorageAdapter` to `createGameSaveStore`.
+
+## What belongs in storage
+
+**Settings** are small user preferences (volume, mute, haptics, language, controls, accessibility, graphics quality). Load them before the session when needed and save them on user changes — not every tick or frame. Do not store secrets here.
+
+**Save slots and checkpoints** are explicit `slot` keys (e.g. `profile-1`, `slot-2`) holding the complete projection required to resume play. Capture one projection at a committed gameplay boundary — a Task 13 effect may request an async save after the tick commits. Save completion is an application result, not a deterministic game event. Pause does not automatically serialize the session.
+
+Downloaded assets, thumbnails, and derived caches stay outside this task.
+
+## Defining a versioned schema
+
+```ts
+import { defineGameSave } from 'rn-gamekit/storage';
+
+type Save = { highScore: number; unlockedLevels: string[]; coins: number };
+
+export const saveSchema = defineGameSave<Save>({
+  id: 'com.example.game.save',
+  version: 3,
+  createDefault: () => ({ highScore: 0, unlockedLevels: ['level-1'], coins: 0 }),
+  validate: (value): Save => {
+    if (typeof (value as Record<string, unknown>).highScore !== 'number') throw new Error('highScore must be finite');
+    // ... check unlockedLevels, coins — throw with exact path on failure
+    return value as Save;
+  },
+  migrations: {
+    1: (v) => ({ ...(v as object), coins: 0 } as Save), // V1 -> V2
+    2: (v) => ({ ...(v as object), checkpointIndex: -1 } as unknown as Save), // V2 -> V3
+  },
+});
+```
+
+Contracts:
+
+- `id` is stable, non-empty, namespaced (`com.example.game.save`), 1..128 chars, no null bytes.
+- `version` is a positive safe integer and only increases.
+- `createDefault()` applies only to genuine absence or an explicit reset. It is validated through `validate` before publication.
+- `validate(value)` returns a newly owned complete current value or throws with a structured path-aware error. The result is cloned and frozen — callers cannot mutate the published value.
+- `migrations` run sequentially `N -> N+1`, are synchronous and pure, and must not mutate their input. Missing steps and newer stored versions fail clearly. The final migrated value is validated before publication and a failed migration never overwrites the stored record.
+
+Use any validation library internally as long as the `validate` contract is preserved.
+
+## The stored envelope
+
+The engine wraps your payload in a small envelope separate from your data:
+
+```ts
+interface StoredGameEnvelope {
+  readonly format: 'rn-gamekit.save';
+  readonly schemaId: string;
+  readonly schemaVersion: number;
+  readonly savedAtMs: number;
+  readonly payload: unknown;
+}
+```
+
+`savedAtMs` is metadata (wall time) and never enters deterministic state automatically. The envelope is JSON-serialized; payloads stay plain.
+
+## Plain-data and size bounds
+
+Before writing, the payload is validated as **bounded plain data**:
+
+- Allowed: finite numbers, strings, booleans, `null`, plain records (`Object.prototype` or `null` prototype), arrays.
+- Rejected: functions, symbols, `bigint`, `undefined`, non-finite numbers, cycles, sparse holes, accessors/non-enumerable, unsafe keys (`__proto__`, `constructor`, `prototype`), symbol keys, React elements, promises/thenables, class instances (`Map`, `Set`, `Date`, etc.).
+- Bounds: depth ≤ 16, nodes ≤ 4096, array length ≤ 1024, object fields ≤ 1024, string length ≤ 16384, serialized bytes ≤ 256 KiB. Exceeding any bound throws `GameStorageError` with code `SIZE_EXCEEDED` or `DEPTH_EXCEEDED` and an exact path. Loaded bytes are treated as untrusted input before migration and validated again after migration.
+
+Caller mutation before or after `save()` cannot affect the written bytes — the store snapshots synchronously at the call.
+
+Never log full save payloads by default.
+
+## Creating a store
+
+```ts
+import { createGameSaveStore, createMemoryStorageAdapter } from 'rn-gamekit/storage';
+
+const saves = createGameSaveStore({
+  schema: saveSchema,
+  adapter: createMemoryStorageAdapter(), // or createGameStorageAdapter()
+  namespace: 'my-game',
+});
+```
+
+- `namespace` and `slot` are 1..64 chars, `a-zA-Z0-9._-` only — they prevent cross-game key collisions. Keys are stored as `rn-gamekit.storage.<namespace>.<slot>`.
+- `adapter` is any `GameStorageAdapter`:
+
+```ts
+interface GameStorageAdapter {
+  read(key: string): Promise<string | undefined>;
+  write(key: string, value: string): Promise<void>;
+  remove(key: string): Promise<void>;
+}
+```
+
+Missing data (`undefined`) and read failure are different outcomes; real backend `Error` causes are preserved.
+
+- Writes for the **same slot** are serialized in request order — an older slow write never overwrites a newer request. Different slots proceed independently.
+- A `save()` promise resolves when that specific accepted write completes.
+- `flush()` waits for every operation accepted before the call.
+- `dispose()` rejects new work and is idempotent; accepted writes continue to completion. Stale results from a disposed or replaced store generation cannot publish.
+- Do not rely on timers to repair ordering; durability is exactly what the underlying adapter documents.
+
+The `rn-gamekit` package relies on `AsyncStorage`'s documented `getItem`/`setItem`/`removeItem` guarantees. Stronger journaling, checksums, and recovery are future capabilities and are not implied by `flush()`.
+
+## Loading, saving, and resuming
+
+```ts
+const loaded = await saves.load('profile-1');
+if (loaded.status === 'default') {
+  // no stored record — createDefault() was validated and is already frozen
+}
+if (loaded.status === 'migrated') {
+  // fromVersion -> toVersion was migrated sequentially and re-validated
+  console.log(`migrated ${loaded.fromVersion} -> ${loaded.toVersion}`);
+}
+const session = createGameSession(game, { /* use loaded.data to seed initial scene */ });
+
+await saves.save('profile-1', projectSave(session.getRenderFrame().current));
+await saves.flush();
+saves.dispose();
+```
+
+`load()` returns an explicit result:
+
+- `default` — no record: `createDefault()` validated
+- `stored` — record at current version
+- `migrated` — record was at an older version and was migrated sequentially to current
+
+Missing migration steps, a future version, a corrupt envelope, a schema id mismatch, or a final validation failure all throw `GameStorageError` and leave the stored bytes untouched — the next `load()` still sees the original record.
+
+**Do not serialize sessions.** Create the session only after the validated `load()`/`default`/`migrated` result:
+
+```ts
+const loaded = await saves.load('profile-1');
+const session = createStorageLabSession(loaded.data); // not createGameSession(loaded) — loaded.data is the projection
+```
+
+`savedAtMs` never seeds `state`.
+
+## Checkpoint effects stay outside simulation
+
+Emit a typed checkpoint event from the fixed step, then handle it asynchronously:
+
+```ts
+export const events = defineGameEvents({
+  checkpoint: gameEvent<{ index: number; x: number }>(),
+});
+
+const play = defineScene({
+  emits: ['checkpoint'],
+  events,
+  update: ({ state, events }) => {
+    if (crossedCheckpoint(state, next)) {
+      events.emit('checkpoint', { index, x });
+    }
+    return next;
+  },
+  // ...
+});
+
+// After the tick commits, the listener runs outside simulation:
+session.addGameEventListener('checkpoint', async (event) => {
+  const snap = session.getRenderFrame().current;
+  await saves.save('profile-1', projectSave(snap));
+  // completion is not a game event — update UI from the promise, not from state
+});
+```
+
+Simulation never awaits the async save. Completion and failure are application results; the scene's `state` never contains a `saving` flag that drives gameplay.
+
+The Storage Lab at `apps/playground/src/screens/storage-lab` is the reference integration: it loads settings and saves before creating the session, resumes `checkpointIndex`, binds the `checkpoint` event to an async save + `flush()`, saves settings on user change (not every tick), and disposes the store on unmount so old writes cannot publish after replacement.
+
+## Errors and privacy
+
+Every failure is a `GameStorageError` with a stable `code`, `operation`, `namespace`, `slot`, `schemaId`, `schemaVersion`, exact `path` where relevant, and `cause`:
+
+- `INVALID_NAMESPACE` / `INVALID_SLOT` — bad key
+- `INVALID_SCHEMA_ID` / `INVALID_SCHEMA_VERSION` / `INVALID_MIGRATION` — bad schema
+- `UNSUPPORTED_VALUE` / `SERIALIZATION_FAILED` / `SIZE_EXCEEDED` / `DEPTH_EXCEEDED` — bad projection or too large/deep
+- `BACKEND_READ_FAILED` / `BACKEND_WRITE_FAILED` / `BACKEND_REMOVE_FAILED` — adapter threw (cause preserved)
+- `CORRUPT_ENVELOPE` — JSON parse or envelope shape failed
+- `SCHEMA_ID_MISMATCH` / `FUTURE_VERSION` / `MISSING_MIGRATION` / `MIGRATION_FAILED` / `VALIDATION_FAILED` — load/migrate/validate failed
+- `DISPOSED` — store has been disposed
+
+V1 persistence is **not secure storage**. Do not store auth tokens, passwords, payment data, health data, or other secrets in the normal adapter. Use platform Keychain/Keystore for secrets (future).
+
+## Adapter guarantees and limits
+
+- AsyncStorage is the selected maintained RN/Expo adapter. Expo recommends it and it is validated against the SDK 57 line.
+- The adapter stores one JSON string per `namespace/slot` key. There is no database, query API, or cross-slot transaction.
+- Serialized size is capped at 256 KiB per slot; larger worlds need sharding or a future database capability.
+- `flush()` is not a journal commit — it only waits for accepted writes to reach the adapter.
+
+## What not to do
+
+- Do not `JSON.stringify(session)` or `JSON.stringify(snapshot)` directly — use an explicit projection and `validate`. Snapshots contain frozen engine objects that are not part of the storage grammar.
+- Do not save every tick or every frame — save on committed boundaries (checkpoints, level completion, explicit user save).
+- Do not store `savedAtMs` into `state` — keep it as envelope metadata.
+- Do not assume dual-record, checksum, or cloud sync — those are roadmap items that require separate identity, server, and privacy contracts.
+
+## Roadmap
+
+Future capabilities such as dual-record journaling, recovery, cloud sync, encryption, autosave coalescing, React hooks, databases, asset cache management, replay archives, and background tasks are intentionally deferred and will not be added without separate approved tasks.
+
+Missing, invalid, migrated, corrupt, future, and backend states are explicit (see `GameStorageError` codes). Same-slot ordering, `flush()`, and disposal have tested ownership semantics. The adapter boundary and durability claims are honest, and checkpoint effects never block simulation. The Storage Lab loads before session creation and resumes migrated data. `rn-gamekit/storage` remains a subpath of the single package.

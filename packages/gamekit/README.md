@@ -147,11 +147,12 @@ source.
 | `rn-gamekit/events` | `defineGameEvents` / `gameEvent`, envelopes, `PAYLOAD_LIMITS`, `seedGameEvent`, `GameEventError` | Effect consumers / React / native peers |
 | `rn-gamekit/assets` | `defineAssets` / `image` / `spriteSheet`, descriptor & loaded-value types, `GameAssetError` | React hooks / Skia decoding / Expo Asset |
 | `rn-gamekit/sprites` | `sampleSpriteClip*` & playback-state helpers (`start/advance/…SpriteAnimation`) | React components / Skia Atlas |
+| `rn-gamekit/storage` | Versioned settings and save projections (`defineGameSave`, `createGameSaveStore`, `createMemoryStorageAdapter` / `createGameStorageAdapter`, `GameStorageError`, `STORAGE_LIMITS`) | React / Skia / native peers except optional `async-storage` peer |
 | `rn-gamekit/react` | `GameView`, `GameWorld2D`, `Sprite`, `GameSprite`, `SpriteBatch`, `defineGameCamera2D`, asset/particle/tilemap rendering, pointer input, hooks | — |
 | `rn-gamekit/audio` · `rn-gamekit/haptics` · `rn-gamekit/particles` · `rn-gamekit/tilemap` | Audio, haptics, particle effects, tilemaps (existing ownership) | — |
 | `rn-gamekit/testing` | Deterministic frame drivers for Node tests (test-only, never production) | — |
 
-Headless entries (`geometry`, `collision2d`, `camera2d`, `events`, `assets`, `sprites`) import no React, React Native, Skia, Reanimated, Worklets, Expo Asset, or optional native peers. `rn-gamekit/react` is the only entry that loads Skia/Reanimated/Gesture Handler.
+Headless entries (`geometry`, `collision2d`, `camera2d`, `events`, `assets`, `sprites`, `storage`) import no React, React Native, Skia, Reanimated, Worklets, Expo Asset, or optional native peers. `rn-gamekit/react` is the only entry that loads Skia/Reanimated/Gesture Handler.
 
 **Preferred imports (new code):**
 
@@ -162,6 +163,7 @@ import { createCamera2D } from 'rn-gamekit/camera2d';
 import { defineGameEvents, gameEvent } from 'rn-gamekit/events';
 import { defineAssets, image, spriteSheet } from 'rn-gamekit/assets';
 import { sampleSpriteClipFrame, startSpriteAnimation } from 'rn-gamekit/sprites';
+import { createGameSaveStore, defineGameSave } from 'rn-gamekit/storage';
 import { GameView, GameWorld2D, Sprite } from 'rn-gamekit/react';
 ```
 
@@ -177,9 +179,8 @@ for complete examples.
 
 ## Current scope
 
-The 0.1 release focuses on performant 2D foundations. Physics, tilemaps,
-audio, haptics, game-level navigation, save data, and 3D rendering are not yet
-part of the public package.
+The 0.1 release focuses on performant 2D foundations. Physics and 3D rendering are not yet
+part of the public package; tilemaps, audio, haptics, events, particles, and versioned storage are now included.
 
 ## License
 

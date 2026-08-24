@@ -50,6 +50,10 @@ describe('entry-points: headless isolation', () => {
     freshCacheCheck('../src/sprites.ts', nativePatterns, 'sprites');
   });
 
+  it('storage imports without native peers (except optional async-storage peer)', () => {
+    freshCacheCheck('../src/storage.ts', nativePatterns, 'storage');
+  });
+
   it('root does not initialize optional audio/haptics backends', () => {
     const require = createRequire(import.meta.url);
     const before = new Set(
@@ -65,6 +69,22 @@ describe('entry-points: headless isolation', () => {
     assert.deepEqual(runtime, [], `root initialized optional backends: ${runtime.join(', ')}`);
   });
 
+  it('root does not initialize optional storage backend', () => {
+    const require = createRequire(import.meta.url);
+    const before = new Set(Object.keys(require.cache).filter((id) => /async-storage|storage\/adapters/.test(id)));
+    require('../src/index.ts');
+    const after = Object.keys(require.cache).filter((id) => /async-storage|storage\/adapters/.test(id) && !before.has(id));
+    assert.deepEqual(after, [], `root initialized storage backend: ${after.join(', ')}`);
+  });
+
+  it('storage subpath itself does not eagerly load AsyncStorage', () => {
+    const require = createRequire(import.meta.url);
+    const before = new Set(Object.keys(require.cache).filter((id) => /async-storage/.test(id)));
+    require('../src/storage.ts');
+    const after = Object.keys(require.cache).filter((id) => /async-storage/.test(id) && !before.has(id));
+    assert.deepEqual(after, [], `storage subpath eagerly loaded AsyncStorage: ${after.join(', ')}`);
+  });
+
   it('entry imports allocate no sessions/renderers/stores', async () => {
     // Importing should not create sessions — check that no global session registry exists
     // and that importing does not throw or mutate global state
@@ -75,6 +95,7 @@ describe('entry-points: headless isolation', () => {
     await import('../src/events.ts');
     await import('../src/assets.ts');
     await import('../src/sprites.ts');
+    await import('../src/storage.ts');
     const afterKeys = Object.keys(globalThis as Record<string, unknown>);
     const leaked = afterKeys.filter((k) => !beforeKeys.has(k) && /__gamekit/.test(k));
     assert.deepEqual(leaked, [], `leaked global keys: ${leaked.join(', ')}`);
@@ -89,6 +110,7 @@ describe('entry-points: headless isolation', () => {
       '../src/events.ts',
       '../src/assets.ts',
       '../src/sprites.ts',
+      '../src/storage.ts',
     ];
     // Check barrel and underlying index contents for forbidden imports
     const forbiddenImport = /from\s+['"]react['"]|from\s+['"]react-native['"]|@shopify\/react-native-skia|react-native-reanimated|react-native-worklets|expo-asset|createGameAudio|createGameHaptics/;
@@ -109,6 +131,12 @@ describe('entry-points: headless isolation', () => {
       if (p.includes('camera2d')) {
         const idx = fs.readFileSync(new URL('../src/camera2d/index.ts', import.meta.url).pathname, 'utf8');
         assert.ok(!forbiddenImport.test(idx), 'camera2d/index imports forbidden');
+      }
+      if (p.includes('storage')) {
+        const idx = fs.readFileSync(new URL('../src/storage/index.ts', import.meta.url).pathname, 'utf8');
+        assert.ok(!forbiddenImport.test(idx), 'storage/index imports forbidden');
+        const store = fs.readFileSync(new URL('../src/storage/store.ts', import.meta.url).pathname, 'utf8');
+        assert.ok(!forbiddenImport.test(store), 'storage/store imports forbidden');
       }
     }
   });

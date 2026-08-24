@@ -38,6 +38,8 @@ All notable changes to React Native GameKit will be documented in this file.
   music channel.
 - Haptics (opt-in `rn-gamekit/haptics`): `createGameHaptics` with bounded
   presets over Pulsar, mute, capability checks, and rate limits.
+- Tilemaps: `defineTileSet2D` / `defineTileLayer2D` / `defineTileMap2D` with chunked storage, `movePlatformerBody2D` tunable platformer resolver, `TileMapLayer2D` atlas rendering with culling, and Tiled JSON adapter.
+- Versioned storage (opt-in `rn-gamekit/storage`): `defineGameSave` / `createGameSaveStore` with `createMemoryStorageAdapter` and optional `createGameStorageAdapter` (`@react-native-async-storage/async-storage@2.1.2`), envelope `rn-gamekit.save`, per-slot serialized queue, `flush()` / `dispose()`, migrations, bounded plain-data serialization (256 KiB, depth 16), and explicit `GameStorageError` codes.
 
 ## 0.1.0 - 2026-08-12
 

@@ -25,6 +25,7 @@ import { createPlatformerLabSession } from '../screens/platformer-lab/platformer
 import { platformerLabCamera } from '../screens/platformer-lab/platformerLabCamera';
 import AudioLabScreen from '../screens/audio-lab/AudioLabScreen';
 import ParticleLabScreen from '../screens/particle-lab/ParticleLabScreen';
+import StorageLabScreen from '../screens/storage-lab/StorageLabScreen';
 import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRenderer';
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
 import { createLabSession } from '../screens/lab/labSession';
@@ -317,6 +318,12 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
   'audio-lab': {
     renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
     content: AudioLabScreen as unknown as ComponentType<PlaygroundGameContentProps>,
+    createSession: () => createIdleSession() as unknown as GameSession,
+    pointer: false,
+  },
+  'storage-lab': {
+    renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: StorageLabScreen as unknown as ComponentType<PlaygroundGameContentProps>,
     createSession: () => createIdleSession() as unknown as GameSession,
     pointer: false,
   },
