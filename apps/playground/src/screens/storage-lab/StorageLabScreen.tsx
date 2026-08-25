@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createGameSaveStore, createGameStorageAdapter, type GameStorageAdapter } from 'rn-gamekit/storage';
 
@@ -44,16 +44,21 @@ interface RequestOwner {
 
 export default function StorageLabScreen({ adapter: injectedAdapter, createSession: injectedCreateSession }: StorageLabScreenProps) {
   // Identity of the request whose results are published. Replacement gating
-  // happens AT RENDER TIME: when the incoming adapter/session-factory identity
-  // differs from the published one, the very first committed frame after the
-  // prop change already renders the blocking loading state — there is no
-  // committed window where the disposed request's controls stay interactive.
-  const requestKey = useMemo(
-    () => ({ adapter: injectedAdapter, createSession: injectedCreateSession }),
-    [injectedAdapter, injectedCreateSession],
-  );
-
-  const [publishedKey, setPublishedKey] = useState(requestKey);
+  // happens AT RENDER TIME: when either incoming identity field differs from
+  // the published one, the very first committed frame after the prop change
+  // already renders the blocking loading state — there is no committed window
+  // where the disposed request's controls stay interactive.
+  //
+  // T17-VF1: the two ACTUAL identity fields are stored and compared directly.
+  // Correctness never depends on a memoized wrapper object surviving — React
+  // may discard useMemo caches at any time.
+  const [published, setPublished] = useState<{
+    adapter: GameStorageAdapter | undefined;
+    createSession: StorageLabScreenProps['createSession'];
+  }>({
+    adapter: injectedAdapter,
+    createSession: injectedCreateSession,
+  });
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<LabSession | null>(null);
@@ -61,11 +66,13 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
   const [status, setStatus] = useState('loading saves…');
   const [volume, setVolume] = useState(1);
 
-  if (publishedKey !== requestKey) {
+  if (published.adapter !== injectedAdapter || published.createSession !== injectedCreateSession) {
     // Render-phase reset for the NEW props (documented React pattern): these
     // updates apply before this render commits, so the replacement never
-    // paints the previous request's interactive UI.
-    setPublishedKey(requestKey);
+    // paints the previous request's interactive UI. Same-props rerenders
+    // (including Strict Mode double-invocations) fail both comparisons and
+    // leave published ready state untouched.
+    setPublished({ adapter: injectedAdapter, createSession: injectedCreateSession });
     setLoadState('loading');
     setSession(null);
     setHud(null);
@@ -84,7 +91,6 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
 
     // The blocking transition itself happens at render time (above); here we
     // only reset the HUD cadence bookkeeping for this generation.
-    hudLastRef.current = { at: -Infinity, record: null };
     hudLastRef.current = { at: -Infinity, record: null };
 
     const adapter = injectedAdapter ?? createPlaygroundAdapter();

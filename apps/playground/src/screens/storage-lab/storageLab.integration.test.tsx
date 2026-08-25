@@ -138,6 +138,7 @@ type LabSession = ReturnType<typeof import('./storageLabGame').createStorageLabS
 type SessionSeam = (initial: import('./storageLabGame').StorageLabSave) => LabSession;
 
 interface SessionRecord {
+  created: number;
   disposed: number;
   unsubscribed: number;
   raw: any;
@@ -145,7 +146,7 @@ interface SessionRecord {
 }
 
 function emptyRecord(): SessionRecord {
-  return { disposed: 0, unsubscribed: 0, raw: null, driverRef: { current: null } };
+  return { created: 0, disposed: 0, unsubscribed: 0, raw: null, driverRef: { current: null } };
 }
 
 /**
@@ -154,6 +155,7 @@ function emptyRecord(): SessionRecord {
  */
 function trackedSession(record: SessionRecord): SessionSeam {
   return (initial) => {
+    record.created += 1;
     const driver = new ManualFrameDriver();
     record.driverRef.current = driver;
     const raw: any = createGameSessionWithDriver(createStorageLabDefinition(initial), {
@@ -646,6 +648,79 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
     assert.equal(recordB.disposed, 1, 'B disposed exactly once at unmount');
     assert.equal(recordA.disposed, 1, 'A still exactly once');
     assert.equal(recordB.unsubscribed, 1, 'B checkpoint subscription removed exactly once');
+  });
+
+  it('VF1: unrelated same-props rerenders and Strict Mode never reset or restart the request', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const record = emptyRecord();
+    let renderer: ReturnType<typeof create> | null = null;
+
+    // Mount once under StrictMode-style double render of props identity:
+    // pass the SAME adapter/createSession references across rerenders.
+    const createSession = trackedSession(record);
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter, createSession } as never));
+    });
+    await awaitReady(renderer!, 'loaded default');
+    const readyTree = haystacks(renderer!);
+    assert.equal(record.created, 1, 'exactly one session created at mount');
+    assert.equal(record.disposed, 0);
+
+    // Unrelated rerender with identical prop identities — the published state
+    // must not reset to loading and no new request may start.
+    await act(async () => {
+      renderer!.update(createElement(StorageLabScreen as never, { adapter, createSession } as never));
+      await sleep(10);
+    });
+    assert.ok(findText(renderer!, 'loaded default'), 'ready state survives same-props rerender');
+    assert.ok(!findText(renderer!, 'loading saves'), 'no spurious loading reset');
+    assert.equal(record.created, 1, 'no extra session for same-props rerender');
+    assert.equal(record.disposed, 0, 'session not disposed by same-props rerender');
+
+    // A second rerender after another async tick — still stable.
+    await act(async () => {
+      await sleep(20);
+      renderer!.update(createElement(StorageLabScreen as never, { adapter, createSession } as never));
+      await sleep(10);
+    });
+    assert.ok(findText(renderer!, 'loaded default'), 'ready state still intact');
+    assert.deepEqual(
+      { created: record.created, disposed: record.disposed },
+      { created: 1, disposed: 0 },
+    );
+    assert.ok(haystacks(renderer!).includes('loaded default') || readyTree.length > 0);
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+    assert.equal(record.disposed, 1, 'final unmount disposes exactly once');
+
+    // StrictMode double-invocation: mounting inside <StrictMode> must not
+    // produce two live sessions nor a stuck-loading screen.
+    const react = await import('react');
+    const strictAdapter = createMemoryStorageAdapter();
+    const strictRecord = emptyRecord();
+    const strictCreate = trackedSession(strictRecord);
+    let strictRenderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      strictRenderer = create(
+        createElement(react.StrictMode, null, createElement(StorageLabScreen as never, { adapter: strictAdapter, createSession: strictCreate } as never)),
+      );
+      await sleep(30);
+    });
+    assert.ok(findText(strictRenderer!, 'loaded default') || findText(strictRenderer!, 'loading saves'));
+    await act(async () => {
+      await sleep(30);
+    });
+    // StrictMode may mount effects twice; every created session must be
+    // disposed and at most one may remain live while mounted.
+    assert.ok(strictRecord.created >= 1 && strictRecord.created <= 2, `reasonable session count under StrictMode (${strictRecord.created})`);
+    assert.ok(strictRecord.created - strictRecord.disposed <= 1, 'at most one live session');
+    assert.ok(findText(strictRenderer!, 'loaded'), 'StrictMode screen reaches ready (not stuck loading)');
+    await act(async () => {
+      strictRenderer!.unmount();
+    });
+    assert.equal(strictRecord.created, strictRecord.disposed, 'StrictMode: every created session disposed');
   });
 
   it('playground declares AsyncStorage directly', async () => {

@@ -2,16 +2,15 @@
 
 ## Status
 
-**Third follow-up T17-TF1 resolved.** Replacement gating now happens at the
-render/commit boundary: the published request identity lives in state and a
-render-phase reset (documented "adjust state when props change" pattern) makes
-the FIRST committed frame after an adapter/factory swap already show the
-blocking loading UI — no passive-effect clearing, and all five
-`react-hooks/set-state-in-effect` suppressions are removed. The A→B swap test
-discriminates via a Text render log: after the swap, no commit renders the
-disposed request's controls or status (verified RED against `04ede7f`, where
-the log shows `Move right`/`Save now`/`Vol ±` rendered post-swap before being
-cleared one commit later).
+**Final verification T17-VF1 resolved.** The published request state now stores
+the two actual identity fields (`adapter`, `createSession`) and compares them
+directly — correctness no longer depends on `useMemo` retaining a wrapper
+object (the memo import is gone). Same-props rerenders fail both comparisons
+and leave published ready state untouched; the duplicated `hudLastRef`
+assignment in the load effect was removed. The mounted VF1 test proves
+unrelated same-props rerenders and Strict Mode double-invocation never reset
+the ready screen, never start an extra request, and keep created/disposed
+session counts balanced (at most one live session).
 
 V1 is complete: versioned `rn-gamekit/storage` with envelope, migrations, per-slot queue, flush/dispose, explicit errors, adapter boundary, checkpoint effect, and reference game (Storage Lab). Future expansion backlog remains documented and non-blocking.
 
@@ -686,6 +685,38 @@ Required approach:
   blocked B *before passive effects are flushed*. Assert that it already contains
   only loading UI and no controls. Then flush effects, release B, and retain the
   existing exact-once disposal/subscription assertions.
+
+## Final verification feedback
+
+This isolated review covers `e53c669`. The render-phase reset and Text render log
+correctly resolve T17-TF1. Keep that behavior and remove the remaining reliance on
+memo-cache identity.
+
+### T17-VF1 — Request correctness depends on `useMemo` retaining an object (Important)
+
+`requestKey` is a newly allocated object whose stability comes only from
+`useMemo`, and `publishedKey !== requestKey` is treated as a semantic request
+change. React may discard memoized values; `useMemo` is an optimization, not an
+identity guarantee. If that happens with unchanged props, the render-phase branch
+clears the ready session and changes `publishedKey`, but the load effect does not
+rerun because its actual dependencies did not change. The screen can then remain
+stuck in loading with its still-owned session hidden.
+
+Required approach:
+
+- Store the two actual identity fields in published state and compare
+  `published.adapter !== injectedAdapter` or
+  `published.createSession !== injectedCreateSession` directly. Do not derive a
+  correctness key from a memoized wrapper object.
+- Keep the render-phase replacement reset and atomic ready-session publication;
+  only the identity comparison needs to change.
+- Remove the now-unnecessary `useMemo` import and the duplicated consecutive
+  `hudLastRef.current = { at: -Infinity, record: null }` assignment in the load
+  effect.
+- Retain the current A→B RED test and add an unrelated same-props rerender/Strict
+  Mode case proving it neither resets the ready screen nor starts/disposes another
+  request. A small pure identity-comparison test is acceptable additional evidence,
+  but should not replace the mounted lifecycle assertion.
 
 ## Future expansion backlog
 
