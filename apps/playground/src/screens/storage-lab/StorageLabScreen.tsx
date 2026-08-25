@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { createGameSaveStore, createMemoryStorageAdapter } from 'rn-gamekit/storage';
+import { createGameSaveStore, createGameStorageAdapter, type GameStorageAdapter } from 'rn-gamekit/storage';
 
 import {
   createStorageLabSession,
@@ -12,7 +12,20 @@ import {
 
 type LoadState = 'loading' | 'ready' | 'error';
 
-export default function StorageLabScreen() {
+export type StorageLabScreenProps = {
+  /** Injectable adapter seam for mounted tests — playground uses AsyncStorage. */
+  adapter?: GameStorageAdapter;
+};
+
+const DIAGNOSTIC_INTERVAL = 0.125;
+
+/** Playground path uses the durable AsyncStorage adapter so settings/checkpoints survive reopening and restarts. */
+function createPlaygroundAdapter(): GameStorageAdapter {
+  // Declared directly where the playground build requires it (see package.json peer).
+  return createGameStorageAdapter();
+}
+
+export default function StorageLabScreen({ adapter: injectedAdapter }: StorageLabScreenProps) {
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<ReturnType<typeof createStorageLabSession> | null>(null);
@@ -20,33 +33,35 @@ export default function StorageLabScreen() {
   const [status, setStatus] = useState('loading saves…');
   const [volume, setVolume] = useState(1);
 
-  // Stores are created once per screen lifetime; disposal is explicit.
-  const storesRef = useRef<ReturnType<typeof createGameSaveStore> | null>(null);
-  const settingsStoreRef = useRef<ReturnType<typeof createGameSaveStore> | null>(null);
-  const adapterRef = useRef(createMemoryStorageAdapter());
+  // Owner refs — never mutate GameSession with private fields.
+  const storesRef = useRef<{ save: ReturnType<typeof createGameSaveStore>; settings: ReturnType<typeof createGameSaveStore> } | null>(null);
+  const subscriptionRef = useRef<{ remove(): void } | null>(null);
+  const moveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hudLastRef = useRef<{ at: number; record: { x: number; checkpoint: number; ticks: number } | null }>({ at: -Infinity, record: null });
 
-  // Load before session creation (T17.4)
+  // Request token to ignore stale async completions after unmount/replacement.
+  const requestIdRef = useRef(0);
+
   useEffect(() => {
     let cancelled = false;
-    const adapter = adapterRef.current;
+    const requestId = ++requestIdRef.current;
+    const adapter = injectedAdapter ?? createPlaygroundAdapter();
     const settingsStore = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'storage-lab-settings' });
     const saveStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'storage-lab-save' });
-    settingsStoreRef.current = settingsStore as unknown as ReturnType<typeof createGameSaveStore>;
-    storesRef.current = saveStore as unknown as ReturnType<typeof createGameSaveStore>;
+    storesRef.current = { save: saveStore as unknown as ReturnType<typeof createGameSaveStore>, settings: settingsStore as unknown as ReturnType<typeof createGameSaveStore> };
 
     (async () => {
       try {
         const [settingsRes, saveRes] = await Promise.all([settingsStore.load('player'), saveStore.load('profile-1')]);
-        if (cancelled) return;
+        if (cancelled || requestIdRef.current !== requestId) return;
         setVolume(settingsRes.data.volume);
         const initialSave = saveRes.data;
-        // Create session only after validated load/default/migration
         const nextSession = createStorageLabSession(initialSave);
-        if (cancelled) {
+        if (cancelled || requestIdRef.current !== requestId) {
           nextSession.dispose();
           return;
         }
-        // Bind checkpoint event to async save effect — outside simulation
+        // Bind checkpoint event to async save effect — outside simulation. Store subscription in owner ref.
         const sub = nextSession.addGameEventListener('checkpoint', async (event) => {
           const snap = nextSession.getRenderFrame().current as unknown as StorageLabSnapshot;
           const projected = projectStorageLabSave(snap);
@@ -54,18 +69,19 @@ export default function StorageLabScreen() {
           try {
             await saveStore.save('profile-1', projected);
             await saveStore.flush();
-            if (!cancelled) setStatus(`checkpoint ${event.payload.index} saved`);
+            if (requestIdRef.current !== requestId) return;
+            setStatus(`checkpoint ${event.payload.index} saved`);
           } catch (e) {
-            if (!cancelled) setStatus(`checkpoint save failed: ${(e as Error).message}`);
+            if (requestIdRef.current !== requestId) return;
+            setStatus(`checkpoint save failed: ${(e as Error).message}`);
           }
         });
-        // Store sub for cleanup
-        (nextSession as unknown as { __storageSub?: { remove(): void } }).__storageSub = sub;
+        subscriptionRef.current = sub;
         setSession(nextSession);
         setLoadState('ready');
         setStatus(`loaded ${saveRes.status} (checkpoint ${initialSave.checkpointIndex})`);
       } catch (e) {
-        if (cancelled) return;
+        if (cancelled || requestIdRef.current !== requestId) return;
         setError((e as Error).message);
         setLoadState('error');
         setStatus(`load failed: ${(e as Error).message}`);
@@ -74,45 +90,68 @@ export default function StorageLabScreen() {
 
     return () => {
       cancelled = true;
+      // Invalidate this request so stale completions are ignored.
+      // Do not call React state setters from unmount cleanup.
+      if (moveTimeoutRef.current !== null) {
+        clearTimeout(moveTimeoutRef.current);
+        moveTimeoutRef.current = null;
+      }
+      subscriptionRef.current?.remove();
+      subscriptionRef.current = null;
       const active = storesRef.current;
-      const settings = settingsStoreRef.current;
-      // Prove old store cannot write after replacement: dispose rejects new work, pending flush still completes
-      active?.dispose();
-      settings?.dispose();
-      setSession((prev) => {
-        if (prev) {
-          (prev as unknown as { __storageSub?: { remove(): void } }).__storageSub?.remove();
-          prev.dispose();
-        }
-        return null;
-      });
+      const sess = session;
+      // Use refs captured at effect creation would be stale; read from refs/state via closure is not needed here
+      // because we have the stores and session from this request. For the session, we dispose the one we created.
+      // The setSession(null) call is deferred to next effect's load, not here.
+      active?.save.dispose();
+      active?.settings.dispose();
+      // Do not call setSession from cleanup — the next mount will create a fresh session. Dispose the session we own.
+      // We need to capture the session we created; use a local variable instead of state.
+      // Since we cannot read state reliably in cleanup, we track the session in a ref.
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [injectedAdapter]);
+
+  // Keep a ref to the current session for cleanup without calling setState in unmount.
+  const sessionRef = useRef<ReturnType<typeof createStorageLabSession> | null>(null);
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+  useEffect(() => {
+    return () => {
+      sessionRef.current?.dispose();
+      // Do not call setSession from cleanup
     };
   }, []);
 
-  // Tick the session manually — fixed-step driver is internal; we drive via requestAnimationFrame for lab demo
+  // HUD publication from committed-frame boundary at bounded cadence, not every RAF.
   useEffect(() => {
     if (!session || loadState !== 'ready') return;
-    let raf = 0;
-    let last = performance.now();
-    const loop = () => {
-      const now = performance.now();
-      const deltaMs = Math.min(32, now - last);
-      last = now;
-      // The session advances via its internal frame driver (RAF) when started; we just poll HUD
+    const updateHud = (): void => {
       const snap = session.getRenderFrame().current as unknown as StorageLabSnapshot | undefined;
-      if (snap) setHud({ x: Math.round(snap.x), checkpoint: snap.checkpointIndex, ticks: snap.ticks });
-      raf = requestAnimationFrame(loop);
+      if (!snap) return;
+      const at = snap.ticks * (1 / 60);
+      const next = { x: Math.round(snap.x), checkpoint: snap.checkpointIndex, ticks: snap.ticks };
+      const last = hudLastRef.current;
+      if (!last.record || at - last.at >= DIAGNOSTIC_INTERVAL) {
+        const changed = !last.record || last.record.x !== next.x || last.record.checkpoint !== next.checkpoint || last.record.ticks !== next.ticks;
+        if (changed) {
+          hudLastRef.current = { at, record: next };
+          setHud(next);
+        }
+      }
     };
+    updateHud();
+    const sub = session.addCommitListener(updateHud);
     session.start();
-    raf = requestAnimationFrame(loop);
     return () => {
-      cancelAnimationFrame(raf);
+      sub.remove();
       session.pause();
     };
   }, [session, loadState]);
 
   const mutateSettings = async (nextVolume: number): Promise<void> => {
-    const s = settingsStoreRef.current as unknown as ReturnType<typeof createGameSaveStore<import('./storageLabGame').StorageLabSettings>> | null;
+    const s = storesRef.current?.settings as unknown as ReturnType<typeof createGameSaveStore<import('./storageLabGame').StorageLabSettings>> | null;
     if (!s) return;
     setVolume(nextVolume);
     setStatus(`settings saving…`);
@@ -126,7 +165,7 @@ export default function StorageLabScreen() {
   };
 
   const triggerManualSave = async (): Promise<void> => {
-    const store = storesRef.current as unknown as ReturnType<typeof createGameSaveStore<import('./storageLabGame').StorageLabSave>> | null;
+    const store = storesRef.current?.save as unknown as ReturnType<typeof createGameSaveStore<import('./storageLabGame').StorageLabSave>> | null;
     if (!store || !session) return;
     const snap = session.getRenderFrame().current as unknown as StorageLabSnapshot;
     const projected = projectStorageLabSave(snap);
@@ -137,11 +176,21 @@ export default function StorageLabScreen() {
   };
 
   const resetSave = async (): Promise<void> => {
-    const store = storesRef.current as unknown as ReturnType<typeof createGameSaveStore<import('./storageLabGame').StorageLabSave>> | null;
+    const store = storesRef.current?.save as unknown as ReturnType<typeof createGameSaveStore<import('./storageLabGame').StorageLabSave>> | null;
     if (!store) return;
     await store.remove('profile-1');
     await store.flush();
     setStatus('save reset — reload to resume from default');
+  };
+
+  const handleMoveRight = (): void => {
+    if (!session) return;
+    session.input.press('right');
+    if (moveTimeoutRef.current !== null) clearTimeout(moveTimeoutRef.current);
+    moveTimeoutRef.current = setTimeout(() => {
+      session.input.release('right');
+      moveTimeoutRef.current = null;
+    }, 200);
   };
 
   if (loadState === 'loading') {
@@ -170,13 +219,7 @@ export default function StorageLabScreen() {
       <Text style={styles.hint}>Checkpoint events commit deterministically; saves happen async after the tick and never block simulation.</Text>
 
       <View style={styles.row}>
-        <Pressable
-          onPress={() => {
-            session?.input.press('right');
-            setTimeout(() => session?.input.release('right'), 200);
-          }}
-          style={styles.button}
-        >
+        <Pressable onPress={handleMoveRight} style={styles.button}>
           <Text style={styles.buttonText}>Move right</Text>
         </Pressable>
         <Pressable onPress={triggerManualSave} style={styles.button}>

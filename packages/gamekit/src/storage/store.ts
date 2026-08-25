@@ -1,9 +1,16 @@
 import { GameStorageError, storageError } from './errors';
 import type { CreateGameSaveStoreOptions, GameSaveLoadResult, GameSaveStore } from './types';
+import { STORAGE_LIMITS } from './types';
 import { storageKey, validateNamespace, validateSlot } from './validation';
 import { createDefaultData, migratePayload, validateCurrentData } from './schema';
-import { parseEnvelope, serializeEnvelope, STORAGE_ENVELOPE_FORMAT } from './serialization';
+import { cloneAndValidatePlainData, parseEnvelope, serializeEnvelope, STORAGE_ENVELOPE_FORMAT } from './serialization';
 import type { StoredGameEnvelope } from './types';
+
+function serializedByteLength(str: string): number {
+  if (typeof Buffer !== 'undefined' && typeof Buffer.byteLength === 'function') return Buffer.byteLength(str, 'utf8');
+  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str).length;
+  return str.length * 2;
+}
 
 export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<TData>): GameSaveStore<TData> {
   const schema = options.schema;
@@ -12,73 +19,45 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
 
   validateNamespace(namespace);
 
-  // Per-slot serialized queue: slot -> tail promise
+  // Per-slot serialized queue: slot -> tail promise. Retained until every accepted operation settles.
   const slotQueues = new Map<string, Promise<void>>();
-  // Pending operations for flush()
-  let pendingCount = 0;
-  let pendingResolve: (() => void) | null = null;
-
-  let disposed = false;
-  let generation = 0;
-
-  // Track active pending promises for flush
+  // Active operation promises for flush() snapshotting. Each flush gets its own immutable snapshot.
   const active = new Set<Promise<void>>();
 
-  function assertNotDisposed(operation: string): void {
-    if (disposed) {
-      throw storageError(`store is disposed`, 'DISPOSED', { operation: operation as never, namespace });
-    }
-  }
+  let disposed = false;
 
   function track<T>(p: Promise<T>): Promise<T> {
-    pendingCount += 1;
     const wrapped = p.finally(() => {
-      pendingCount -= 1;
       active.delete(wrapped as unknown as Promise<void>);
-      if (pendingCount === 0 && pendingResolve) {
-        const r = pendingResolve;
-        pendingResolve = null;
-        r();
-      }
     });
     active.add(wrapped as unknown as Promise<void>);
     return wrapped;
   }
 
   function enqueue<T>(slot: string, op: () => Promise<T>): Promise<T> {
-    assertNotDisposed(op.name || 'save');
+    // Acceptance boundary is the successful public method call; already-accepted ops are never cancelled by later dispose.
     const tail = slotQueues.get(slot) ?? Promise.resolve();
-    // Create a new tail that waits for previous
-    let resolveTail: () => void;
+    let resolveTail: () => void = () => {};
     const nextTail = new Promise<void>((res) => {
       resolveTail = res;
     });
     slotQueues.set(slot, nextTail);
 
-    const capturedGen = generation;
     const run = tail
       .catch(() => {
         // Previous failure does not block next; continue
       })
-      .then(async () => {
-        if (capturedGen !== generation) {
-          throw storageError(`stale operation for slot "${slot}"`, 'DISPOSED', { namespace, slot });
-        }
-        return op();
-      })
+      .then(() => op())
       .finally(() => {
-        // Release tail if still current; allow next waiter to proceed
+        // Clean only when this tail is still the current tail; otherwise a newer operation has already replaced it.
         if (slotQueues.get(slot) === nextTail) {
-          // If no one else has chained after us, we need to keep tail resolved
-          // but we already set nextTail; we resolve it now so next enqueued op can proceed
+          slotQueues.delete(slot);
         }
-        resolveTail!();
-        // Clean up if queue is empty (no pending after us)
-        // We keep map entry as resolved promise to avoid race; GC via flush
+        resolveTail();
       });
 
-    // Ensure nextTail resolves after run settles
-    run.then(() => resolveTail!(), () => resolveTail!());
+    // Ensure nextTail mirrors run settlement without creating an unhandled rejection.
+    run.then(() => {}, () => {});
 
     return track(run);
   }
@@ -101,13 +80,26 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
       const data = createDefaultData(schema);
       return { status: 'default', data };
     }
+
+    // F3: measure raw UTF-8 byte length before JSON.parse and reject oversized records.
+    const rawBytes = serializedByteLength(raw);
+    if (rawBytes > STORAGE_LIMITS.MAX_SERIALIZED_BYTES) {
+      throw storageError(`stored record for slot "${slot}" exceeds ${STORAGE_LIMITS.MAX_SERIALIZED_BYTES} bytes (got ${rawBytes})`, 'SIZE_EXCEEDED', {
+        operation: 'load',
+        namespace,
+        slot,
+        schemaId: schema.id,
+        schemaVersion: schema.version,
+        path: 'envelope',
+      });
+    }
+
     // Validate loaded bytes as untrusted before migration
     let envelope: StoredGameEnvelope;
     try {
       envelope = parseEnvelope(raw);
     } catch (cause) {
       if (cause instanceof GameStorageError) {
-        // Preserve code CORRUPT_ENVELOPE etc.
         throw new GameStorageError((cause as GameStorageError).message, {
           code: (cause as GameStorageError).code,
           operation: 'load',
@@ -154,17 +146,62 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
       });
     }
 
-    // Migrate if needed
+    // F3: bounded plain-data validation of the loaded payload BEFORE any migration sees it.
+    try {
+      cloneAndValidatePlainData(envelope.payload, 'payload');
+    } catch (cause) {
+      if (cause instanceof GameStorageError) {
+        throw new GameStorageError((cause as GameStorageError).message, {
+          code: (cause as GameStorageError).code,
+          operation: 'load',
+          namespace,
+          slot,
+          schemaId: schema.id,
+          schemaVersion: schema.version,
+          path: (cause as GameStorageError).path,
+          cause: (cause as GameStorageError).cause ?? cause,
+        });
+      }
+      throw storageError(`payload validation failed`, 'VALIDATION_FAILED', {
+        operation: 'load',
+        namespace,
+        slot,
+        cause,
+      });
+    }
+
+    // Migrate if needed — each migration receives a deeply frozen engine-owned input and its output is bounded-cloned/frozen.
     let payload: unknown = envelope.payload;
     let fromVersion = envelope.schemaVersion;
     let toVersion = schema.version;
     let migrated = false;
     if (fromVersion !== toVersion) {
-      const result = migratePayload(schema, fromVersion, payload);
-      payload = result.data;
-      fromVersion = result.fromVersion;
-      toVersion = result.toVersion;
-      migrated = true;
+      try {
+        const result = migratePayload(schema, fromVersion, payload);
+        payload = result.data;
+        fromVersion = result.fromVersion;
+        toVersion = result.toVersion;
+        migrated = true;
+      } catch (cause) {
+        if (cause instanceof GameStorageError) {
+          throw new GameStorageError((cause as GameStorageError).message, {
+            code: (cause as GameStorageError).code,
+            operation: 'load',
+            namespace,
+            slot,
+            schemaId: schema.id,
+            schemaVersion: schema.version,
+            path: (cause as GameStorageError).path,
+            cause: (cause as GameStorageError).cause ?? cause,
+          });
+        }
+        throw storageError(`migration failed`, 'MIGRATION_FAILED', {
+          operation: 'load',
+          namespace,
+          slot,
+          cause,
+        });
+      }
     }
 
     // Final validation — never overwrites stored record on failure
@@ -195,13 +232,12 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
     if (migrated) {
       return { status: 'migrated', data, fromVersion: envelope.schemaVersion, toVersion };
     }
-    // Distinguish stored vs default already handled; this is stored
     return { status: 'stored', data };
   }
 
   async function saveInternal(slot: string, data: TData): Promise<void> {
     validateSlot(slot);
-    // Validate current data through schema (cloned/frozen) before serialization
+    // save() already snapshotted and validated outside the queue; this re-validates for safety but is not the acceptance boundary.
     const validated = validateCurrentData(schema, data, 'data');
     const envelope: StoredGameEnvelope = {
       format: STORAGE_ENVELOPE_FORMAT,
@@ -309,23 +345,17 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
       return (store as GameSaveStore<TData>).remove(slot);
     },
     async flush(): Promise<void> {
-      if (disposed) {
-        // Flush after dispose should still wait for accepted ops, then resolve
-        // but spec says flush waits for operations accepted before the call
-      }
-      if (pendingCount === 0) return;
-      await new Promise<void>((resolve) => {
-        pendingResolve = resolve;
-      });
+      // Snapshot the currently tracked operation promises; do not let operations accepted after the call delay this flush.
+      const snapshot = Array.from(active);
+      if (snapshot.length === 0) return;
+      await Promise.allSettled(snapshot);
     },
     dispose(): void {
       if (disposed) return;
       disposed = true;
-      generation += 1;
-      // Do not cancel accepted writes — they continue via their promises.
-      // New work is rejected by the disposed flag.
-      // Clear queues to allow GC; pending tails will resolve.
-      slotQueues.clear();
+      // Do not use generation to suppress already-accepted Promise results.
+      // Retain queue/tail ownership until every accepted operation settles; tails clean themselves when still current.
+      // New work is rejected at the public boundary above.
     },
   };
 

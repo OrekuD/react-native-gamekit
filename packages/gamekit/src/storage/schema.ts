@@ -125,13 +125,13 @@ export function migratePayload<TData>(
       });
     }
     try {
-      const input = current;
-      const output = fn(input);
-      // Ensure migration did not mutate input by checking frozen? We trust purity but
-      // we ensure output is at least plain-data clone-able.
-      // Do not freeze input; just validate output can be cloned later after final validate.
-      // Enforce that migrate does not return undefined for object payloads accidentally
-      current = output;
+      // Engine-owned deeply frozen input — migration must be pure and cannot mutate it.
+      const frozenInput = deepFreeze(cloneAndValidatePlainData(current, `migrations.${v} input`) as unknown);
+      const output = fn(frozenInput);
+      // Bounded-clone and freeze every migration output before the next step, so oversized/deep/unsupported intermediates are rejected at the step.
+      const clonedOutput = cloneAndValidatePlainData(output, `migrations.${v} output`);
+      deepFreeze(clonedOutput as unknown as object);
+      current = clonedOutput;
       version = v + 1;
     } catch (cause) {
       if (cause instanceof GameStorageError) throw cause;
