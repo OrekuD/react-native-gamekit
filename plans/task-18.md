@@ -2,16 +2,11 @@
 
 ## Status
 
-**Complete via documented NO-GO (T18.0); strategy 2 prototyped and REJECTED.**
-Full evidence, frozen budgets, transaction-strategy trial results, and reopen
-triggers are recorded in
-[`task-18-evaluation.md`](./task-18-evaluation.md). Strategy 2 reconstructs the
-projected public fields exactly but FAILS authoritative continuation
-equivalence — private solver/warm-start contact state is unprojectable, giving
-~0.55-unit transform divergence and reordered contact begin/end records under
-identical commands. Strategy 3 is unavailable in planck; strategy 1 remains
-unproven and requires a separate approved session-core design. No adapter
-ships and no production dependency exists; Collision2D remains the sole
+**Documented NO-GO remains correct; one trial-harness correction remains.**
+Strategy 2 is correctly recorded as rejected because private solver state makes
+continuation observably diverge. The script still has a false-success path for
+non-finite/malformed comparisons and does not compare every claimed continuation
+field; address T18-R3 below. No adapter ships and Collision2D remains the sole
 collision system.
 
 Summary: five current backends were evaluated from live npm registry metadata.
@@ -502,6 +497,51 @@ Required approach:
   strategy 1 remains unproven and would need a separate approved session-core
   design. Physical-device rows remain open, no adapter ships, and Task 18 stays a
   documented NO-GO.
+
+### T18-R3 — The rejection harness can pass when its comparison is invalid (Important)
+
+The strategy verdict is now correct, and transform/contact divergence is enforced
+as the expected rejection. However, `runTrial()` returns
+`{ restoreExact: true, continuationEquivalent: false }` for a non-finite delta.
+The main program interprets every `continuationEquivalent === false` as the
+expected strategy rejection and exits successfully. A NaN/Infinity or malformed
+comparison therefore passes the harness even though the commit states that
+harness-invariant failures must exit nonzero.
+
+The continuation delta currently compares only x/y position and x/y linear
+velocity. It does not compare angle, angular velocity, or awake/sleep state despite
+the spike/evaluation promising normalized transforms, velocities, and sleeping
+state. Contact arrays are accumulated across the whole trace rather than recorded
+as explicit per-step sequences, so after the first mismatch the harness cannot
+characterize later step equality independently. Finally, the output reads
+`trial.settleContacts`, which is never returned (`settleBeginA` and `settleEndB`
+are), so the diagnostic always prints `undefined`.
+
+Required approach:
+
+- Return a discriminated trial result separating `harnessValid` from
+  `continuationEquivalent`. Mark non-finite values, missing/misaligned bodies,
+  duplicate IDs, length mismatches, and malformed contact records as invalid;
+  main must set a nonzero exit code for any invalid result.
+- Compare bodies by stable game-owned ID and validate identical ID sets before
+  calculating deltas. Cover x/y/angle, linear x/y velocity, angular velocity,
+  and awake state with explicit per-field tolerances; boolean/lifecycle fields
+  must match exactly.
+- Capture contact records as a sequence per continuation step, with canonical
+  body/shape identity and deterministic ordering. Compare each step independently
+  and retain the first differing step plus representative samples. Begin/end is
+  sufficient for the current rejection spike; do not claim `stay` evidence unless
+  active-contact state is actually derived and compared.
+- Fix the settling diagnostic to print fields that the result really returns, or
+  return one typed/validated settling diagnostic object. Diagnostics must never
+  influence the rejection acceptance rule.
+- Add focused self-checks/negative controls for NaN, a missing body, angle-only
+  divergence, awake-only divergence, and a contact mismatch after an otherwise
+  equal earlier step. Each must prove the harness rejects invalid input or detects
+  authoritative divergence for the intended reason.
+- Keep the strategy-2 rejection, NO-GO, dev-only dependency, and open device rows
+  unchanged. Update the spike/evaluation wording only where it currently
+  overstates the fields and contact lifecycle actually compared.
 
 ## Future expansion backlog
 

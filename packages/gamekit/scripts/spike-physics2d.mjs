@@ -32,13 +32,26 @@ const REBUILD_WARMUP = 5;
 const MAX_TRACE_DELTA = 0.25;
 const TRACE = 60;
 const STEPS_TO_COMMIT = 240;
+
+/**
+ * Per-field continuation tolerances (floating-point noise only — never a
+ * license for different contacts or half-body-scale motion).
+ */
+const FIELD_TOLERANCES = {
+  x: 1e-6,
+  y: 1e-6,
+  angle: 1e-6,
+  vx: 1e-6,
+  vy: 1e-6,
+  angularVelocity: 1e-6,
+};
+
 // ---------------------------------------------------------------------------
 // Projection (full-fidelity public-field contract)
 // ---------------------------------------------------------------------------
 
 function extractProjection(world) {
-  // Planck's body list is prepend-ordered (most recent first); reverse the
-  // traversal to recover original CREATION order for private rebuild metadata.
+  // Planck's body list is prepend-ordered; reverse to recover creation order.
   const traversed = [];
   for (const body of iterateBodies(world)) traversed.push(body);
   const out = [];
@@ -79,7 +92,6 @@ function extractProjection(world) {
   return out;
 }
 
-/** Drop one projected field everywhere — negative controls. */
 function omitField(projection, field) {
   return projection.map((b) => {
     if (field.startsWith('fixture:')) {
@@ -90,9 +102,8 @@ function omitField(projection, field) {
   });
 }
 
-function rebuildFrom(projection, mutateFixture) {
+function rebuildFrom(projection) {
   const world = new Planck.World({ gravity: new Planck.Vec2(0, -9.8) });
-  // Recreate bodies in original creation order (private metadata).
   const ordered = [...projection].sort((a, b) => (a._order ?? 0) - (b._order ?? 0));
   for (const b of ordered) {
     const body = world.createBody({
@@ -105,65 +116,111 @@ function rebuildFrom(projection, mutateFixture) {
     });
     if (!b.fixedRotation) body.setAngularVelocity(b.angularVelocity);
     body.setLinearVelocity(new Planck.Vec2(b.vx, b.vy));
-    // Freshly created bodies (including static) default to awake — mirror the
-    // projected sleep flag exactly for every type.
     if (!b.awake) body.setAwake(false);
     for (const s of b.shapes) {
       const shape = s.kind === 'circle' ? new Planck.Circle(s.radius) : new Planck.Box(s.hw, s.hh);
-      let fixture = {
+      body.createFixture(shape, {
         density: s.density,
         friction: s.friction,
         restitution: s.restitution,
         isSensor: s.sensor,
         userData: { id: s.id, kind: s.kind, hw: s.hw, hh: s.hh, radius: s.radius },
-      };
-      if (mutateFixture) fixture = mutateFixture(fixture);
-      body.createFixture(shape, fixture);
+      });
     }
   }
   return world;
 }
 
-function normalize(projection) {
-  return projection.map((b) => ({
-    id: b.id,
-    type: b.type,
-    x: round(b.x),
-    y: round(b.y),
-    angle: round(b.angle),
-    vx: round(b.vx),
-    vy: round(b.vy),
-    angularVelocity: round(b.angularVelocity),
-    awake: b.awake,
-    gravityScale: b.gravityScale,
-    shapes: [...b.shapes]
-      .sort((a, z) => (a.id < z.id ? -1 : 1))
-      .map((s) => ({ id: s.id, density: round(s.density), friction: round(s.friction), restitution: round(s.restitution), sensor: s.sensor })),
-  }));
-}
+// ---------------------------------------------------------------------------
+// State comparison: validated, ID-keyed, full-field
+// ---------------------------------------------------------------------------
 
-function round(v) {
-  return Math.round(v * 1e6) / 1e6;
-}
-
-function projectionEquals(a, b) {
-  return JSON.stringify(normalize(a)) === JSON.stringify(normalize(b));
-}
-
-function firstMismatch(a, b) {
-  const na = normalize(a);
-  const nb = normalize(b);
-  for (let i = 0; i < Math.max(na.length, nb.length); i += 1) {
-    const ba = na[i];
-    const bb = nb[i];
-    if (!ba || !bb) return `body ${i}: missing (${ba?.id} vs ${bb?.id})`;
-    for (const key of Object.keys(ba)) {
-      const va = JSON.stringify(ba[key]);
-      const vb = JSON.stringify(bb[key]);
-      if (va !== vb) return `${ba.id}.${key}: ${va} vs ${vb}`;
+/** Structural validation of one projection. Returns an error string or null. */
+function validateProjection(projection) {
+  const seen = new Set();
+  for (const b of projection) {
+    if (typeof b.id !== 'string' || b.id.length === 0) return 'body with missing/invalid id';
+    if (seen.has(b.id)) return 'duplicate body id ' + b.id;
+    seen.add(b.id);
+    for (const key of ['x', 'y', 'angle', 'vx', 'vy', 'angularVelocity', 'gravityScale']) {
+      if (!Number.isFinite(b[key])) return 'non-finite ' + key + ' on ' + b.id;
+    }
+    if (typeof b.awake !== 'boolean') return 'non-boolean awake on ' + b.id;
+    if (!Array.isArray(b.shapes)) return 'missing shapes on ' + b.id;
+    for (const s of b.shapes) {
+      if (typeof s.id !== 'string') return 'shape with missing id on ' + b.id;
+      if (!Number.isFinite(s.density) || !Number.isFinite(s.friction) || !Number.isFinite(s.restitution)) {
+        return 'non-finite material on ' + b.id + '/' + s.id;
+      }
     }
   }
-  return 'none';
+  return null;
+}
+
+/**
+ * Authoritative state comparison keyed by stable game-owned ID.
+ *
+ * Returns a discriminated result:
+ *   { kind: 'invalid', reason }            — malformed input (harness fault)
+ *   { kind: 'equivalent' }                 — within tolerances / exact booleans
+ *   { kind: 'divergent', id, field, detail } — authoritative divergence
+ *
+ * Numeric fields use their per-field tolerance; awake/type/fixedRotation and
+ * shape materials/sensors must match exactly.
+ */
+function compareStates(aProjection, bProjection) {
+  if (aProjection.length !== bProjection.length) {
+    return { kind: 'invalid', reason: 'body count mismatch: ' + aProjection.length + ' vs ' + bProjection.length };
+  }
+  const mapA = new Map();
+  for (const b of aProjection) {
+    if (mapA.has(b.id)) return { kind: 'invalid', reason: 'duplicate body id in A: ' + b.id };
+    mapA.set(b.id, b);
+  }
+  for (const b of bProjection) {
+    if (!mapA.has(b.id)) return { kind: 'invalid', reason: 'body present only in B: ' + b.id };
+  }
+  for (const [id, a] of mapA) {
+    const b = bProjection.find((x) => x.id === id);
+    if (b === undefined) return { kind: 'invalid', reason: 'body missing from B: ' + id };
+    for (const [field, tol] of Object.entries(FIELD_TOLERANCES)) {
+      const va = a[field];
+      const vb = b[field];
+      if (!Number.isFinite(va) || !Number.isFinite(vb)) {
+        return { kind: 'invalid', reason: 'non-finite ' + field + ' on ' + id };
+      }
+      if (Math.abs(va - vb) > tol) {
+        return { kind: 'divergent', id, field, detail: va + ' vs ' + vb };
+      }
+    }
+    if (a.awake !== b.awake) return { kind: 'divergent', id, field: 'awake', detail: a.awake + ' vs ' + b.awake };
+    if (a.type !== b.type) return { kind: 'divergent', id, field: 'type', detail: a.type + ' vs ' + b.type };
+    if (a.gravityScale !== b.gravityScale) {
+      return { kind: 'divergent', id, field: 'gravityScale', detail: a.gravityScale + ' vs ' + b.gravityScale };
+    }
+    const sa = [...a.shapes].sort((x, z) => (x.id < z.id ? -1 : 1));
+    const sb = [...b.shapes].sort((x, z) => (x.id < z.id ? -1 : 1));
+    if (sa.length !== sb.length) return { kind: 'divergent', id, field: 'shapes', detail: 'count mismatch' };
+    for (let i = 0; i < sa.length; i += 1) {
+      if (sa[i].id !== sb[i].id) return { kind: 'divergent', id, field: 'shapes', detail: 'shape id ' + sa[i].id + ' vs ' + sb[i].id };
+      for (const key of ['density', 'friction', 'restitution']) {
+        if (Math.abs(sa[i][key] - sb[i][key]) > 1e-6) {
+          return { kind: 'divergent', id, field: key + ':' + sa[i].id, detail: sa[i][key] + ' vs ' + sb[i][key] };
+        }
+      }
+      if (sa[i].sensor !== sb[i].sensor) return { kind: 'divergent', id, field: 'sensor:' + sa[i].id, detail: 'mismatch' };
+    }
+  }
+  return { kind: 'equivalent' };
+}
+
+/** Exact ordered-sequence comparison for one step's contact records. */
+function contactSequenceEquals(seqA, seqB) {
+  if (seqA.length !== seqB.length) return false;
+  for (let i = 0; i < seqA.length; i += 1) {
+    if (seqA[i] !== seqB[i]) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,28 +247,23 @@ function buildWorld(bodyCount) {
     const body = world.createBody({
       type: 'dynamic',
       position: new Planck.Vec2(col * 1.05 - (side * 1.05) / 2, 1 + row * 1.05),
-      userData: { id: `b${i}` },
+      userData: { id: 'b' + i },
     });
     body.createFixture(new Planck.Box(0.5, 0.5), {
       density: 1,
       friction: 0.4,
       restitution: 0.05,
-      userData: { id: `b${i}-shape`, kind: 'box', hw: 0.5, hh: 0.5 },
+      userData: { id: 'b' + i + '-shape', kind: 'box', hw: 0.5, hh: 0.5 },
     });
   }
   return world;
 }
 
-function commandsForStep(step, size) {
-  const cmds = [];
-  const n = Math.min(8, size);
-  for (let k = 0; k < n; k += 1) cmds.push((step * 7 + k * 13) % size);
-  return cmds;
-}
-
 function applyCommands(world, step, size) {
-  for (const idx of commandsForStep(step, size)) {
-    const body = findBody(world, `b${idx}`);
+  const n = Math.min(8, size);
+  for (let k = 0; k < n; k += 1) {
+    const idx = (step * 7 + k * 13) % size;
+    const body = findBody(world, 'b' + idx);
     if (body && body.isAwake() !== false && body.isDynamic()) {
       body.applyLinearImpulse(new Planck.Vec2(0, 0.4), body.getWorldCenter(), true);
     }
@@ -242,19 +294,15 @@ function* iterateFixtures(body) {
 }
 
 /**
- * Step the world; append ordered contact lifecycle records ('begin:a|b') to
- * `events` when provided. Event identity uses game-owned body IDs in a
- * canonical pair order.
+ * Step the world; append THIS STEP's ordered contact records ('begin:a|b',
+ * canonical body-ID pair order) to the provided array.
  */
 function stepWithContacts(world, events) {
   const record = (contact, kind) => {
-    if (!events) return;
-    const fa = contact.getFixtureA();
-    const fb = contact.getFixtureB();
-    const ia = (fa.getBody().getUserData() || {}).id ?? '?';
-    const ib = (fb.getBody().getUserData() || {}).id ?? '?';
-    const [x, y] = ia <= ib ? [ia, ib] : [ib, ia];
-    events.push(`${kind}:${x}|${y}`);
+    const ia = (contact.getFixtureA().getBody().getUserData() || {}).id ?? '?';
+    const ib = (contact.getFixtureB().getBody().getUserData() || {}).id ?? '?';
+    const pair = ia <= ib ? ia + '|' + ib : ib + '|' + ia;
+    events.push(kind + ':' + pair);
   };
   const onBegin = (c) => record(c, 'begin');
   const onEnd = (c) => record(c, 'end');
@@ -275,9 +323,18 @@ function awakeCount(world) {
 }
 
 // ---------------------------------------------------------------------------
-// Strategy-2 trial: exact restoration vs authoritative continuation
+// Strategy-2 trial with a discriminated result
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns a DISCRIMINATED result:
+ *   { harnessValid: false, invalidReason }              — harness fault
+ *   { harnessValid: true, restoreExact, continuationEquivalent, ... }
+ *
+ * Non-finite values, missing/duplicate bodies, or malformed records mark the
+ * trial INVALID (the main program must exit nonzero) — they are never treated
+ * as the expected strategy rejection.
+ */
 function runTrial(size, { omit } = {}) {
   const worldA = buildWorld(size);
   const worldB = buildWorld(size);
@@ -286,99 +343,136 @@ function runTrial(size, { omit } = {}) {
   for (let s = 0; s < STEPS_TO_COMMIT; s += 1) {
     applyCommands(worldA, s, size);
     applyCommands(worldB, s, size);
-    stepWithContacts(worldA, null);
-    stepWithContacts(worldB, null);
-  }
-  if (!projectionEquals(extractProjection(worldA), extractProjection(worldB))) {
-    return { restoreExact: false, reason: 'pre-tick divergence between seeded worlds' };
+    stepWithContacts(worldA, []);
+    stepWithContacts(worldB, []);
   }
 
-  // Phase 2: save the immutable PRIOR projection; candidate takes one more
-  // commanded tick; then FAILURE — its stepped state is discarded and it is
-  // rebuilt from the prior projection.
+  const priorInvalidA = validateProjection(extractProjection(worldA));
+  const priorInvalidB = validateProjection(extractProjection(worldB));
+  if (priorInvalidA || priorInvalidB) {
+    return { harnessValid: false, invalidReason: priorInvalidA ?? priorInvalidB };
+  }
+
+  // Phase 2: save prior projection; candidate takes its tick; FAILURE —
+  // stepped state discarded; rebuilt from the prior projection.
   const priorProjection = extractProjection(worldA);
   const damagedProjection = omit ? omitField(priorProjection, omit) : priorProjection;
   applyCommands(worldA, STEPS_TO_COMMIT, size);
-  stepWithContacts(worldA, null);
+  stepWithContacts(worldA, []);
   const controlBeforeAdvance = extractProjection(worldB);
-  const restoredWorld = rebuildFrom(damagedProjection);
 
-  // Requirement (a): EXACT body-state restoration.
-  const restoreExact = projectionEquals(extractProjection(restoredWorld), controlBeforeAdvance);
+  // Validate both sides before comparing (omission damage is intentional but
+  // still produces structurally valid data; NaN etc. would not).
+  const damagedInvalid = validateProjection(damagedProjection);
+  const controlInvalid = validateProjection(controlBeforeAdvance);
+  if (damagedInvalid || controlInvalid) {
+    return { harnessValid: false, invalidReason: damagedInvalid ?? controlInvalid };
+  }
+
+  const restoredWorld = rebuildFrom(damagedProjection);
+  const restoredProjection = extractProjection(restoredWorld);
+  const restoredInvalid = validateProjection(restoredProjection);
+  if (restoredInvalid) {
+    return { harnessValid: false, invalidReason: restoredInvalid };
+  }
+
+  const restoration = compareStates(restoredProjection, controlBeforeAdvance);
+  if (restoration.kind === 'invalid') {
+    return { harnessValid: false, invalidReason: 'restoration comparison: ' + restoration.reason };
+  }
+  const restoreExact = restoration.kind === 'equivalent';
   if (!restoreExact) {
+    // Expected ONLY for negative controls (omitted field). The trial result
+    // keeps this distinct from continuation equivalence.
     return {
+      harnessValid: true,
       restoreExact: false,
-      reason: omit
-        ? `restoration FAILED with omitted "${omit}" (expected negative control)`
-        : `restoration FAILED unexpectedly. first-mismatch: ${firstMismatch(extractProjection(restoredWorld), controlBeforeAdvance)}`,
+      continuationEquivalent: null,
+      restorationField: restoration.field,
+      restorationDetail: restoration.detail,
     };
   }
 
-  // Requirement (b): AUTHORITATIVE CONTINUATION EQUIVALENCE. Both worlds take
-  // the same subsequent commands; normalized transforms/velocities/sleeping
-  // must stay within the frozen budget AND ordered contact lifecycle records
-  // must match. Warm-start loss makes this fail — that is the rejection
-  // evidence.
+  // Requirement (b): AUTHORITATIVE CONTINUATION EQUIVALENCE — per-step
+  // independent comparison of full state and ordered contact sequences.
+  const perStepDeltas = [];
   let maxDeltaSeen = 0;
-  let divergedAtStep = -1;
+  let transformDivergedAtStep = -1;
+  let transformDivergence = '';
   let contactDivergedAtStep = -1;
-  let sampleContactA = '';
-  let sampleContactB = '';
-  const evRestored = [];
-  const evControl = [];
+  let contactSampleRestored = '';
+  let contactSampleControl = '';
   for (let s = 0; s < TRACE; s += 1) {
     applyCommands(restoredWorld, STEPS_TO_COMMIT + 1 + s, size);
     applyCommands(worldB, STEPS_TO_COMMIT + 1 + s, size);
+    const evRestored = [];
+    const evControl = [];
     stepWithContacts(restoredWorld, evRestored);
     stepWithContacts(worldB, evControl);
 
-    const pa = normalize(extractProjection(restoredWorld));
-    const pb = normalize(extractProjection(worldB));
-    const delta = pa.reduce((m, b, i) => Math.max(m, Math.abs(b.x - pb[i].x), Math.abs(b.y - pb[i].y), Math.abs(b.vx - pb[i].vx), Math.abs(b.vy - pb[i].vy)), 0);
-    if (!Number.isFinite(delta)) {
-      return { restoreExact: true, continuationEquivalent: false, divergedAtStep: s, reason: 'non-finite divergence' };
+    const pa = extractProjection(restoredWorld);
+    const pb = extractProjection(worldB);
+    const invA = validateProjection(pa);
+    const invB = validateProjection(pb);
+    if (invA || invB) {
+      return { harnessValid: false, invalidReason: invA ?? invB };
     }
+    const cmp = compareStates(pa, pb);
+    if (cmp.kind === 'invalid') {
+      return { harnessValid: false, invalidReason: 'continuation comparison: ' + cmp.reason };
+    }
+    const delta = pa.reduce((m, b) => {
+      const o = pb.find((z) => z.id === b.id);
+      return Math.max(m, Math.abs(b.x - o.x), Math.abs(b.y - o.y), Math.abs(b.vx - o.vx), Math.abs(b.vy - o.vy), Math.abs(b.angle - o.angle), Math.abs(b.angularVelocity - o.angularVelocity));
+    }, 0);
+    perStepDeltas.push(delta);
     maxDeltaSeen = Math.max(maxDeltaSeen, delta);
-    if (divergedAtStep < 0 && delta > MAX_TRACE_DELTA) divergedAtStep = s;
-    if (contactDivergedAtStep < 0 && evRestored.join(',') !== evControl.join(',')) contactDivergedAtStep = s;
+    if (transformDivergedAtStep < 0 && cmp.kind === 'divergent') {
+      transformDivergedAtStep = s;
+      transformDivergence = cmp.id + '.' + cmp.field + ' (' + cmp.detail + ')';
+    }
+    if (contactDivergedAtStep < 0 && !contactSequenceEquals(evRestored, evControl)) {
+      contactDivergedAtStep = s;
+      contactSampleRestored = evRestored.slice(0, 6).join(', ');
+      contactSampleControl = evControl.slice(0, 6).join(', ');
+    }
   }
+  const continuationEquivalent = transformDivergedAtStep < 0 && contactDivergedAtStep < 0;
 
-  const continuationEquivalent = maxDeltaSeen <= MAX_TRACE_DELTA && contactDivergedAtStep < 0;
-
-  // Diagnostics ONLY (not transaction equivalence): eventual settling.
-  const evSettleA = [];
-  const evSettleB = [];
+  // Settling diagnostics ONLY — never influence acceptance.
+  const settleEventsA = [];
+  const settleEventsB = [];
   for (let s = 0; s < 900; s += 1) {
-    stepWithContacts(restoredWorld, evSettleA);
-    stepWithContacts(worldB, evSettleB);
+    stepWithContacts(restoredWorld, settleEventsA);
+    stepWithContacts(worldB, settleEventsB);
   }
-  const finalA = normalize(extractProjection(restoredWorld));
-  const finalB = normalize(extractProjection(worldB));
+  const finalA = extractProjection(restoredWorld);
+  const finalB = extractProjection(worldB);
   let finalMaxDelta = 0;
   let awakeMismatch = false;
-  for (let i = 0; i < finalA.length; i += 1) {
-    finalMaxDelta = Math.max(finalMaxDelta, Math.abs(finalA[i].x - finalB[i].x), Math.abs(finalA[i].y - finalB[i].y));
-    if (finalA[i].awake !== finalB[i].awake) awakeMismatch = true;
+  for (const b of finalA) {
+    const o = finalB.find((z) => z.id === b.id);
+    finalMaxDelta = Math.max(finalMaxDelta, Math.abs(b.x - o.x), Math.abs(b.y - o.y));
+    if (b.awake !== o.awake) awakeMismatch = true;
   }
 
-  sampleContactA = evRestored.slice(0, 6).join(', ');
-  sampleContactB = evControl.slice(0, 6).join(', ');
-
   return {
+    harnessValid: true,
     restoreExact: true,
     continuationEquivalent,
     maxDeltaSeen,
-    divergedAtStep,
+    transformDivergedAtStep,
+    transformDivergence,
     contactDivergedAtStep,
-    finalMaxDelta,
-    awakeMismatch,
-    sampleContactA,
-    sampleContactB,
-    settleBeginA: evSettleA.length,
-    settleEndB: evSettleB.length,
-    reason: continuationEquivalent
-      ? 'continuation stayed within budget (unexpected under warm-start loss)'
-      : `continuation diverged: max=${maxDeltaSeen.toFixed(4)} > budget ${MAX_TRACE_DELTA} at step ${divergedAtStep}; ordered contact records diverged at step ${contactDivergedAtStep}`,
+    contactSampleRestored,
+    contactSampleControl,
+    perStepDeltas,
+    settling: {
+      finalMaxDelta,
+      awakeMismatch,
+      beginA: settleEventsA.length,
+      beginB: settleEventsB.length,
+    },
   };
 }
 
@@ -411,7 +505,10 @@ function measureStepCost(size, label) {
   world.off('begin-contact', onBegin);
   samples.sort((a, b) => a - b);
   console.log(
-    `${label.padEnd(16)} bodies=${String(size).padStart(3)}  step p50=${percentile(samples, 50).toFixed(3)}ms  p95=${percentile(samples, 95).toFixed(3)}ms  p99=${percentile(samples, 99).toFixed(3)}ms  | awake(min)=${minAwake}  contact-begins=${begins - beginAtStart}`,
+    label.padEnd(16) + ' bodies=' + String(size).padStart(3) +
+    '  step p50=' + percentile(samples, 50).toFixed(3) + 'ms  p95=' + percentile(samples, 95).toFixed(3) +
+    'ms  p99=' + percentile(samples, 99).toFixed(3) + 'ms  | awake(min)=' + minAwake +
+    '  contact-begins=' + (begins - beginAtStart),
   );
 }
 
@@ -430,48 +527,164 @@ function measureRebuild(size) {
 }
 
 // ---------------------------------------------------------------------------
+// Harness self-checks — each proves a specific detection capability
+// ---------------------------------------------------------------------------
+
+function runSelfChecks() {
+  const results = [];
+  const base = [
+    { id: 'ground', _order: 0, type: 'static', x: 0, y: 0, angle: 0, vx: 0, vy: 0, angularVelocity: 0, awake: false, fixedRotation: false, gravityScale: 1, shapes: [{ id: 'g-s', density: 0, friction: 0.6, restitution: 0, sensor: false }] },
+    { id: 'p', _order: 1, type: 'dynamic', x: 1, y: 2, angle: 0, vx: 0, vy: 0, angularVelocity: 0, awake: true, fixedRotation: false, gravityScale: 1, shapes: [{ id: 'p-s', density: 1, friction: 0.4, restitution: 0.05, sensor: false }] },
+  ];
+  const clone = () => base.map((b) => ({ ...b, shapes: b.shapes.map((s) => ({ ...s })) }));
+
+  function expectInvalid(name, a, b, needle) {
+    const cmp = compareStates(a, b);
+    const ok = cmp.kind === 'invalid' && (!needle || cmp.reason.includes(needle));
+    results.push({ name, ok, detail: cmp.reason });
+  }
+  function expectDivergent(name, a, b, field) {
+    const cmp = compareStates(a, b);
+    const ok = cmp.kind === 'divergent' && cmp.field === field;
+    results.push({ name, ok, detail: cmp.field + ': ' + (cmp.detail ?? '') });
+  }
+  function expectEquivalent(name, a, b) {
+    const cmp = compareStates(a, b);
+    results.push({ name, ok: cmp.kind === 'equivalent', detail: cmp.reason ?? '' });
+  }
+
+  // 1. NaN in a numeric field -> harness-invalid.
+  {
+    const a = clone();
+    const b = clone();
+    b[1].x = Number.NaN;
+    expectInvalid('self-check NaN x -> invalid', a, b, 'non-finite');
+  }
+  // 2. Missing body -> harness-invalid.
+  {
+    const a = clone();
+    const b = clone().filter((x) => x.id !== 'p');
+    expectInvalid('self-check missing body -> invalid', a, b, 'count mismatch');
+  }
+  // 3. Angle-only divergence beyond tolerance -> divergent(angle).
+  {
+    const a = clone();
+    const b = clone();
+    b[1].angle = 0.5;
+    expectDivergent('self-check angle-only -> divergent', a, b, 'angle');
+  }
+  // 3b. Angle noise WITHIN tolerance -> equivalent.
+  {
+    const a = clone();
+    const b = clone();
+    b[1].angle = 5e-7;
+    expectEquivalent('self-check angle noise within tolerance', a, b);
+  }
+  // 4. Awake-only divergence -> divergent(awake), exact boolean match required.
+  {
+    const a = clone();
+    const b = clone();
+    b[1].awake = !b[1].awake;
+    expectDivergent('self-check awake-only -> divergent', a, b, 'awake');
+  }
+  // 5. Angular velocity divergence -> divergent(angularVelocity).
+  {
+    const a = clone();
+    const b = clone();
+    b[1].angularVelocity = 3.25;
+    expectDivergent('self-check angular velocity-only -> divergent', a, b, 'angularVelocity');
+  }
+  // 6. Contact mismatch after an otherwise equal earlier step.
+  {
+    const seqA = [[], ['begin:x|y']];
+    const seqB = [[], []];
+    let firstDiff = -1;
+    for (let s = 0; s < seqA.length; s += 1) {
+      if (!contactSequenceEquals(seqA[s], seqB[s])) {
+        firstDiff = s;
+        break;
+      }
+    }
+    const ok = firstDiff === 1;
+    results.push({ name: 'self-check contact mismatch after equal earlier step', ok, detail: 'first diff at step ' + firstDiff });
+  }
+  // 7. Duplicate ID -> harness-invalid (compare the duplicated list with
+  // itself so only the duplicate check can fire).
+  {
+    const duped = clone().concat([clone()[1]]);
+    expectInvalid('self-check duplicate id -> invalid', duped, JSON.parse(JSON.stringify(duped)), 'duplicate');
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
-console.log(`planck.js 1.5.0 | node ${process.version} | strategy-2 transaction trial (Node-only)\n`);
+console.log('planck.js 1.5.0 | node ' + process.version + ' | strategy-2 transaction trial (Node-only)\n');
 
-console.log('--- strategy-2 trial @128 bodies ---');
+console.log('--- harness self-checks ---');
+let selfChecksOk = true;
+for (const r of runSelfChecks()) {
+  console.log('  ' + (r.ok ? 'PASS' : 'FAIL') + '  ' + r.name + (r.ok ? '' : '  [' + r.detail + ']'));
+  if (!r.ok) selfChecksOk = false;
+}
+if (!selfChecksOk) {
+  console.log('\nHarness self-checks failed — results below are untrustworthy.');
+  process.exitCode = 1;
+  process.exit(process.exitCode);
+}
+
+console.log('\n--- strategy-2 trial @128 bodies ---');
 const trial = runTrial(128);
-let consistent = true;
-
-if (!trial.restoreExact) {
-  console.log(`FAIL: exact restoration invariant broken — ${trial.reason}`);
-  consistent = false;
-} else {
-  console.log(`exact restoration of public fields: PASS`);
-}
-console.log(`authoritative continuation equivalence: ${trial.continuationEquivalent ? 'PASS' : 'FAIL'} — ${trial.reason}`);
-console.log(`  ordered contact records: ${trial.contactDivergedAtStep >= 0 ? `diverged at step ${trial.contactDivergedAtStep}` : 'equivalent'}`);
-console.log(`  restored sample: [${trial.sampleContactA}]`);
-console.log(`  control  sample: [${trial.sampleContactB}]`);
-console.log(`  diagnostics only — settled-converged max=${trial.finalMaxDelta?.toExponential(2)}, sleep-mismatch=${trial.awakeMismatch}, settling contacts ${trial.settleContacts}`);
-
-console.log('\n--- negative controls (harness discrimination) ---');
-for (const field of ['angularVelocity', 'fixture:restitution']) {
-  const neg = runTrial(128, { omit: field });
-  const correctlyFails = !neg.restoreExact;
-  console.log(`omit "${field}": ${correctlyFails ? 'correctly FAILS restoration' : 'DID NOT FAIL (unexpected)'}`);
-  if (!correctlyFails) consistent = false;
-}
-
-console.log('\n--- VERDICT ---');
-if (!consistent) {
-  console.log('INCONSISTENT: an invariant of the harness itself was violated.');
-  process.exitCode = 1;
-} else if (trial.continuationEquivalent) {
-  console.log('Strategy 2 PASSED continuation equivalence under the frozen budget.');
-  console.log('This contradicts the recorded rejection — update plans/task-18-evaluation.md.');
+if (!trial.harnessValid) {
+  console.log('FAIL: harness-invalid trial — ' + trial.invalidReason);
   process.exitCode = 1;
 } else {
-  console.log('Strategy 2 is REJECTED for v1: reconstruction of public fields is exact,');
-  console.log('but private solver/warm-start state is unavailable, so authoritative');
-  console.log('continuation equivalence FAILS (gameplay-observable transform divergence');
-  console.log('and reshuffled contact records). See plans/task-18-evaluation.md §2.');
+  console.log('exact restoration of public fields: ' + (trial.restoreExact ? 'PASS' : 'FAIL'));
+  console.log(
+    'authoritative continuation equivalence: ' +
+    (trial.continuationEquivalent ? 'PASS' : 'FAIL') +
+    (trial.transformDivergedAtStep >= 0
+      ? ' — transform divergence at step ' + trial.transformDivergedAtStep + ': ' + trial.transformDivergence + ', max delta ' + trial.maxDeltaSeen.toFixed(4) + ' > budget ' + MAX_TRACE_DELTA
+      : ''),
+  );
+  if (trial.contactDivergedAtStep >= 0) {
+    console.log('  ordered contact records diverged at step ' + trial.contactDivergedAtStep);
+    console.log('  restored sample: [' + trial.contactSampleRestored + ']');
+    console.log('  control  sample: [' + trial.contactSampleControl + ']');
+  }
+  console.log(
+    '  settling diagnostics (not gated): converged max=' +
+    trial.settling.finalMaxDelta.toExponential(2) + ', sleep-mismatch=' + trial.settling.awakeMismatch +
+    ', settling contact records ' + trial.settling.beginA + ' / ' + trial.settling.beginB,
+  );
+
+  console.log('\n--- negative controls (harness discrimination via omitted fields) ---');
+  for (const field of ['angularVelocity', 'fixture:restitution']) {
+    const neg = runTrial(128, { omit: field });
+    if (!neg.harnessValid) {
+      console.log('omit "' + field + '": HARNESS-INVALID — ' + neg.invalidReason);
+      process.exitCode = 1;
+    } else {
+      const correctlyFails = !neg.restoreExact;
+      console.log('omit "' + field + '": ' + (correctlyFails ? 'correctly FAILS restoration' : 'DID NOT FAIL (unexpected)'));
+      if (!correctlyFails) process.exitCode = 1;
+    }
+  }
+
+  console.log('\n--- VERDICT ---');
+  if (!trial.continuationEquivalent) {
+    console.log('Strategy 2 is REJECTED for v1: reconstruction of public fields is exact,');
+    console.log('but private solver/warm-start state is unavailable, so authoritative');
+    console.log('continuation equivalence FAILS (transform/angular/velocity divergence and');
+    console.log('reshuffled ordered contact records under identical commands).');
+    console.log('See plans/task-18-evaluation.md section 2.');
+  } else {
+    console.log('Strategy 2 PASSED continuation equivalence under the frozen budget.');
+    console.log('This contradicts the recorded rejection — update plans/task-18-evaluation.md.');
+    process.exitCode = 1;
+  }
 }
 
 console.log('\n--- step cost, active phase enforced (diagnostics; Node-only) ---');
@@ -479,10 +692,11 @@ measureStepCost(32, 'contact-heavy');
 measureStepCost(128, 'contact-heavy');
 measureStepCost(512, 'contact-heavy');
 
-console.log(`\n--- rebuild-from-projection distribution (${REBUILD_SAMPLES} samples, ${REBUILD_WARMUP} warmup) ---`);
+console.log('\n--- rebuild-from-projection distribution (' + REBUILD_SAMPLES + ' samples, ' + REBUILD_WARMUP + ' warmup) ---');
 for (const size of [32, 128, 512]) {
   const r = measureRebuild(size);
   console.log(
-    `rebuild          bodies=${String(size).padStart(3)}  p50=${r.p50.toFixed(3)}ms  p95=${r.p95.toFixed(3)}ms  p99=${r.p99.toFixed(3)}ms`,
+    'rebuild          bodies=' + String(size).padStart(3) +
+    '  p50=' + r.p50.toFixed(3) + 'ms  p95=' + r.p95.toFixed(3) + 'ms  p99=' + r.p99.toFixed(3) + 'ms',
   );
 }

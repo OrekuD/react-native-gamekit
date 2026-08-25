@@ -73,18 +73,36 @@ is demonstrably NOT the backend's complete transaction state.
 
 Two identically seeded worlds (128 stacked dynamic boxes on static ground)
 advance through an identical command stream for 240 steps. The candidate takes
-one further commanded tick, then simulates a later failure: its stepped state
-is discarded and it is rebuilt from the saved prior projection. Requirements:
+one further commanded tick, then simulates a later failure: its stepped state is
+discarded and it is rebuilt from the saved prior projection.
+
+The comparator is ID-keyed and full-field: bodies are matched by stable
+game-owned ID with identical-ID-set validation; x/y, angle, vx/vy and angular
+velocity are each checked against explicit per-field tolerances; awake state,
+body type, gravity scale, and shape materials/sensors must match exactly.
+Non-finite values, missing/duplicate bodies, count mismatches, and malformed
+records produce a DISCRIMINATED "harness-invalid" result — they are never
+counted as the expected strategy rejection and force a nonzero exit. Contact
+records are captured as explicit PER-STEP sequences ('begin'/'end' with
+canonical body-ID pair order); each step is compared independently and the
+first differing step plus representative samples are retained. `stay` evidence
+is NOT claimed — deriving it would require comparing persistent manifold state,
+which planck does not expose. Eight harness self-checks (NaN injection, missing
+body, duplicate ID, angle-only divergence, within-tolerance angle noise,
+awake-only divergence, angular-velocity-only divergence, contact mismatch after
+an otherwise equal step) all pass before any verdict is printed.
+
+Measured outcome:
 
 1. **Exact restoration** — PASS: the rebuilt projection equals the untouched
    control's projection field-for-field.
 2. **Authoritative continuation equivalence** — FAIL: with identical subsequent
-   commands, ordered transforms/velocities diverge beyond the frozen
-   0.25-unit budget at continuation step 1 (max observed 0.5544), and the
-   ordered contact begin/end record sequences diverge from step 0 (the
-   restored world re-acquires ground contacts while the control is mid-stack).
-   Root cause: warm-start solver impulses live in private contact constraints,
-   outside any expressible public projection.
+   commands, transform divergence beyond the frozen 0.25-unit budget appears at
+   continuation step 0 (first field-level difference `b0.y`, max observed
+   0.5544), and the ordered per-step contact record sequences diverge from
+   step 0 (the restored world re-acquires ground contacts while the control is
+   mid-stack). Root cause: warm-start solver impulses live in private contact
+   constraints, outside any expressible public projection.
 3. **Eventual settling** (diagnostics ONLY): both worlds eventually settle
    within ~0.02 units with matching sleep states. This does NOT establish
    transaction equivalence — event consumers observe the divergence window
