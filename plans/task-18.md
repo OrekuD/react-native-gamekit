@@ -2,9 +2,11 @@
 
 ## Status
 
-**Complete via documented NO-GO (T18.0).** Full evidence, frozen budgets,
-transaction-strategy prototype results, and reopen triggers are recorded in
-[`task-18-evaluation.md`](./task-18-evaluation.md).
+**NO-GO decision is valid; one evaluation-record correction remains.** The
+dependency/export boundary, frozen device budgets, and decision not to ship an
+adapter are correct. The current headless spike measures world reconstruction
+cost but does not yet prove transaction restore equivalence or failure recovery;
+address T18-R1 below before describing strategy 2 as prototyped/failure-tested.
 
 Summary: five current backends were evaluated from live npm registry metadata.
 Only `planck.js 1.5.0` passes the static gates (MIT, active — 1.5.0 April 2026,
@@ -297,9 +299,13 @@ V1 must permit later growth without creating a universal abstraction now.
       no physical hardware in this environment — this is the blocking gate
       behind the no-go.)*
 - [x] Prototype and failure-test the viable transaction strategies.
-      *(Strategy 2 rebuild-from-projection prototyped headlessly: 0.5–1.1 ms
-      restore at 32–512 bodies; strategy 3 unavailable in planck; strategy 1
-      deferred to an approved adapter effort.)*
+      *(Strategy 2 prototyped and failure-tested headlessly end-to-end: full-
+      fidelity projection (IDs, type, transform, linear/angular velocity,
+      awake, gravity scale, materials incl. restitution), exact restore vs an
+      untouched control across three regimes, negative controls for omitted
+      angularVelocity/restitution, rebuild p50/p95/p99 timings, warm-start
+      artifact documented — see evaluation record §2. Strategy 3 unavailable in
+      planck; strategy 1 deferred to an approved adapter effort.)*
 - [x] Freeze v1 budgets for startup, bundle/native size, step cost, restore,
       memory, and teardown. *(Evaluation record §3.)*
 - [x] Write compile fixtures for the proposed v1 API and record the selected
@@ -392,6 +398,57 @@ V1 must permit later growth without creating a universal abstraction now.
       authority boundary.
 - [ ] The reference scene uses public APIs and proves a genuine solver need.
 - [ ] Compatibility, performance, and device evidence is published honestly.
+
+## Review feedback
+
+This isolated review covers `fc19626`. The review did not rerun benchmarks or
+repeat the backend research. It confirms that `planck@1.5.0` is dev-only, no
+`rn-gamekit/physics2d` export exists, and nothing under `packages/gamekit/src`
+imports Planck. The documented no-go remains the correct shipping decision.
+
+### T18-R1 — The spike times reconstruction but does not prove transaction restore (Important)
+
+`spike-physics2d.mjs` rebuilds from the initial body positions captured during
+`buildWorld()`. It never extracts an immutable projection from a world after it
+has stepped, injects a failed tick, restores that prior state, or compares the
+restored world with a control trace. The projection omits state needed for an
+equivalent restore, including current angle, linear/angular velocity, awake/sleep
+state, and fixture restitution (the authored fixture uses `0.05`, but the rebuilt
+fixture receives no restitution). Consequently the evaluation cannot yet claim
+that strategy 2 is viable or failure-tested; it currently proves only that a
+simplified world can be constructed quickly in Node.
+
+The performance record is also based on one rebuild timing per size, while the
+600-step "contact-heavy" sample does not record awake-body/contact counts to prove
+that the measured world remains active rather than settling during the run.
+
+Required approach:
+
+- Keep the NO-GO outcome, dev-only dependency, and device gates unchanged. This
+  correction does not authorize or require a production Physics2D adapter.
+- Rename the current evidence to a construction/rebuild timing spike until the
+  transaction property below is demonstrated. Uncheck or qualify the T18.0
+  "prototype and failure-test" row and remove "strategy 2 is viable" from the
+  evaluation in the meantime.
+- Define the minimum immutable prior-state projection required by the proposed v1
+  contract: stable body/shape IDs, body type, current transform, linear/angular
+  velocity, awake state and relevant body/material/filter properties. Preserve
+  every projected field through rebuild.
+- Build two identical seeded worlds. Advance both to a nontrivial committed state,
+  mutate one with a candidate tick and simulate a later failure, rebuild it from
+  the saved prior projection, then assert its normalized projection equals the
+  untouched control before advancing both through the same subsequent commands.
+  Compare ordered transforms, velocities, sleeping state, and contact lifecycle
+  for a bounded trace.
+- Add explicit negative checks by omitting one required field (for example angular
+  velocity or restitution) and prove the equivalence test fails.
+- Measure rebuild over a warmup plus multiple samples per body count and report
+  p50/p95/p99 rather than one timing. For the active-step scenario, record or
+  enforce awake-body/contact counts per sample so "contact-heavy" is measurable;
+  keep all results labelled Node-only.
+- Update `task-18-evaluation.md` and the T18.0 checkbox wording to match the actual
+  evidence. The physical-device matrix should remain open and the final shipping
+  decision should remain NO-GO.
 
 ## Future expansion backlog
 

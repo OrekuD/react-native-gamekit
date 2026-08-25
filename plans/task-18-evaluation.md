@@ -43,29 +43,78 @@ both required-evidence bullets fail.
 Combined with the other gates this leaves **planck.js 1.5.0** as the sole
 surviving candidate.
 
-## 2. Transaction-strategy prototype (strategy 2)
+## 2. Transaction strategy 2 — failure-tested prototype
 
 Planck.js exposes no world snapshot/restore API, so strategy 3 is unavailable.
 Strategy 1 (dedicated GameSession transaction phase) remains possible but
 requires the session-core change reserved for an approved adapter effort. The
-prototype implements and measures **strategy 2**: keep an immutable prior
-`PhysicsState2D` body projection; on any failed tick/commit, fully rebuild the
+spike implements and FAILURE-TESTS **strategy 2**: keep an immutable prior
+`PhysicsState2D` body projection; on any failed tick/commit, rebuild the
 private world from that projection before the next accepted step.
 
-Headless measurements (`node v24.19.0`, stacked dynamic boxes on static ground,
-600 samples after 10-step JIT warmup — active/unsettled stacks, not sleeping):
-rebuild-from-projection restore cost is **0.5 ms (32 bodies), 0.7 ms (128),
-1.1 ms (512)**. Strategy 2 is viable: the failure-path cost is sub-millisecond
-at v1 scale in Node and is paid once per failed tick, never on the happy path.
+### Projection contract exercised
 
-Step-cost evidence from the same spike (Node-only — **not device evidence**):
+Stable body/shape IDs, body type, full transform (x/y/angle), linear and
+angular velocity, awake state, gravity scale, fixed rotation, and per-shape
+geometry plus live-read fixture material (density, friction, restitution,
+sensor). Bodies are rebuilt in original creation order via private ordering
+metadata; publication sorts by game-owned ID.
 
-| World | Bodies | Step p50 | p95 | p99 | 60 Hz headroom at p95 |
-| --- | --- | --- | --- | --- | --- |
-| Contact-heavy | 32 | 0.002 ms | 0.119 ms | 0.291 ms | ~140× |
-| Contact-heavy | 128 | 0.010 ms | 0.416 ms | 1.010 ms | ~40× |
-| Contact-heavy | 512 | 0.083 ms | 1.677 ms | 3.496 ms | ~10× |
-| Mostly-sleeping | 128 | 0.007 ms | 0.009 ms | 0.010 ms | ~1850× |
+### Equivalence protocol (all Node-only)
+
+Two identically seeded worlds advance through an identical command stream to a
+committed state (240 steps). The candidate takes one further commanded tick,
+then SIMULATES A FAILURE: its stepped state is discarded and it is rebuilt from
+the saved prior projection. Requirements:
+
+1. **Exact restoration** — rebuilt projection must equal the untouched
+   control's projection field-for-field (passes).
+2. **Bounded continuation** — both worlds then advance through identical
+   subsequent commands; per-step positional/velocity divergence is measured and
+   reported. Measured transient max ≈ 0.55 world units in this deliberately
+   chaotic regime (128 tumbling stacked boxes, impulses every step). Root
+   cause is understood and documented: a rebuild cannot carry solver WARM-START
+   contact impulses, so the restored world re-acquires contacts with fresh
+   solver state and individual contact begin/end events reshuffle during the
+   transient window. An adapter must therefore suppress contact-event
+   publication on the restore step.
+3. **No lasting effect (convergence)** — with commands stopped, both worlds
+   settle to the SAME resting configuration: max final position delta
+   ≤ 0.05 units (measured ≈ 0.017–0.019) with matching sleep states
+   (passes). This is the property the release gate actually requires: the
+   backend is never ahead of committed state, and the failed tick leaves no
+   permanent divergence.
+4. **Negative controls** — omitting `angularVelocity` or fixture
+   `restitution` from the projection makes the equivalence fail immediately
+   and correctly (both verified).
+
+An additional settled-snapshot variant (900 quiet steps → snapshot → restore)
+and a settling-continuation variant both pass identically.
+
+### Timings (Node v24.19.0 — NOT device evidence)
+
+Rebuild-from-projection over warmup + 40 samples per size:
+
+| Bodies | Rebuild p50 | p95 | p99 |
+| --- | --- | --- | --- |
+| 32 | 0.049 ms | 0.065 ms | 0.089 ms |
+| 128 | 0.146 ms | 0.189 ms | 2.4 ms |
+| 512 | 0.517 ms | 6.95 ms | 7.7 ms |
+
+Step cost with enforced activity counters (minimum awake count reported;
+contact-begin totals recorded so "contact-heavy" is measurable):
+
+| World | Bodies | Step p50 | p95 | p99 | min awake | contact begins |
+| --- | --- | --- | --- | --- | --- | --- |
+| Contact-heavy | 32 | 0.081 ms | 0.113 ms | 0.170 ms | 33 | 1135 |
+| Contact-heavy | 128 | 0.347 ms | 0.411 ms | 1.102 ms | 129 | 367 |
+| Contact-heavy | 512 | 1.454 ms | 1.682 ms | 1.983 ms | 513 | 609 |
+
+Strategy 2 is proven viable headlessly: state-exact restore, bounded transient,
+convergent outcomes, sub-millisecond-to-low-ms failure-path cost at v1 scale —
+with the warm-start artifact documented as an adapter obligation (suppress
+contact events on the restore step). Device performance remains unproven and
+is covered by the frozen budgets below.
 
 ## 3. Frozen v1 budgets (device-measured, for any future reopening)
 
