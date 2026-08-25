@@ -79,18 +79,25 @@ discarded and it is rebuilt from the saved prior projection.
 The comparator is ID-keyed and full-field: bodies are matched by stable
 game-owned ID with identical-ID-set validation; x/y, angle, vx/vy and angular
 velocity are each checked against explicit per-field tolerances; awake state,
-body type, gravity scale, and shape materials/sensors must match exactly.
-Non-finite values, missing/duplicate bodies, count mismatches, and malformed
-records produce a DISCRIMINATED "harness-invalid" result — they are never
-counted as the expected strategy rejection and force a nonzero exit. Contact
-records are captured as explicit PER-STEP sequences ('begin'/'end' with
-canonical body-ID pair order); each step is compared independently and the
-first differing step plus representative samples are retained. `stay` evidence
-is NOT claimed — deriving it would require comparing persistent manifold state,
-which planck does not expose. Eight harness self-checks (NaN injection, missing
-body, duplicate ID, angle-only divergence, within-tolerance angle noise,
-awake-only divergence, angular-velocity-only divergence, contact mismatch after
-an otherwise equal step) all pass before any verdict is printed.
+body type, gravity scale, `fixedRotation`, shape kind/geometry (`kind`, `hw`,
+`hh`, `radius` — exact identity fields), and shape materials/sensor flags must
+match exactly. Validation rejects non-finite values, invalid body types,
+missing/duplicate bodies AND duplicate/non-empty-checked shape IDs, malformed
+shape geometry, and non-boolean lifecycle fields as a DISCRIMINATED
+"harness-invalid" result — never counted as the expected strategy rejection and
+always forcing a nonzero exit. Contact records are captured as explicit PER-STEP
+sequences ('begin'/'end' with canonical body-ID pair order); each step is
+compared independently and the first differing step plus representative samples
+are retained. `stay` evidence is NOT claimed — deriving it would require
+comparing persistent manifold state, which planck does not expose. Fourteen
+harness self-checks all pass before any verdict is printed: NaN injection,
+missing body, duplicate body ID, angle-only divergence, within-tolerance angle
+noise, awake-only divergence, angular-velocity-only divergence, contact mismatch
+after an otherwise equal step, fixedRotation-only divergence, shape-kind-only
+divergence, box-geometry-only divergence, duplicate shape IDs, malformed box
+geometry, and an unexpected baseline-restoration trial proving the ordinary
+(non-negative-control) restore-inexact branch classifies deliberately instead of
+falling through to continuation diagnostics.
 
 Measured outcome:
 
@@ -116,8 +123,9 @@ Measured outcome:
 
 Rebuild-from-projection (warmup + 40 samples): p50 0.042 / 0.149 / 0.579 ms and
 p95 0.059 / 0.217 / 7.9 ms at 32 / 128 / 512 bodies. Active-phase step cost
-with enforced awake/contact counters: p95 0.113 / 0.388 / 1.691 ms at
-32 / 128 / 512 bodies (min awake = all bodies; contact-begin totals recorded).
+with enforced awake/contact counters (returned records printed by main):
+p95 ≈ 0.10–0.13 / 0.37–0.43 / 1.69–2.12 ms at 32 / 128 / 512 bodies across runs
+(min awake = all bodies; contact-begin totals recorded per run).
 
 ### Consequence for the go/no-go decision
 

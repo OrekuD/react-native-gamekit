@@ -146,12 +146,30 @@ function validateProjection(projection) {
       if (!Number.isFinite(b[key])) return 'non-finite ' + key + ' on ' + b.id;
     }
     if (typeof b.awake !== 'boolean') return 'non-boolean awake on ' + b.id;
+    if (typeof b.fixedRotation !== 'boolean') return 'non-boolean fixedRotation on ' + b.id;
+    if (b.type !== 'static' && b.type !== 'dynamic' && b.type !== 'kinematic') {
+      return 'invalid body type on ' + b.id + ': ' + String(b.type);
+    }
     if (!Array.isArray(b.shapes)) return 'missing shapes on ' + b.id;
+    const shapeIds = new Set();
     for (const s of b.shapes) {
-      if (typeof s.id !== 'string') return 'shape with missing id on ' + b.id;
+      if (typeof s.id !== 'string' || s.id.length === 0) return 'shape with missing/empty id on ' + b.id;
+      if (shapeIds.has(s.id)) return 'duplicate shape id on ' + b.id + ': ' + s.id;
+      shapeIds.add(s.id);
+      if (s.kind !== 'box' && s.kind !== 'circle') {
+        return 'unsupported shape kind on ' + b.id + '/' + s.id + ': ' + String(s.kind);
+      }
+      if (s.kind === 'box') {
+        if (!Number.isFinite(s.hw) || !Number.isFinite(s.hh) || s.hw <= 0 || s.hh <= 0) {
+          return 'malformed box geometry on ' + b.id + '/' + s.id;
+        }
+      } else if (!Number.isFinite(s.radius) || s.radius <= 0) {
+        return 'malformed circle geometry on ' + b.id + '/' + s.id;
+      }
       if (!Number.isFinite(s.density) || !Number.isFinite(s.friction) || !Number.isFinite(s.restitution)) {
         return 'non-finite material on ' + b.id + '/' + s.id;
       }
+      if (typeof s.sensor !== 'boolean') return 'non-boolean sensor on ' + b.id + '/' + s.id;
     }
   }
   return null;
@@ -195,6 +213,9 @@ function compareStates(aProjection, bProjection) {
     }
     if (a.awake !== b.awake) return { kind: 'divergent', id, field: 'awake', detail: a.awake + ' vs ' + b.awake };
     if (a.type !== b.type) return { kind: 'divergent', id, field: 'type', detail: a.type + ' vs ' + b.type };
+    if (a.fixedRotation !== b.fixedRotation) {
+      return { kind: 'divergent', id, field: 'fixedRotation', detail: a.fixedRotation + ' vs ' + b.fixedRotation };
+    }
     if (a.gravityScale !== b.gravityScale) {
       return { kind: 'divergent', id, field: 'gravityScale', detail: a.gravityScale + ' vs ' + b.gravityScale };
     }
@@ -203,6 +224,14 @@ function compareStates(aProjection, bProjection) {
     if (sa.length !== sb.length) return { kind: 'divergent', id, field: 'shapes', detail: 'count mismatch' };
     for (let i = 0; i < sa.length; i += 1) {
       if (sa[i].id !== sb[i].id) return { kind: 'divergent', id, field: 'shapes', detail: 'shape id ' + sa[i].id + ' vs ' + sb[i].id };
+      // Shape identity fields must match exactly — geometry is part of the
+      // public contract, not float noise.
+      if (sa[i].kind !== sb[i].kind) return { kind: 'divergent', id, field: 'kind:' + sa[i].id, detail: sa[i].kind + ' vs ' + sb[i].kind };
+      for (const geo of ['hw', 'hh', 'radius']) {
+        if ((sa[i][geo] ?? null) !== (sb[i][geo] ?? null)) {
+          return { kind: 'divergent', id, field: geo + ':' + sa[i].id, detail: sa[i][geo] + ' vs ' + sb[i][geo] };
+        }
+      }
       for (const key of ['density', 'friction', 'restitution']) {
         if (Math.abs(sa[i][key] - sb[i][key]) > 1e-6) {
           return { kind: 'divergent', id, field: key + ':' + sa[i].id, detail: sa[i][key] + ' vs ' + sb[i][key] };
@@ -335,7 +364,7 @@ function awakeCount(world) {
  * trial INVALID (the main program must exit nonzero) — they are never treated
  * as the expected strategy rejection.
  */
-function runTrial(size, { omit } = {}) {
+function runTrial(size, { omit, corruptRestore } = {}) {
   const worldA = buildWorld(size);
   const worldB = buildWorld(size);
 
@@ -371,6 +400,10 @@ function runTrial(size, { omit } = {}) {
 
   const restoredWorld = rebuildFrom(damagedProjection);
   const restoredProjection = extractProjection(restoredWorld);
+  // Self-check seam: deliberately damage the restored projection AFTER the
+  // failure boundary so the ordinary-trial restore-inexact branch can be
+  // exercised without touching the control.
+  if (corruptRestore) corruptRestore(restoredProjection);
   const restoredInvalid = validateProjection(restoredProjection);
   if (restoredInvalid) {
     return { harnessValid: false, invalidReason: restoredInvalid };
@@ -504,11 +537,23 @@ function measureStepCost(size, label) {
   }
   world.off('begin-contact', onBegin);
   samples.sort((a, b) => a - b);
+  return {
+    size,
+    label,
+    p50: percentile(samples, 50),
+    p95: percentile(samples, 95),
+    p99: percentile(samples, 99),
+    minAwake,
+    contactBegins: begins - beginAtStart,
+  };
+}
+
+function printStepCost(r) {
   console.log(
-    label.padEnd(16) + ' bodies=' + String(size).padStart(3) +
-    '  step p50=' + percentile(samples, 50).toFixed(3) + 'ms  p95=' + percentile(samples, 95).toFixed(3) +
-    'ms  p99=' + percentile(samples, 99).toFixed(3) + 'ms  | awake(min)=' + minAwake +
-    '  contact-begins=' + (begins - beginAtStart),
+    r.label.padEnd(16) + ' bodies=' + String(r.size).padStart(3) +
+    '  step p50=' + r.p50.toFixed(3) + 'ms  p95=' + r.p95.toFixed(3) +
+    'ms  p99=' + r.p99.toFixed(3) + 'ms  | awake(min)=' + r.minAwake +
+    '  contact-begins=' + r.contactBegins,
   );
 }
 
@@ -533,8 +578,8 @@ function measureRebuild(size) {
 function runSelfChecks() {
   const results = [];
   const base = [
-    { id: 'ground', _order: 0, type: 'static', x: 0, y: 0, angle: 0, vx: 0, vy: 0, angularVelocity: 0, awake: false, fixedRotation: false, gravityScale: 1, shapes: [{ id: 'g-s', density: 0, friction: 0.6, restitution: 0, sensor: false }] },
-    { id: 'p', _order: 1, type: 'dynamic', x: 1, y: 2, angle: 0, vx: 0, vy: 0, angularVelocity: 0, awake: true, fixedRotation: false, gravityScale: 1, shapes: [{ id: 'p-s', density: 1, friction: 0.4, restitution: 0.05, sensor: false }] },
+    { id: 'ground', _order: 0, type: 'static', x: 0, y: 0, angle: 0, vx: 0, vy: 0, angularVelocity: 0, awake: false, fixedRotation: false, gravityScale: 1, shapes: [{ id: 'g-s', kind: 'box', hw: 500, hh: 0.5, radius: null, density: 0, friction: 0.6, restitution: 0, sensor: false }] },
+    { id: 'p', _order: 1, type: 'dynamic', x: 1, y: 2, angle: 0, vx: 0, vy: 0, angularVelocity: 0, awake: true, fixedRotation: false, gravityScale: 1, shapes: [{ id: 'p-s', kind: 'box', hw: 0.5, hh: 0.5, radius: null, density: 1, friction: 0.4, restitution: 0.05, sensor: false }] },
   ];
   const clone = () => base.map((b) => ({ ...b, shapes: b.shapes.map((s) => ({ ...s })) }));
 
@@ -608,11 +653,72 @@ function runSelfChecks() {
     const ok = firstDiff === 1;
     results.push({ name: 'self-check contact mismatch after equal earlier step', ok, detail: 'first diff at step ' + firstDiff });
   }
-  // 7. Duplicate ID -> harness-invalid (compare the duplicated list with
+  // 7. Duplicate body ID -> harness-invalid (compare the duplicated list with
   // itself so only the duplicate check can fire).
   {
     const duped = clone().concat([clone()[1]]);
     expectInvalid('self-check duplicate id -> invalid', duped, JSON.parse(JSON.stringify(duped)), 'duplicate');
+  }
+  // 8. fixedRotation-only divergence -> divergent(fixedRotation).
+  {
+    const a = clone();
+    const b = clone();
+    b[1].fixedRotation = !b[1].fixedRotation;
+    expectDivergent('self-check fixedRotation-only -> divergent', a, b, 'fixedRotation');
+  }
+  // 9. Shape-kind divergence -> divergent(kind:<shape>).
+  {
+    const a = clone();
+    const b = clone();
+    b[1].shapes[0] = { ...b[1].shapes[0], kind: 'circle', hw: undefined, hh: undefined, radius: 0.5 };
+    expectDivergent('self-check shape kind-only -> divergent', a, b, 'kind:p-s');
+  }
+  // 10. Shape-geometry divergence -> divergent(hw:<shape>).
+  {
+    const a = clone();
+    const b = clone();
+    b[1].shapes[0].hw = 0.25;
+    expectDivergent('self-check box geometry-only -> divergent', a, b, 'hw:p-s');
+  }
+  // 11. Duplicate shape IDs within one body -> harness-invalid
+  // (validateProjection-level check).
+  {
+    const dupShapes = clone();
+    dupShapes[1].shapes.push({ ...dupShapes[1].shapes[0] });
+    const err = validateProjection(dupShapes);
+    const ok = err !== null && err.includes('duplicate shape id');
+    results.push({ name: 'self-check duplicate shape id -> invalid', ok, detail: err ?? 'no error reported' });
+  }
+  // 12. Malformed geometry (non-positive half-width) -> harness-invalid
+  // (validateProjection-level check).
+  {
+    const bad = clone();
+    bad[1].shapes[0].hw = -1;
+    const err = validateProjection(bad);
+    const ok = err !== null && err.includes('malformed box geometry');
+    results.push({ name: 'self-check malformed box geometry -> invalid', ok, detail: err ?? 'no error reported' });
+  }
+  // 13. Unexpected baseline-restoration branch: an ordinary trial whose
+  // restored projection is deliberately corrupted must classify as
+  // harness-valid + restoreExact=false with a named divergence field — never
+  // fall through to continuation diagnostics.
+  {
+    const trial = runTrial(32, {
+      corruptRestore: (projection) => {
+        const b0 = projection.find((x) => x.id === 'b0');
+        if (b0) b0.y += 0.5;
+      },
+    });
+    const ok =
+      trial.harnessValid === true &&
+      trial.restoreExact === false &&
+      typeof trial.restorationField === 'string' &&
+      trial.continuationEquivalent === null;
+    results.push({
+      name: 'self-check unexpected baseline restoration -> classified, no fall-through',
+      ok,
+      detail: ok ? trial.restorationField : JSON.stringify(trial),
+    });
   }
   return results;
 }
@@ -640,8 +746,19 @@ const trial = runTrial(128);
 if (!trial.harnessValid) {
   console.log('FAIL: harness-invalid trial — ' + trial.invalidReason);
   process.exitCode = 1;
+} else if (!trial.restoreExact) {
+  // Deliberate invariant verdict: an ordinary (non-negative-control) baseline
+  // restoration must be exact. Never fall through to continuation fields.
+  console.log(
+    'FAIL: baseline restoration was not exact' +
+    (trial.restorationField !== undefined
+      ? ' — divergent field: ' + trial.restorationField + ' (' + trial.restorationDetail + ')'
+      : '') +
+    '. This contradicts the recorded evidence and invalidates the spike run.',
+  );
+  process.exitCode = 1;
 } else {
-  console.log('exact restoration of public fields: ' + (trial.restoreExact ? 'PASS' : 'FAIL'));
+  console.log('exact restoration of public fields: PASS');
   console.log(
     'authoritative continuation equivalence: ' +
     (trial.continuationEquivalent ? 'PASS' : 'FAIL') +
@@ -688,9 +805,9 @@ if (!trial.harnessValid) {
 }
 
 console.log('\n--- step cost, active phase enforced (diagnostics; Node-only) ---');
-measureStepCost(32, 'contact-heavy');
-measureStepCost(128, 'contact-heavy');
-measureStepCost(512, 'contact-heavy');
+printStepCost(measureStepCost(32, 'contact-heavy'));
+printStepCost(measureStepCost(128, 'contact-heavy'));
+printStepCost(measureStepCost(512, 'contact-heavy'));
 
 console.log('\n--- rebuild-from-projection distribution (' + REBUILD_SAMPLES + ' samples, ' + REBUILD_WARMUP + ' warmup) ---');
 for (const size of [32, 128, 512]) {

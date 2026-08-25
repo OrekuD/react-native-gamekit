@@ -2,12 +2,11 @@
 
 ## Status
 
-**Documented NO-GO remains correct; one trial-harness correction remains.**
-Strategy 2 is correctly recorded as rejected because private solver state makes
-continuation observably diverge. The script still has a false-success path for
-non-finite/malformed comparisons and does not compare every claimed continuation
-field; address T18-R3 below. No adapter ships and Collision2D remains the sole
-collision system.
+**Documented NO-GO remains correct; one final harness-contract correction
+remains.** T18-R3's discriminated invalid result and per-step comparison are
+present. The baseline exact-restore branch, full projected-field comparison, and
+step-cost reporting still need reconciliation; address T18-R4 below. No adapter
+ships and Collision2D remains the sole collision system.
 
 Summary: five current backends were evaluated from live npm registry metadata.
 Only `planck.js 1.5.0` passes the static gates (MIT, active — 1.5.0 April 2026,
@@ -542,6 +541,50 @@ Required approach:
 - Keep the strategy-2 rejection, NO-GO, dev-only dependency, and open device rows
   unchanged. Update the spike/evaluation wording only where it currently
   overstates the fields and contact lifecycle actually compared.
+
+### T18-R4 — Baseline restoration and the claimed full-field contract are incomplete (Important)
+
+The new `harnessValid` discrimination correctly prevents NaN, missing bodies, and
+other validated comparison failures from becoming the expected strategy rejection.
+However, the main path does not explicitly require the baseline trial's
+`restoreExact === true`. If an ordinary (non-negative-control) restoration becomes
+divergent, `runTrial()` returns a harness-valid result with
+`continuationEquivalent: null`; main then enters the normal branch and eventually
+dereferences missing continuation diagnostics. That currently fails by incidental
+exception rather than a deliberate invariant verdict.
+
+The comparator also does not yet cover every field in the stated full-fidelity
+projection. It compares body type, gravity scale, awake state, motion values and
+shape materials/sensor state, but omits `fixedRotation` and shape kind/geometry
+(`kind`, `hw`, `hh`, `radius`). `validateProjection()` likewise does not validate
+those geometry/type/boolean fields or duplicate shape IDs. A rebuild could corrupt
+them while "exact restoration of public fields" still passes.
+
+Finally, `measureStepCost()` was changed to return `{p50,p95,p99}`, but main ignores
+that return value. The current reproducible spike prints headings followed by no
+step-cost rows even though the evaluation retains and describes those diagnostics.
+
+Required approach:
+
+- After the baseline `runTrial(128)`, require `harnessValid === true` and
+  `restoreExact === true` before reading continuation/settling fields. Report an
+  unexpected restore failure explicitly and set exit code 1; do not rely on a
+  later TypeError. Keep omitted-field trials as the only expected
+  `restoreExact === false` path.
+- Extend validation/comparison to the complete projected contract actually used by
+  rebuild: valid body type, `fixedRotation`, finite/valid shape geometry, shape
+  kind, sensor boolean, and unique non-empty shape IDs per body. Compare those
+  fields exactly or with an explicit geometry tolerance where appropriate.
+- Add self-checks for fixed-rotation-only divergence, shape-geometry divergence,
+  duplicate shape IDs, and the unexpected baseline restoration branch. Each must
+  fail for the intended classified reason.
+- Either print the returned step-cost distributions in main or restore printing
+  inside `measureStepCost()`. Keep awake/contact counters in the returned record so
+  the output continues to substantiate the active-scene claim; update recorded
+  numbers only when the spike actually emits them.
+- Keep the R3 invalid-result checks, per-step begin/end comparison, strategy-2
+  rejection, overall NO-GO, dev-only Planck dependency, and open device rows
+  unchanged.
 
 ## Future expansion backlog
 
