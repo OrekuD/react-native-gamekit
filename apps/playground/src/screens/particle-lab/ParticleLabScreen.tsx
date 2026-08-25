@@ -1,18 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Canvas } from '@shopify/react-native-skia';
 import { useSharedValue } from 'react-native-reanimated';
 
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
-import { ParticleView, useParticlePresentation } from 'rn-gamekit/react';
-import { GameWorld2D } from 'rn-gamekit/react';
-import type { ResolvedViewport2D } from 'rn-gamekit';
+import { ParticleView, useParticlePresentation , GameWorld2D , useGameAssets } from 'rn-gamekit/react';
+import type { ResolvedViewport2D , createGameSession } from 'rn-gamekit';
 import type { CameraCut2D } from 'rn-gamekit/camera2d';
 import { defineAssets, spriteSheet } from 'rn-gamekit/assets';
-import { useGameAssets } from 'rn-gamekit/react';
 
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
-import type { createGameSession } from 'rn-gamekit';
 
 /**
  * T15.5 focused particle screen: sprite/shape discriminants are exercised via

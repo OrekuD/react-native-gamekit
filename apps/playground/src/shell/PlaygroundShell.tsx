@@ -5,7 +5,7 @@ import type {
   GameCamera2DDefinition,
   GameRendererProps,
 } from 'rn-gamekit/react';
-import type { GameSession, SceneDefinitionMarker } from 'rn-gamekit';
+import type { GameSession } from 'rn-gamekit';
 import { GameSurface } from './GameSurface';
 import { useGameAssets } from 'rn-gamekit/react';
 
@@ -13,7 +13,7 @@ import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreaker
 import { createGameSession } from 'rn-gamekit';
 import { paddleGame } from '../docs-examples/paddle-tutorial/game';
 import { PaddleRenderer } from '../docs-examples/paddle-tutorial/Renderer';
-import { collisionLabDefinition } from '../screens/collision-lab/collisionLabGame';
+import { collisionLabDefinition , labAssets } from '../screens/collision-lab/collisionLabGame';
 import { spriteFieldCamera } from '../screens/sprite-field/spriteFieldCamera';
 import { cameraLabCamera } from '../screens/camera-lab/cameraLabCamera';
 import CameraLabContent from '../screens/camera-lab/CameraLabContent';
@@ -21,7 +21,7 @@ import { CameraLabRenderer } from '../screens/camera-lab/CameraLabRenderer';
 import { createCameraLabSession } from '../screens/camera-lab/cameraLabGame';
 import PlatformerLabContent from '../screens/platformer-lab/PlatformerLabContent';
 import { PlatformerLabRenderer } from '../screens/platformer-lab/PlatformerLabRenderer';
-import { createPlatformerLabSession } from '../screens/platformer-lab/platformerLabGame';
+import { createPlatformerLabSession , platformerLabAssets } from '../screens/platformer-lab/platformerLabGame';
 import { platformerLabCamera } from '../screens/platformer-lab/platformerLabCamera';
 import AudioLabScreen from '../screens/audio-lab/AudioLabScreen';
 import ParticleLabScreen from '../screens/particle-lab/ParticleLabScreen';
@@ -30,10 +30,8 @@ import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRende
 import { createBootstrapGameSession } from '../screens/bootstrap/bootstrapGame';
 import { createLabSession } from '../screens/lab/labSession';
 import { createSpriteFieldSession, spriteFieldAssets } from '../screens/sprite-field/spriteFieldGame';
-import { labAssets } from '../screens/collision-lab/collisionLabGame';
-import { platformerLabAssets } from '../screens/platformer-lab/platformerLabGame';
 import { createIdleSession } from './idleSession';
-import { isPlaygroundGameId, type PlaygroundGameId } from '../catalog/games';
+import { type PlaygroundGameId } from '../catalog/games';
 import { usePlaygroundStore } from '../state/playgroundStore';
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps';
 import {
@@ -41,7 +39,6 @@ import {
   type SurfaceGameEntry,
 } from './surfaceController';
 import {
-  effectiveBinding,
   neutralSlot,
   type RunSurfaceEvent,
   type SlotAssets,
@@ -58,11 +55,6 @@ import { BrickBreakerRenderer } from '../screens/brick-breaker/BrickBreakerRende
 import { BootstrapRenderer } from '../screens/bootstrap/BootstrapRenderer';
 import { NeutralRenderer } from '../renderers/NeutralRenderer';
 import { SpriteFieldRenderer } from '../screens/sprite-field/SpriteFieldRenderer';
-
-/** The GameView's scene-map parameter when the surface treats games opaquely. */
-type SceneDefinitionMarkerMap = Record<string, SceneDefinitionMarker>;
-
-const FADE_DURATION_MS = 180;
 
 /**
  * Stack-free playground shell with one long-lived game surface (T8).

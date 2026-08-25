@@ -226,7 +226,7 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
   it('holds gameplay behind both validated loads — no HUD/session content while blocked', async () => {
     const inner = createMemoryStorageAdapter();
     // Gate EACH read independently so Promise.all cannot resolve until both release.
-    const gates: Array<() => void> = [];
+    const gates: (() => void)[] = [];
     const adapter = {
       read: async (k: string) => {
         if (k.includes('rn-gamekit.storage.')) {
@@ -575,7 +575,7 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
     const adapterB = createMemoryStorageAdapter();
 
     // Block ALL of B's storage reads until the test releases them.
-    const bGates: Array<() => void> = [];
+    const bGates: (() => void)[] = [];
     const gatedB = {
       read: async (k: string) => {
         if (k.includes('rn-gamekit.storage.')) {

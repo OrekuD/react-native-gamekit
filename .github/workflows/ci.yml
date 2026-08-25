@@ -38,6 +38,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The library must be built BEFORE any gate that resolves rn-gamekit
+      # through its export map: playground imports (rn-gamekit/react,
+      # rn-gamekit/testing, ...) point into packages/gamekit/lib, which only
+      # exists after a build. Linting/typechecking against a fresh checkout
+      # without this step fails with import/no-unresolved errors.
+      - name: Build library
+        run: pnpm --filter ./packages/gamekit build
+
+      - name: Inspect package tarball
+        run: pnpm --filter ./packages/gamekit pack:inspect
+
       - name: Lint
         run: pnpm lint
 
@@ -46,12 +57,6 @@ jobs:
 
       - name: Test
         run: pnpm test
-
-      - name: Build library
-        run: pnpm --filter ./packages/gamekit build
-
-      - name: Inspect package tarball
-        run: pnpm --filter ./packages/gamekit pack:inspect
 
       - name: Build docs
         run: pnpm --filter @react-native-gamekit/docs build

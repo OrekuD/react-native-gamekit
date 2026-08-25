@@ -88,7 +88,7 @@ let ColliderOverlay: React.ComponentType<{
   readonly world: Controllable;
   readonly snap: Controllable;
 }>;
-let COLLIDER_TOPOLOGY: ReadonlyArray<{ label: string; kind: 'aabb' | 'circle' }>;
+let COLLIDER_TOPOLOGY: readonly { label: string; kind: 'aabb' | 'circle' }[];
 
 before(async () => {
   const rendererModule = await import('./CollisionLabRenderer');
@@ -105,7 +105,7 @@ before(async () => {
 
 interface SnapshotShape {
   debugVisible: boolean;
-  colliderDebug: Array<{
+  colliderDebug: {
     kind: string;
     x: number;
     y: number;
@@ -113,7 +113,7 @@ interface SnapshotShape {
     height: number;
     radius?: number;
     label?: string;
-  }>;
+  }[];
   swept: boolean;
   projectileTeleported: boolean;
   sprite: { x: number; y: number };

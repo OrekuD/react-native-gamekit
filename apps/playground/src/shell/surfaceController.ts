@@ -13,7 +13,7 @@
  */
 import type { ComponentType } from 'react';
 import type { GameSession } from 'rn-gamekit';
-import type { GameRendererProps } from 'rn-gamekit/react';
+import type { GameRendererProps , GameCamera2DDefinition } from 'rn-gamekit/react';
 
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps.ts';
 import {
@@ -26,7 +26,6 @@ import {
   type SurfaceSlot,
 } from './surfaceSlot.ts';
 
-import type { GameCamera2DDefinition } from 'rn-gamekit/react';
 
 /** One catalogued game: how the controller opens, renders, and binds it. */
 /**

@@ -136,14 +136,6 @@ describe('committed and round-trip diagnostics (T12-TF3)', () => {
   });
 });
 
-function actStart(session: { start(): void }): void {
-  session.start();
-}
-
-function actTick(driver: { fireNext(t: number): void }): void {
-  driver.fireNext(16.7);
-}
-
 function act(fn: () => void): void {
   fn();
 }

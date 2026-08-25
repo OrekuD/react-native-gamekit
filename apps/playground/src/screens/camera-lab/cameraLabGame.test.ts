@@ -119,7 +119,7 @@ describe('Camera Lab rules (T12.8)', () => {
   });
 
   it('culls markers headlessly and the visible bounds contain the camera center', () => {
-    const { session, snap } = harness();
+    const { snap } = harness();
     const current = snap();
     assert.ok(current.visibleMarkerIds.length <= current.markers.length);
     assert.ok(current.visibleMarkerIds.length > 0, 'the center markers stay visible');

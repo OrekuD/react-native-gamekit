@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 const source = readFileSync('src/screens/camera-lab/cameraLabInstrumentation.ts', 'utf8');
 
 /** Callback -> invocation runtime. */
-const CALLBACKS: ReadonlyArray<[string, 'ui' | 'rn']> = [
+const CALLBACKS: readonly [string, 'ui' | 'rn'][] = [
   ['onRawTouch', 'ui'],
   ['onForwarded', 'ui'],
   ['onDispatchResult', 'rn'],
@@ -84,7 +84,9 @@ describe('Camera Lab instrumentation runtime classification (T12-SF2)', () => {
   });
 
   it('keeps readCounters free of shared-value reads', () => {
-    const arrow = bodyOf(source, 'readCounters = useCallback(');  });
+    const body = bodyOf(source, 'readCounters = useCallback(');
+    assert.ok(!body.includes('.value'), 'readCounters reads refs/snapshots only, never a UI-owned .value');
+  });
 
   it('fails when an RN callback is workletized or a UI callback loses its directive', () => {
     const rnWorkletized = source.replace(

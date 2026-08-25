@@ -47,7 +47,7 @@ mock.module('@shopify/react-native-skia', {
     Skia: { makeImageFromView: () => undefined, Path: { Make: () => ({ addRect: () => undefined }) }, XYWHRect: () => ({}) },
   },
 });
-const capturedFrameCallbacks: Array<(info: { timestamp: number }) => void> = [];
+const capturedFrameCallbacks: ((info: { timestamp: number }) => void)[] = [];
 let scheduleOnRNCalls = 0;
 mock.module('react-native-reanimated', {
   namedExports: {
@@ -224,7 +224,7 @@ describe('UI -> RN transfer cadence (T12-TF2)', () => {
     capturedFrameCallbacks.length = 0;
     scheduleOnRNCalls = 0;
     const { session, driver } = harness();
-    const attachments: Array<{ pointer: { onRawTouch?: () => void } }> = [];
+    const attachments: { pointer: { onRawTouch?: () => void } }[] = [];
     let renderer!: ReturnType<typeof create>;
     act(() => session.start());
     act(() => driver.fireNext(0));

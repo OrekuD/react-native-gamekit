@@ -4,12 +4,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
+import { canCollide2D, collideCircleAabb2D } from 'rn-gamekit/collision2d';
+
 // The game manifest references static module handles via require(...),
 // which Metro resolves at bundle time; the headless tests seed a stub.
 (globalThis as { require?: (id: string) => number }).require = () => 42;
-
-import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
-import { canCollide2D, collideCircleAabb2D } from 'rn-gamekit/collision2d';
 
 const { COLLISION_LAB_CONFIG, collisionLabDefinition } = await import('./collisionLabGame.ts');
 type CollisionLabSnapshot = {
@@ -23,7 +23,7 @@ type CollisionLabSnapshot = {
   readonly sweptHit: { readonly time: number } | undefined;
   readonly sweepContactEntryTime: number | undefined;
   readonly candidates: readonly string[];
-  readonly colliderDebug: ReadonlyArray<{ readonly kind: string; readonly label?: string; readonly id?: string }>;
+  readonly colliderDebug: readonly { readonly kind: string; readonly label?: string; readonly id?: string }[];
   readonly projectile: { readonly x: number; readonly y: number; readonly radius: number };
   readonly projectileStart: { readonly x: number; readonly y: number };
   readonly target: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };

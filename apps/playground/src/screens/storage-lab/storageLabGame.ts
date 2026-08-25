@@ -118,7 +118,7 @@ function makeStorageLabScene(initial?: StorageLabSave) {
       const nextX = state.x + speed * deltaSeconds;
       let checkpointIndex = state.checkpointIndex;
       const checkpointsReached = [...state.checkpointsReached] as boolean[];
-      const crossed: Array<{ index: number; x: number }> = [];
+      const crossed: { index: number; x: number }[] = [];
       CHECKPOINTS.forEach((cx, i) => {
         if (!checkpointsReached[i] && state.x < cx && nextX >= cx) {
           checkpointsReached[i] = true;

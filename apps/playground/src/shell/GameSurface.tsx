@@ -1,11 +1,10 @@
 import { useEffect, type ComponentType } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet } from 'react-native';
 import Animated, { useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import {
   GamePointerInput,
   GameView,
   type GameAssetsState,
-  type GameCamera2DDefinition,
   type GameRendererProps,
 } from 'rn-gamekit/react';
 import type { GameSession, PointerInputAction, SceneDefinitionMarker } from 'rn-gamekit';

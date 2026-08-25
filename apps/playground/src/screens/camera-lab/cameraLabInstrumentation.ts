@@ -16,10 +16,10 @@
  * `readCounters()` reads ONLY the latest RN snapshot and refs — it never
  * synchronously reads a UI-owned `.value`.
  */
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useFrameCallback, useSharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
-import { surfaceToWorld2D, worldToSurface2D } from 'rn-gamekit/camera2d';
+import { worldToSurface2D } from 'rn-gamekit/camera2d';
 import type { GamePointerInstrumentation, GameViewInstrumentation } from 'rn-gamekit/react';
 
 /** The diagnostic publication cadence (T12-F7, T12-TF2): ~8 Hz. */
@@ -149,7 +149,9 @@ export function useCameraLabInstrumentation(): CameraLabInstrumentation {
         roundTripErrorRef.current = Math.hypot(back.x - sample.surface.x, back.y - sample.surface.y);
       },
     }),
-    [],
+    // Shared values have a stable identity for the hook's lifetime; listed
+    // to satisfy exhaustive-deps without ever rebuilding the pair.
+    [rawTouches, forwarded],
   );
   const view = useMemo<GameViewInstrumentation>(
     () => ({
