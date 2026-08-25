@@ -2,15 +2,15 @@
 
 ## Status
 
-**Follow-ups T17-RF1–RF4 resolved.** F1–F3 core fixes retained; RED regressions
-committed and verified failing against `051052a` (8/9 fail, both flush hangs
-time out) and passing on the fix. Storage Lab replacement lifecycle now disposes
-the exact owned session per request (adapter-swap covered by mounted test), the
-integration suite mounts the real screen with a deterministic session seam and
-proves load-before-session, real checkpoint-event save/flush, unmount-during-save
-without stale publication, reopen/resume, settings persistence, failure UI, and
-A→B adapter swap. The playground directly declares
-`@react-native-async-storage/async-storage@2.1.2`.
+**Second follow-ups T17-SF1–SF2 resolved.** All button actions now route through
+the request-owned stores via a single owner ref — checkpoint, settings,
+manual-save, and reset share per-slot queues, so final bytes always follow
+acceptance order (proven by mounted real-button tests with blocked writes and
+rapid volume changes, plus a rejected-action no-hang case). Replacement now
+collapses to a blocking loading state synchronously — cleared session/HUD/error/
+status and reset HUD cadence — so the disposed previous session is never
+interactive (proven by an A→B swap test with B's reads blocked, instrumented
+seams asserting exactly-one disposal/subscription per request).
 
 V1 is complete: versioned `rn-gamekit/storage` with envelope, migrations, per-slot queue, flush/dispose, explicit errors, adapter boundary, checkpoint effect, and reference game (Storage Lab). Future expansion backlog remains documented and non-blocking.
 
@@ -590,6 +590,66 @@ Required approach:
 - Add a focused dependency/config assertion or Expo resolution check proving
   the playground owns and can autolink the backend without relying on another
   workspace package's development dependencies.
+
+## Second follow-up review feedback
+
+This isolated review covers `eefe5e4` and `9a2e3c2`. T17-RF1–RF4 are materially
+addressed: the regression tests are committed, each load request owns and disposes
+its exact session, the integration suite mounts the real screen, and the playground
+declares AsyncStorage directly. Keep those changes and address only the two
+remaining reference-screen defects below.
+
+### T17-SF1 — Screen actions bypass the request-owned queues (High)
+
+`mutateSettings()`, `triggerManualSave()`, and `resetSave()` each create a new
+adapter/store instead of using the stores owned by the active load request. The
+checkpoint listener therefore writes through one `saveStore`, while Save now and
+Reset write through unrelated stores. Their per-slot queues cannot coordinate, so
+an older slow checkpoint/manual write can complete after a newer reset or save and
+overwrite it. Rapid settings presses have the same ordering defect. A failed
+temporary save/flush/remove also skips `tempStore.dispose()`.
+
+Required approach:
+
+- Store one active request owner in a ref containing its request ID, settings
+  store, save store, and session. Publish it only after creation and clear it only
+  if cleanup still owns that exact request.
+- Route checkpoint, settings, manual-save, and reset operations through those same
+  request-owned stores. Do not create adapters or temporary stores from button
+  handlers.
+- Capture the owner/request ID at action acceptance and guard React publications
+  after every await. Let accepted work finish under the store's existing dispose
+  contract, while replacement cleanup prevents stale UI publication.
+- Remove the workaround comments in `mutateSettings()`; they currently describe a
+  known non-reference implementation.
+- Add mounted tests that use the real buttons: block a checkpoint write, then
+  accept Reset/Save now and prove final bytes follow acceptance order; rapidly
+  change volume and prove the latest accepted value wins. Include a rejected
+  operation and prove cleanup/next actions do not hang.
+
+### T17-SF2 — Request replacement keeps the disposed old UI interactive (High)
+
+When `adapter` or `createSession` changes, the old request cleanup disposes its
+session, but the component retains `loadState === 'ready'`, the old `session`, HUD,
+and status until the new asynchronous loads finish. During that interval the old
+controls remain visible and can dispatch into a disposed session. `hudLastRef` also
+retains the old session's tick/cadence record, which can suppress publication from
+the replacement session. The current adapter-swap test lets B load immediately, so
+it does not exercise this interval or prove the summary's exact-disposal claim.
+
+Required approach:
+
+- At the start of every new request, transition the screen to a blocking loading
+  state and clear the published session, HUD, error, and old status before the
+  replacement can be interacted with. Reset `hudLastRef` for that generation.
+- Keep the exact request-owned cleanup already implemented; do not dispose the old
+  session from React state or allow a stale request to clear the new owner.
+- Add a mounted A→B replacement test with B's reads deliberately blocked. While
+  blocked, assert loading UI is shown, no gameplay controls are mounted, and no
+  input can reach disposed A. After release, assert only B is rendered.
+- Instrument the injected session seam and subscriptions so the test asserts A and
+  B are each disposed/removed exactly once. Also drive a settings button through
+  the real screen rather than pre-seeding storage and calling that action covered.
 
 ## Future expansion backlog
 

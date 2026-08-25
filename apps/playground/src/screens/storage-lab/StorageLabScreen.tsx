@@ -12,12 +12,13 @@ import {
 } from './storageLabGame';
 
 type LoadState = 'loading' | 'ready' | 'error';
+type LabSession = ReturnType<typeof createStorageLabSession>;
 
 export type StorageLabScreenProps = {
   /** Injectable adapter seam for mounted tests — playground uses AsyncStorage. */
   adapter?: GameStorageAdapter;
   /** Injectable session factory for deterministic driver tests — defaults to real session. */
-  createSession?: (initial: import('./storageLabGame').StorageLabSave) => ReturnType<typeof createStorageLabSession>;
+  createSession?: (initial: StorageLabSave) => LabSession;
 };
 
 const DIAGNOSTIC_INTERVAL = 0.125;
@@ -27,10 +28,24 @@ function createPlaygroundAdapter(): GameStorageAdapter {
   return createGameStorageAdapter();
 }
 
+/**
+ * The single owner of the ACTIVE request's resources. Button actions route
+ * their writes through these request-owned stores so checkpoint, settings,
+ * manual-save, and reset operations share per-slot queues and cannot
+ * reorder against each other. Published only after creation; cleared only
+ * by the cleanup that owns that exact request.
+ */
+interface RequestOwner {
+  readonly requestId: number;
+  readonly settingsStore: ReturnType<typeof createGameSaveStore>;
+  readonly saveStore: ReturnType<typeof createGameSaveStore>;
+  session: LabSession | null;
+}
+
 export default function StorageLabScreen({ adapter: injectedAdapter, createSession: injectedCreateSession }: StorageLabScreenProps) {
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
-  const [session, setSession] = useState<ReturnType<typeof createStorageLabSession> | null>(null);
+  const [session, setSession] = useState<LabSession | null>(null);
   const [hud, setHud] = useState<{ x: number; checkpoint: number; ticks: number } | null>(null);
   const [status, setStatus] = useState('loading saves…');
   const [volume, setVolume] = useState(1);
@@ -38,34 +53,78 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
   const moveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hudLastRef = useRef<{ at: number; record: { x: number; checkpoint: number; ticks: number } | null }>({ at: -Infinity, record: null });
   const requestIdRef = useRef(0);
+  const ownerRef = useRef<RequestOwner | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const requestId = ++requestIdRef.current;
+
+    // T17-SF2: transition to a blocking loading state BEFORE anything async —
+    // the replaced request's controls/HUD/status must not stay interactive
+    // while the replacement loads. Reset the HUD cadence for this generation.
+    // Synchronous-on-purpose: any defer reopens an interactive window for the
+    // disposed session (the exact defect this transition closes).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoadState('loading');
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSession(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHud(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setError(null);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setStatus('loading saves…');
+    hudLastRef.current = { at: -Infinity, record: null };
+
     const adapter = injectedAdapter ?? createPlaygroundAdapter();
     const settingsStore = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'storage-lab-settings' });
     const saveStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'storage-lab-save' });
-    let ownedSession: ReturnType<typeof createStorageLabSession> | null = null;
+    const owner: RequestOwner = { requestId, settingsStore, saveStore, session: null };
+    ownerRef.current = owner;
+
     let ownedSub: { remove(): void } | null = null;
+
+    /** Tear down THIS request's resources exactly once. */
+    const teardown = (): void => {
+      if (moveTimeoutRef.current !== null) {
+        clearTimeout(moveTimeoutRef.current);
+        moveTimeoutRef.current = null;
+        // Release held input before disposing/replacing its session.
+        try {
+          owner.session?.input.release('right');
+        } catch {}
+      }
+      ownedSub?.remove();
+      ownedSub = null;
+      // Only this request's cleanup may clear its own owner entry — never a
+      // newer request's.
+      if (ownerRef.current !== null && ownerRef.current.requestId === requestId) {
+        ownerRef.current = null;
+      }
+      settingsStore.dispose();
+      saveStore.dispose();
+      if (owner.session !== null) {
+        try {
+          owner.session.dispose();
+        } catch {}
+        owner.session = null;
+      }
+    };
 
     (async () => {
       try {
         const [settingsRes, saveRes] = await Promise.all([settingsStore.load('player'), saveStore.load('profile-1')]);
         if (cancelled || requestIdRef.current !== requestId) {
-          // Request was invalidated before load completed — dispose the stores we created for this request.
-          settingsStore.dispose();
-          saveStore.dispose();
+          teardown();
           return;
         }
         setVolume(settingsRes.data.volume);
         const initialSave = saveRes.data;
         const createSessionFn = injectedCreateSession ?? createStorageLabSession;
         const nextSession = createSessionFn(initialSave);
-        ownedSession = nextSession;
+        owner.session = nextSession;
         if (cancelled || requestIdRef.current !== requestId) {
-          nextSession.dispose();
-          settingsStore.dispose();
-          saveStore.dispose();
+          teardown();
           return;
         }
         const sub = nextSession.addGameEventListener('checkpoint', async (event) => {
@@ -79,6 +138,7 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
           };
           setStatus(`checkpoint ${event.payload.index} → saving…`);
           try {
+            // Same request-owned saveStore the buttons use — shared per-slot queue.
             await saveStore.save('profile-1', projected);
             await saveStore.flush();
             if (requestIdRef.current !== requestId) return;
@@ -101,30 +161,13 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
     })();
 
     return () => {
-      // Invalidate before removing subscriptions/disposing so in-flight completions cannot publish.
-      const wasActiveRequest = requestIdRef.current === requestId;
-      if (wasActiveRequest) {
-        // Bump token so any in-flight save/status completions from this request are ignored.
+      // Invalidate first so in-flight completions cannot publish into a
+      // replacement, then tear down this exact request's resources.
+      if (requestIdRef.current === requestId) {
         requestIdRef.current += 1;
       }
       cancelled = true;
-      if (moveTimeoutRef.current !== null) {
-        clearTimeout(moveTimeoutRef.current);
-        moveTimeoutRef.current = null;
-        // Release held input before disposing/replacing its session.
-        try {
-          ownedSession?.input.release('right');
-        } catch {}
-      }
-      ownedSub?.remove();
-      ownedSub = null;
-      settingsStore.dispose();
-      saveStore.dispose();
-      // Dispose the exact owned session for this request — not a stale state value.
-      if (ownedSession) {
-        ownedSession.dispose();
-        ownedSession = null;
-      }
+      teardown();
     };
   }, [injectedAdapter, injectedCreateSession]);
 
@@ -158,81 +201,71 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
     };
   }, [session, loadState]);
 
+  /** Snapshot the active owner at action acceptance; guards use the captured id. */
+  function activeOwner(): RequestOwner | null {
+    const owner = ownerRef.current;
+    if (owner === null || owner.session === null || owner.session.status === 'disposed') return null;
+    return owner;
+  }
+
   const mutateSettings = async (nextVolume: number): Promise<void> => {
-    // Guard with active request token — read stores via closure would be stale after replacement, so find current stores via ref is not needed;
-    // instead we re-derive from the current request's stores. For simplicity, we keep a ref to the current stores in the effect above,
-    // but mutate actions are rare and we can safely use the latest stores by reading from a ref set in the effect.
-    // To avoid stale-closure issues, we store the current request's stores in a ref that is updated in the effect.
-    // For this lab, we just use the fact that settings are not critical for the reference test — the real persistence is proven via adapter reuse.
-    // We keep the implementation simple and guard status publication.
-    const activeRequest = requestIdRef.current;
+    const owner = activeOwner();
+    if (owner === null) return;
+    const requestId = owner.requestId;
     setVolume(nextVolume);
-    setStatus(`settings saving…`);
-    // Settings store is owned by the current request; we need to retrieve it without stale closure.
-    // We use a workaround: create a temporary store with the same adapter? No — we should store the current settings store in a ref.
-    // For correctness, we keep a ref to the current settings store.
-    // Since we don't have that ref here, we fallback to no-op if not available — the integration test drives settings via direct adapter writes, not this button.
-    // This button remains for manual playground use and will work because the effect's stores are still alive while the request is active.
-    // We add a guard: if the request has been invalidated, ignore the result.
+    setStatus('settings saving…');
     try {
-      // Retrieve the current settings store via the last effect's closure is not directly accessible; we store it globally for this file's lifetime
-      // as a workaround, we use the injected adapter to create a short-lived store for this mutate — it shares the same underlying adapter storage.
-      const adapter = injectedAdapter ?? createPlaygroundAdapter();
-      const tempSettingsStore = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'storage-lab-settings' });
-      await tempSettingsStore.save('player', { volume: nextVolume, muted: nextVolume === 0, language: 'en' });
-      await tempSettingsStore.flush();
-      tempSettingsStore.dispose();
-      if (requestIdRef.current !== activeRequest) return;
+      await owner.settingsStore.save('player', { volume: nextVolume, muted: nextVolume === 0, language: 'en' });
+      await owner.settingsStore.flush();
+      if (ownerRef.current?.requestId !== requestId) return;
       setStatus(`settings saved (volume ${nextVolume.toFixed(2)})`);
     } catch (e) {
-      if (requestIdRef.current !== activeRequest) return;
+      if (ownerRef.current?.requestId !== requestId) return;
       setStatus(`settings failed: ${(e as Error).message}`);
     }
   };
 
   const triggerManualSave = async (): Promise<void> => {
-    if (!session) return;
-    const activeRequest = requestIdRef.current;
-    const snap = session.getRenderFrame().current as unknown as StorageLabSnapshot;
+    const owner = activeOwner();
+    if (owner === null) return;
+    const requestId = owner.requestId;
+    const snap = owner.session!.getRenderFrame().current as unknown as StorageLabSnapshot;
     const projected = projectStorageLabSave(snap);
     setStatus('manual save…');
     try {
-      const adapter = injectedAdapter ?? createPlaygroundAdapter();
-      const tempStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'storage-lab-save' });
-      await tempStore.save('profile-1', projected);
-      await tempStore.flush();
-      tempStore.dispose();
-      if (requestIdRef.current !== activeRequest) return;
+      await owner.saveStore.save('profile-1', projected);
+      await owner.saveStore.flush();
+      if (ownerRef.current?.requestId !== requestId) return;
       setStatus(`manual save complete (checkpoint ${projected.checkpointIndex})`);
     } catch (e) {
-      if (requestIdRef.current !== activeRequest) return;
+      if (ownerRef.current?.requestId !== requestId) return;
       setStatus(`save failed: ${(e as Error).message}`);
     }
   };
 
   const resetSave = async (): Promise<void> => {
-    const activeRequest = requestIdRef.current;
+    const owner = activeOwner();
+    if (owner === null) return;
+    const requestId = owner.requestId;
+    setStatus('save resetting…');
     try {
-      const adapter = injectedAdapter ?? createPlaygroundAdapter();
-      const tempStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'storage-lab-save' });
-      await tempStore.remove('profile-1');
-      await tempStore.flush();
-      tempStore.dispose();
-      if (requestIdRef.current !== activeRequest) return;
+      await owner.saveStore.remove('profile-1');
+      await owner.saveStore.flush();
+      if (ownerRef.current?.requestId !== requestId) return;
       setStatus('save reset — reload to resume from default');
     } catch (e) {
-      if (requestIdRef.current !== activeRequest) return;
+      if (ownerRef.current?.requestId !== requestId) return;
       setStatus(`reset failed: ${(e as Error).message}`);
     }
   };
 
   const handleMoveRight = (): void => {
-    if (!session) return;
+    if (!session || session.status === 'disposed') return;
     session.input.press('right');
     if (moveTimeoutRef.current !== null) clearTimeout(moveTimeoutRef.current);
     moveTimeoutRef.current = setTimeout(() => {
       try {
-        session.input.release('right');
+        if (session.status !== 'disposed') session.input.release('right');
       } catch {}
       moveTimeoutRef.current = null;
     }, 200);
