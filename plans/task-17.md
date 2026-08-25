@@ -2,15 +2,16 @@
 
 ## Status
 
-**Second follow-ups T17-SF1–SF2 resolved.** All button actions now route through
-the request-owned stores via a single owner ref — checkpoint, settings,
-manual-save, and reset share per-slot queues, so final bytes always follow
-acceptance order (proven by mounted real-button tests with blocked writes and
-rapid volume changes, plus a rejected-action no-hang case). Replacement now
-collapses to a blocking loading state synchronously — cleared session/HUD/error/
-status and reset HUD cadence — so the disposed previous session is never
-interactive (proven by an A→B swap test with B's reads blocked, instrumented
-seams asserting exactly-one disposal/subscription per request).
+**Third follow-up T17-TF1 resolved.** Replacement gating now happens at the
+render/commit boundary: the published request identity lives in state and a
+render-phase reset (documented "adjust state when props change" pattern) makes
+the FIRST committed frame after an adapter/factory swap already show the
+blocking loading UI — no passive-effect clearing, and all five
+`react-hooks/set-state-in-effect` suppressions are removed. The A→B swap test
+discriminates via a Text render log: after the swap, no commit renders the
+disposed request's controls or status (verified RED against `04ede7f`, where
+the log shows `Move right`/`Save now`/`Vol ±` rendered post-swap before being
+cleared one commit later).
 
 V1 is complete: versioned `rn-gamekit/storage` with envelope, migrations, per-slot queue, flush/dispose, explicit errors, adapter boundary, checkpoint effect, and reference game (Storage Lab). Future expansion backlog remains documented and non-blocking.
 
@@ -650,6 +651,41 @@ Required approach:
 - Instrument the injected session seam and subscriptions so the test asserts A and
   B are each disposed/removed exactly once. Also drive a settings button through
   the real screen rather than pre-seeding storage and calling that action covered.
+
+## Third follow-up review feedback
+
+This isolated review covers `04ede7f`. The shared owner/queue implementation and
+its real-button tests resolve T17-SF1. The replacement cleanup also owns the exact
+session and resets the HUD generation correctly. Keep those changes and fix the
+remaining timing boundary below.
+
+### T17-TF1 — Passive-effect state reset does not block the replacement commit (High)
+
+`StorageLabScreen` still renders from the old `loadState` and `session` when new
+`adapter`/`createSession` props arrive. The calls that clear them are inside
+`useEffect`, which runs after that render commits and may run after paint. Calling
+the setters at the top of the effect is synchronous *within the passive effect*,
+not synchronous with the prop replacement. The `act()`-wrapped test flushes effects
+before inspecting the tree, so it cannot detect this gap. The old controls can
+therefore remain visible for one committed frame and route an interaction to the
+request being replaced.
+
+Required approach:
+
+- Make replacement gating part of the render/commit boundary rather than a passive
+  effect. Prefer storing the exact adapter/session-factory identity alongside the
+  published ready/error state and render loading whenever it does not match the
+  current props. An equivalent request-keyed child boundary or a layout-effect
+  transition that is proven to finish before paint is acceptable.
+- Publish the replacement's identity and ready session atomically; do not briefly
+  pair B's identity with A's session or clear a newer request from stale cleanup.
+- Keep the current request-owned store/session teardown and action routing. Remove
+  the five `react-hooks/set-state-in-effect` suppressions once passive-effect state
+  clearing is no longer used as the interaction boundary.
+- Add a replacement test that observes the first render/commit after changing A to
+  blocked B *before passive effects are flushed*. Assert that it already contains
+  only loading UI and no controls. Then flush effects, release B, and retain the
+  existing exact-once disposal/subscription assertions.
 
 ## Future expansion backlog
 

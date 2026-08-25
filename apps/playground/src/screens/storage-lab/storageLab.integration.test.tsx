@@ -22,7 +22,15 @@ function host(tag: string) {
 mock.module('react-native', {
   namedExports: {
     View: host('view'),
-    Text: host('text'),
+    Text: ({ children, ...props }: Record<string, unknown>) =>
+      createElement(
+        'text',
+        props as never,
+        (() => {
+          textRenderLog.push(joinChildren(children));
+          return children as never;
+        })(),
+      ),
     Pressable: host('pressable'),
     StyleSheet: {
       create: (s: Record<string, unknown>) => s,
@@ -32,6 +40,19 @@ mock.module('react-native', {
     BackHandler: { addEventListener: () => ({ remove: () => {} }) },
   },
 });
+
+/** Every Text render pass records its joined children here (TF1 evidence). */
+const textRenderLog: string[] = [];
+
+function joinChildren(children: unknown): string {
+  const out: string[] = [];
+  const walk = (node: unknown): void => {
+    if (typeof node === 'string') out.push(node);
+    else if (Array.isArray(node)) node.forEach(walk);
+  };
+  walk(children);
+  return out.join('');
+}
 
 let StorageLabScreen: typeof import('./StorageLabScreen').default;
 let createGameSessionWithDriver: typeof import('rn-gamekit/testing').createGameSessionWithDriver;
@@ -574,11 +595,27 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
     });
     await awaitReady(renderer!, 'loaded default');
 
-    // Swap WITHOUT unmounting; B's reads stay blocked.
+    // T17-TF1: the replacement must be gated AT RENDER TIME, not by a
+    // passive-effect reset. RTR defers update work until act exits, so the
+    // discriminating observable is the RENDER LOG of the swapped-in commits:
+    // render-time gating NEVER renders the old request's interactive UI after
+    // the swap, whereas a passive-effect reset renders it once and clears it
+    // one commit later.
+    const swapMarker = textRenderLog.length;
     await act(async () => {
       renderer!.update(createElement(StorageLabScreen as never, { adapter: gatedB, createSession: trackedSession(recordB) } as never));
-      // No sleeps here — assert synchronously-committed loading state first.
     });
+    const postSwapRenders = textRenderLog.slice(swapMarker);
+    assert.ok(
+      !postSwapRenders.some((t) => t.includes('Save now') || t.includes('Move right')),
+      `replacement must not render disposed-request controls after swap: ${JSON.stringify(postSwapRenders)}`,
+    );
+    assert.ok(
+      !postSwapRenders.some((t) => t.includes('loaded default')),
+      'replacement must not re-publish the previous request status',
+    );
+
+    // Flush remaining work; B's reads are still gated.
     await act(async () => {});
     await sleep(10);
 

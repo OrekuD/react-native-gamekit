@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { createGameSaveStore, createGameStorageAdapter, type GameStorageAdapter } from 'rn-gamekit/storage';
 
@@ -43,12 +43,35 @@ interface RequestOwner {
 }
 
 export default function StorageLabScreen({ adapter: injectedAdapter, createSession: injectedCreateSession }: StorageLabScreenProps) {
+  // Identity of the request whose results are published. Replacement gating
+  // happens AT RENDER TIME: when the incoming adapter/session-factory identity
+  // differs from the published one, the very first committed frame after the
+  // prop change already renders the blocking loading state — there is no
+  // committed window where the disposed request's controls stay interactive.
+  const requestKey = useMemo(
+    () => ({ adapter: injectedAdapter, createSession: injectedCreateSession }),
+    [injectedAdapter, injectedCreateSession],
+  );
+
+  const [publishedKey, setPublishedKey] = useState(requestKey);
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<LabSession | null>(null);
   const [hud, setHud] = useState<{ x: number; checkpoint: number; ticks: number } | null>(null);
   const [status, setStatus] = useState('loading saves…');
   const [volume, setVolume] = useState(1);
+
+  if (publishedKey !== requestKey) {
+    // Render-phase reset for the NEW props (documented React pattern): these
+    // updates apply before this render commits, so the replacement never
+    // paints the previous request's interactive UI.
+    setPublishedKey(requestKey);
+    setLoadState('loading');
+    setSession(null);
+    setHud(null);
+    setError(null);
+    setStatus('loading saves…');
+  }
 
   const moveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hudLastRef = useRef<{ at: number; record: { x: number; checkpoint: number; ticks: number } | null }>({ at: -Infinity, record: null });
@@ -59,21 +82,9 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
     let cancelled = false;
     const requestId = ++requestIdRef.current;
 
-    // T17-SF2: transition to a blocking loading state BEFORE anything async —
-    // the replaced request's controls/HUD/status must not stay interactive
-    // while the replacement loads. Reset the HUD cadence for this generation.
-    // Synchronous-on-purpose: any defer reopens an interactive window for the
-    // disposed session (the exact defect this transition closes).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoadState('loading');
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSession(null);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setHud(null);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setError(null);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setStatus('loading saves…');
+    // The blocking transition itself happens at render time (above); here we
+    // only reset the HUD cadence bookkeeping for this generation.
+    hudLastRef.current = { at: -Infinity, record: null };
     hudLastRef.current = { at: -Infinity, record: null };
 
     const adapter = injectedAdapter ?? createPlaygroundAdapter();
