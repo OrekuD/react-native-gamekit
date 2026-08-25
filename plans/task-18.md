@@ -324,6 +324,10 @@ V1 must permit later growth without creating a universal abstraction now.
 
 ### T18.1 — Implement immutable values and validation
 
+*(Not executed — the T18.0 evaluation recorded a NO-GO, so no adapter
+exists for these tasks to build on. They reopen only via the recorded
+reopen triggers.)*
+
 - [ ] Add focused configuration, body, shape, material, command, contact,
       result, and error modules.
 - [ ] Reuse Gamekit geometry/filter values only where semantics match exactly.
@@ -334,6 +338,10 @@ V1 must permit later growth without creating a universal abstraction now.
 
 ### T18.2 — Implement the selected private adapter
 
+*(Not executed — the T18.0 evaluation recorded a NO-GO, so no adapter
+exists for these tasks to build on. They reopen only via the recorded
+reopen triggers.)*
+
 - [ ] Map v1 Gamekit values to private backend resources.
 - [ ] Maintain stable ID-to-handle ownership without exposing handles.
 - [ ] Apply commands in frozen order and step exactly once.
@@ -342,6 +350,10 @@ V1 must permit later growth without creating a universal abstraction now.
 - [ ] Implement idempotent disposal and stale-generation rejection.
 
 ### T18.3 — Integrate transaction and session lifecycle
+
+*(Not executed — the T18.0 evaluation recorded a NO-GO, so no adapter
+exists for these tasks to build on. They reopen only via the recorded
+reopen triggers.)*
 
 - [ ] Integrate the selected transaction strategy at the fixed-step boundary.
 - [ ] Discard partial results/events on every command, backend, scene, snapshot,
@@ -352,6 +364,10 @@ V1 must permit later growth without creating a universal abstraction now.
 
 ### T18.4 — Add contacts, events, and presentation
 
+*(Not executed — the T18.0 evaluation recorded a NO-GO, so no adapter
+exists for these tasks to build on. They reopen only via the recorded
+reopen triggers.)*
+
 - [ ] Publish ordered begin/stay/end contacts after successful commit.
 - [ ] Map committed contact facts to typed Task 13 events.
 - [ ] Publish previous/current transforms for GameView interpolation.
@@ -359,6 +375,9 @@ V1 must permit later growth without creating a universal abstraction now.
 - [ ] Prove camera/culling and render failures cannot affect physics.
 
 ### T18.5 — Build the reference scene
+
+*(Not executed — NO-GO; a v1 reference scene requiring rigid-body solving was
+never approved because no backend passed the gates.)*
 
 - [ ] Build one Physics Lab/reference scene using only public APIs.
 - [ ] Demonstrate dynamic bodies, materials, sensors, sleep, impulses, pause,
@@ -370,6 +389,9 @@ V1 must permit later growth without creating a universal abstraction now.
 
 ### T18.6 — Package, document, and verify v1
 
+*(Partially satisfied via the NO-GO path below; packaging/docs rows for a
+shipped adapter do not apply.)*
+
 - [ ] Export the adapter only from `rn-gamekit/physics2d`.
 - [ ] Configure the optional peer, clear missing-peer error, prebuild setup, and
       compatibility statement.
@@ -380,25 +402,39 @@ V1 must permit later growth without creating a universal abstraction now.
       determinism limits, and backend/version constraints.
 - [ ] Run focused validation, adapter, transaction-failure, lifecycle,
       interpolation, and teardown tests.
-- [ ] Record physical-device and release-like performance evidence or leave the
-      adapter at no-go.
+- [x] Record physical-device and release-like performance evidence or leave the
+      adapter at no-go. *(Left at NO-GO — see plans/task-18-evaluation.md;
+      device rows intentionally remain open as reopen triggers.)*
 
 ## V1 definition of done
 
-- [ ] One current backend passes the go/no-go gate, or a documented no-go ends
-      the task without a production dependency.
-- [ ] Physics is available only through `rn-gamekit/physics2d` in the single
-      package and the backend is an optional peer.
-- [ ] Task 11 remains the default no-backend collision path.
-- [ ] Public Gamekit values and stable IDs hide all backend objects.
-- [ ] GameSession owns the only physics step clock.
-- [ ] Failed ticks cannot leave the backend ahead of committed state.
-- [ ] Commands, bodies, and contacts have stable ordering and tested lifecycle
-      semantics.
-- [ ] Rendering, camera, culling, pause, replacement, and saves respect the
-      authority boundary.
-- [ ] The reference scene uses public APIs and proves a genuine solver need.
-- [ ] Compatibility, performance, and device evidence is published honestly.
+- [x] One current backend passes the go/no-go gate, or a documented no-go ends
+      the task without a production dependency. *(Documented NO-GO —
+      plans/task-18-evaluation.md; no production dependency added.)*
+- ~~Physics is available only through `rn-gamekit/physics2d` in the single
+  package and the backend is an optional peer.~~ *(Moot under NO-GO: the
+  subpath does not exist and no backend is declared. If reopened, this rule
+  binds the adapter from its first commit.)*
+- [x] Task 11 remains the default no-backend collision path.
+- ~~Public Gamekit values and stable IDs hide all backend objects.~~ *(Moot
+  under NO-GO: no backend objects exist to hide; the strategy-2 spike kept all
+  planck handles private.)*
+- ~~GameSession owns the only physics step clock.~~ *(Moot under NO-GO: no
+  physics clock exists; sessions run without any physics work.)*
+- ~~Failed ticks cannot leave the backend ahead of committed state.~~ *(Moot
+  under NO-GO: no backend is stepped. Strategy 2 was rejected precisely
+  because it could not guarantee this for planck.)*
+- ~~Commands, bodies, and contacts have stable ordering and tested lifecycle
+  semantics.~~ *(Moot under NO-GO: no commands or contacts are exposed.)*
+- ~~Rendering, camera, culling, pause, replacement, and saves respect the
+  authority boundary.~~ *(Moot under NO-GO: nothing physics-related renders,
+  pauses, or saves.)*
+- ~~The reference scene uses public APIs and proves a genuine solver need.~~
+  *(Moot under NO-GO: no reference scene was built or required.)*
+- [x] Compatibility, performance, and device evidence is published honestly.
+      *(Backend registry evidence, transaction-trial results, Node-only
+      timings, and explicitly open device rows are published in
+      plans/task-18-evaluation.md.)*
 
 ## Review feedback
 
