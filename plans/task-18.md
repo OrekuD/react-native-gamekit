@@ -2,11 +2,12 @@
 
 ## Status
 
-**Documented NO-GO remains correct; one final harness-contract correction
-remains.** T18-R3's discriminated invalid result and per-step comparison are
-present. The baseline exact-restore branch, full projected-field comparison, and
-step-cost reporting still need reconciliation; address T18-R4 below. No adapter
-ships and Collision2D remains the sole collision system.
+**Complete via documented NO-GO.** T18-R1–R4 are resolved. The spike now
+classifies harness faults separately, explicitly requires exact baseline
+restoration, compares the complete projected contract, records contacts per step,
+and prints its returned step-cost diagnostics. Strategy 2 remains prototyped and
+rejected, strategy 3 is unavailable, and strategy 1 remains unproven. No adapter
+ships; Planck remains dev-only and Collision2D remains the sole collision system.
 
 Summary: five current backends were evaluated from live npm registry metadata.
 Only `planck.js 1.5.0` passes the static gates (MIT, active — 1.5.0 April 2026,
@@ -585,6 +586,12 @@ Required approach:
 - Keep the R3 invalid-result checks, per-step begin/end comparison, strategy-2
   rejection, overall NO-GO, dev-only Planck dependency, and open device rows
   unchanged.
+
+Resolution verified in `d0941e6`: baseline restore failure is an explicit
+nonzero invariant verdict; fixed rotation, shape identity/geometry, materials,
+and sensors are validated and compared; the expanded self-check suite exercises
+the new branches; and main prints the returned step-cost records. No further
+isolated review findings remain.
 
 ## Future expansion backlog
 
