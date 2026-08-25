@@ -43,78 +43,76 @@ both required-evidence bullets fail.
 Combined with the other gates this leaves **planck.js 1.5.0** as the sole
 surviving candidate.
 
-## 2. Transaction strategy 2 — failure-tested prototype
+## 2. Transaction strategy 2 — prototyped and REJECTED
 
 Planck.js exposes no world snapshot/restore API, so strategy 3 is unavailable.
-Strategy 1 (dedicated GameSession transaction phase) remains possible but
-requires the session-core change reserved for an approved adapter effort. The
-spike implements and FAILURE-TESTS **strategy 2**: keep an immutable prior
-`PhysicsState2D` body projection; on any failed tick/commit, rebuild the
-private world from that projection before the next accepted step.
+Strategy 1 (a dedicated GameSession transaction phase able to commit or restore
+backend state atomically) remains possible in principle but requires a separate
+approved session-core design and is UNPROVEN. The spike implemented and
+failure-tested **strategy 2** (rebuild the private world from an immutable
+prior projection on tick failure) — and it is **REJECTED**:
+
+> Strategy 2 reconstructs every projected public field exactly, but it FAILS
+> authoritative continuation equivalence because planck's private solver /
+> warm-start contact state cannot be projected or rebuilt. Under identical
+> subsequent commands the restored world diverges by ~0.55 world units
+> (> the 0.25-unit budget at continuation step 1) and produces reordered
+> contact begin/end records from step 0. Those are gameplay-observable
+> differences after a tick that was supposed to have no effect.
 
 ### Projection contract exercised
 
 Stable body/shape IDs, body type, full transform (x/y/angle), linear and
 angular velocity, awake state, gravity scale, fixed rotation, and per-shape
 geometry plus live-read fixture material (density, friction, restitution,
-sensor). Bodies are rebuilt in original creation order via private ordering
-metadata; publication sorts by game-owned ID.
+sensor); bodies rebuilt in original creation order via private ordering
+metadata. This is everything the proposed v1 public model can express — and it
+is demonstrably NOT the backend's complete transaction state.
 
-### Equivalence protocol (all Node-only)
+### Trial protocol and measured outcome (Node v24.19.0 only)
 
-Two identically seeded worlds advance through an identical command stream to a
-committed state (240 steps). The candidate takes one further commanded tick,
-then SIMULATES A FAILURE: its stepped state is discarded and it is rebuilt from
-the saved prior projection. Requirements:
+Two identically seeded worlds (128 stacked dynamic boxes on static ground)
+advance through an identical command stream for 240 steps. The candidate takes
+one further commanded tick, then simulates a later failure: its stepped state
+is discarded and it is rebuilt from the saved prior projection. Requirements:
 
-1. **Exact restoration** — rebuilt projection must equal the untouched
-   control's projection field-for-field (passes).
-2. **Bounded continuation** — both worlds then advance through identical
-   subsequent commands; per-step positional/velocity divergence is measured and
-   reported. Measured transient max ≈ 0.55 world units in this deliberately
-   chaotic regime (128 tumbling stacked boxes, impulses every step). Root
-   cause is understood and documented: a rebuild cannot carry solver WARM-START
-   contact impulses, so the restored world re-acquires contacts with fresh
-   solver state and individual contact begin/end events reshuffle during the
-   transient window. An adapter must therefore suppress contact-event
-   publication on the restore step.
-3. **No lasting effect (convergence)** — with commands stopped, both worlds
-   settle to the SAME resting configuration: max final position delta
-   ≤ 0.05 units (measured ≈ 0.017–0.019) with matching sleep states
-   (passes). This is the property the release gate actually requires: the
-   backend is never ahead of committed state, and the failed tick leaves no
-   permanent divergence.
+1. **Exact restoration** — PASS: the rebuilt projection equals the untouched
+   control's projection field-for-field.
+2. **Authoritative continuation equivalence** — FAIL: with identical subsequent
+   commands, ordered transforms/velocities diverge beyond the frozen
+   0.25-unit budget at continuation step 1 (max observed 0.5544), and the
+   ordered contact begin/end record sequences diverge from step 0 (the
+   restored world re-acquires ground contacts while the control is mid-stack).
+   Root cause: warm-start solver impulses live in private contact constraints,
+   outside any expressible public projection.
+3. **Eventual settling** (diagnostics ONLY): both worlds eventually settle
+   within ~0.02 units with matching sleep states. This does NOT establish
+   transaction equivalence — event consumers observe the divergence window
+   (damage, effects, authoritative state changes), so a failed tick is not
+   unobservable.
 4. **Negative controls** — omitting `angularVelocity` or fixture
-   `restitution` from the projection makes the equivalence fail immediately
-   and correctly (both verified).
+   `restitution` from the projection fails restoration immediately and
+   correctly, proving the harness discriminates.
 
-An additional settled-snapshot variant (900 quiet steps → snapshot → restore)
-and a settling-continuation variant both pass identically.
+### Timings retained as construction/rebuild diagnostics (NOT device evidence)
 
-### Timings (Node v24.19.0 — NOT device evidence)
+Rebuild-from-projection (warmup + 40 samples): p50 0.042 / 0.149 / 0.579 ms and
+p95 0.059 / 0.217 / 7.9 ms at 32 / 128 / 512 bodies. Active-phase step cost
+with enforced awake/contact counters: p95 0.113 / 0.388 / 1.691 ms at
+32 / 128 / 512 bodies (min awake = all bodies; contact-begin totals recorded).
 
-Rebuild-from-projection over warmup + 40 samples per size:
+### Consequence for the go/no-go decision
 
-| Bodies | Rebuild p50 | p95 | p99 |
-| --- | --- | --- | --- |
-| 32 | 0.049 ms | 0.065 ms | 0.089 ms |
-| 128 | 0.146 ms | 0.189 ms | 2.4 ms |
-| 512 | 0.517 ms | 6.95 ms | 7.7 ms |
-
-Step cost with enforced activity counters (minimum awake count reported;
-contact-begin totals recorded so "contact-heavy" is measurable):
-
-| World | Bodies | Step p50 | p95 | p99 | min awake | contact begins |
-| --- | --- | --- | --- | --- | --- | --- |
-| Contact-heavy | 32 | 0.081 ms | 0.113 ms | 0.170 ms | 33 | 1135 |
-| Contact-heavy | 128 | 0.347 ms | 0.411 ms | 1.102 ms | 129 | 367 |
-| Contact-heavy | 512 | 1.454 ms | 1.682 ms | 1.983 ms | 513 | 609 |
-
-Strategy 2 is proven viable headlessly: state-exact restore, bounded transient,
-convergent outcomes, sub-millisecond-to-low-ms failure-path cost at v1 scale —
-with the warm-start artifact documented as an adapter obligation (suppress
-contact events on the restore step). Device performance remains unproven and
-is covered by the frozen budgets below.
+With strategy 2 rejected and strategy 3 unavailable in the sole surviving
+backend, NO transaction strategy meets the release gate without new session-core
+work (strategy 1). Combined with the open physical-device matrix, this confirms
+the overall NO-GO: no adapter ships, no production dependency exists, and
+Collision2D remains the sole collision system. If strategy 2 is ever
+reconsidered, the acceptance bar is strict: restored vs untouched worlds must
+produce the same bounded sequence of normalized transforms/velocities/sleeping
+state AND ordered contact begin/stay/end records under identical commands —
+numeric tolerance may cover floating-point noise only, never different contacts
+or half-body-scale motion.
 
 ## 3. Frozen v1 budgets (device-measured, for any future reopening)
 

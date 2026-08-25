@@ -2,11 +2,17 @@
 
 ## Status
 
-**NO-GO decision is valid; one evaluation-record correction remains.** The
-dependency/export boundary, frozen device budgets, and decision not to ship an
-adapter are correct. The current headless spike measures world reconstruction
-cost but does not yet prove transaction restore equivalence or failure recovery;
-address T18-R1 below before describing strategy 2 as prototyped/failure-tested.
+**Complete via documented NO-GO (T18.0); strategy 2 prototyped and REJECTED.**
+Full evidence, frozen budgets, transaction-strategy trial results, and reopen
+triggers are recorded in
+[`task-18-evaluation.md`](./task-18-evaluation.md). Strategy 2 reconstructs the
+projected public fields exactly but FAILS authoritative continuation
+equivalence — private solver/warm-start contact state is unprojectable, giving
+~0.55-unit transform divergence and reordered contact begin/end records under
+identical commands. Strategy 3 is unavailable in planck; strategy 1 remains
+unproven and requires a separate approved session-core design. No adapter
+ships and no production dependency exists; Collision2D remains the sole
+collision system.
 
 Summary: five current backends were evaluated from live npm registry metadata.
 Only `planck.js 1.5.0` passes the static gates (MIT, active — 1.5.0 April 2026,
@@ -299,13 +305,13 @@ V1 must permit later growth without creating a universal abstraction now.
       no physical hardware in this environment — this is the blocking gate
       behind the no-go.)*
 - [x] Prototype and failure-test the viable transaction strategies.
-      *(Strategy 2 prototyped and failure-tested headlessly end-to-end: full-
-      fidelity projection (IDs, type, transform, linear/angular velocity,
-      awake, gravity scale, materials incl. restitution), exact restore vs an
-      untouched control across three regimes, negative controls for omitted
-      angularVelocity/restitution, rebuild p50/p95/p99 timings, warm-start
-      artifact documented — see evaluation record §2. Strategy 3 unavailable in
-      planck; strategy 1 deferred to an approved adapter effort.)*
+      *(Strategy 2 prototyped headlessly with a full-fidelity projection and
+      negative controls: reconstruction is exact but authoritative continuation
+      equivalence FAILS — private solver/warm-start state is unprojectable,
+      giving ~0.55-unit transform divergence and reordered contact records
+      under identical commands. Strategy 2 is RECORDED AS REJECTED for v1;
+      strategy 3 is unavailable in planck; strategy 1 remains unproven and
+      needs a separate approved session-core design — see evaluation record §2.)*
 - [x] Freeze v1 budgets for startup, bundle/native size, step cost, restore,
       memory, and teardown. *(Evaluation record §3.)*
 - [x] Write compile fixtures for the proposed v1 API and record the selected
@@ -449,6 +455,53 @@ Required approach:
 - Update `task-18-evaluation.md` and the T18.0 checkbox wording to match the actual
   evidence. The physical-device matrix should remain open and the final shipping
   decision should remain NO-GO.
+
+### T18-R2 — The failure test demonstrates divergence, not a viable transaction restore (Important)
+
+The revised spike now proves exact reconstruction of its projected public body
+fields, but it also proves that this projection is not the backend's complete
+transaction state. Planck's warm-start/contact solver state is lost during rebuild.
+With identical subsequent commands, the restored and untouched worlds diverge by
+about `0.55` world units and produce reshuffled contact begin/end facts. Those are
+gameplay-observable differences after a tick that was supposed to have no effect.
+
+Suppressing contacts only on the first restore step does not fix later contact
+reshuffling or transform divergence. Event consumers may award damage, play
+effects, or change authoritative scene state during that transient. Eventual
+settling within `0.05` units is a useful diagnostic, but it is not transaction
+equivalence and cannot establish that the failed tick left no lasting gameplay
+effect.
+
+The spike currently reinforces the incorrect conclusion by declaring
+`MAX_TRACE_DELTA = 0.25` and then discarding it with `void MAX_TRACE_DELTA`; any
+finite transient passes. It records only aggregate contact counts rather than the
+ordered body/shape contact lifecycle promised by the task, and the final settling
+gate compares position/sleep state but not the full observable trace or resting
+rotation.
+
+Required approach:
+
+- Keep the full-fidelity projection, negative controls, timing distributions,
+  dev-only dependency, and overall NO-GO decision.
+- Change the evaluation conclusion to: strategy 2 reconstructs the selected public
+  fields exactly but **fails authoritative continuation equivalence** because
+  private solver state is unavailable. Record strategy 2 as rejected for v1.
+- Treat convergence and contact-count results as diagnostics only. Do not describe
+  them as proving that a failed tick has no lasting effect or that strategy 2 is
+  viable.
+- Remove the unused `MAX_TRACE_DELTA`, or make it an actual failing assertion for
+  diagnostic experiments. Do not choose a loose tolerance merely to make the
+  current trace pass.
+- If strategy 2 is ever reconsidered, require the restored and untouched worlds to
+  produce the same bounded sequence of normalized transforms/velocities/sleeping
+  state and ordered contact begin/stay/end records under identical commands. A
+  documented numeric tolerance may cover floating-point noise, but not different
+  contacts or half-body-scale motion.
+- Update the spike header, evaluation §2, T18.0 checkbox note, and status so they
+  agree: strategy 2 was prototyped and rejected; strategy 3 is unavailable;
+  strategy 1 remains unproven and would need a separate approved session-core
+  design. Physical-device rows remain open, no adapter ships, and Task 18 stays a
+  documented NO-GO.
 
 ## Future expansion backlog
 
