@@ -80,7 +80,9 @@ export const storageLabSaveSchema = defineGameSave<StorageLabSave>({
 // ---------------------------------------------------------------------------
 
 export const storageLabEvents = defineGameEvents({
-  checkpoint: gameEvent<{ readonly index: number; readonly x: number }>(),
+  /** Payload carries the complete save projection captured at the committed
+   * boundary, so async consumers never depend on later getRenderFrame() calls. */
+  checkpoint: gameEvent<{ readonly index: number; readonly x: number; readonly save: StorageLabSave }>(),
   'settings-changed': gameEvent<{ readonly volume: number }>(),
 });
 
@@ -116,14 +118,21 @@ function makeStorageLabScene(initial?: StorageLabSave) {
       const nextX = state.x + speed * deltaSeconds;
       let checkpointIndex = state.checkpointIndex;
       const checkpointsReached = [...state.checkpointsReached] as boolean[];
+      const crossed: Array<{ index: number; x: number }> = [];
       CHECKPOINTS.forEach((cx, i) => {
         if (!checkpointsReached[i] && state.x < cx && nextX >= cx) {
           checkpointsReached[i] = true;
           if (i > checkpointIndex) checkpointIndex = i;
-          events.emit('checkpoint', { index: i, x: cx });
+          crossed.push({ index: i, x: cx });
         }
       });
-      return { x: nextX, checkpointIndex, checkpointsReached, ticks: state.ticks + 1 };
+      const next: StorageLabSnapshot = { x: nextX, checkpointIndex, checkpointsReached, ticks: state.ticks + 1 };
+      // Emit after computing the committed next state so the payload's projection
+      // is exactly the resumable save for this boundary.
+      for (const c of crossed) {
+        events.emit('checkpoint', { index: c.index, x: c.x, save: projectStorageLabSave(next) });
+      }
+      return next;
     },
     snapshot: ({ state }): StorageLabSnapshot => ({ ...state }),
   });

@@ -1,168 +1,371 @@
 /**
- * Storage Lab integration — T17-F4.
+ * Storage Lab integration — T17-RF3.
  *
- * Mounted-style integration using an injectable memory adapter reused across
- * two screen lifetimes to prove load-before-session, checkpoint save/flush,
- * reopen/resume, settings persistence, close-during-save, failure UI, and
- * that the old screen/session cannot publish after replacement.
- *
- * This test reuses one memory adapter across two lifetimes to simulate
- * persistence without requiring native AsyncStorage hardware.
+ * Mounts the real StorageLabScreen with an injected adapter and a deterministic
+ * session/driver seam. Proves load-before-session, the actual checkpoint event
+ * listener writing/flushing, close/reopen resume, blocked-write unmount without
+ * stale publication, settings persistence, failure UI, and that the playground
+ * directly owns AsyncStorage.
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { ManualFrameDriver, createGameSessionWithDriver } from 'rn-gamekit/testing';
-import { createGameSaveStore, createMemoryStorageAdapter } from 'rn-gamekit/storage';
-import {
-  createStorageLabDefinition,
-  projectStorageLabSave,
-  storageLabSaveSchema,
-  storageLabSettingsSchema,
-} from './storageLabGame';
+import { before, describe, it, mock } from 'node:test';
+import { createElement } from 'react';
+import { act, create } from 'react-test-renderer';
 
-// Reuse one adapter across two lifetimes — the playground's AsyncStorage adapter is global in the same way.
-function sharedAdapter() {
-  return createMemoryStorageAdapter();
+function host(tag: string) {
+  const C = ({ children, ...props }: Record<string, unknown>): unknown => createElement(tag, props as never, children as never);
+  (C as { displayName?: string }).displayName = tag;
+  return C;
 }
 
-describe('storage lab integration (T17-F4)', () => {
-  it('loads default, creates session only after load, and checkpoint persists across reopen', async () => {
-    const adapter = sharedAdapter();
-    const saveStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'sl-int' });
-    const settingsStore = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'sl-int-settings' });
+mock.module('react-native', {
+  namedExports: {
+    View: host('view'),
+    Text: host('text'),
+    Pressable: host('pressable'),
+    StyleSheet: {
+      create: (s: Record<string, unknown>) => s,
+      absoluteFill: {},
+      absoluteFillObject: {},
+    },
+    BackHandler: { addEventListener: () => ({ remove: () => {} }) },
+  },
+});
 
-    // First lifetime: fresh default
-    const firstLoad = await saveStore.load('profile-1');
-    assert.equal(firstLoad.status, 'default');
-    assert.equal(firstLoad.data.checkpointIndex, -1);
+let StorageLabScreen: typeof import('./StorageLabScreen').default;
+let createGameSessionWithDriver: typeof import('rn-gamekit/testing').createGameSessionWithDriver;
+let ManualFrameDriver: typeof import('rn-gamekit/testing').ManualFrameDriver;
+let createMemoryStorageAdapter: typeof import('rn-gamekit/storage').createMemoryStorageAdapter;
+let createGameSaveStore: typeof import('rn-gamekit/storage').createGameSaveStore;
+let storageLabSaveSchema: typeof import('./storageLabGame').storageLabSaveSchema;
+let storageLabSettingsSchema: typeof import('./storageLabGame').storageLabSettingsSchema;
+let createStorageLabDefinition: typeof import('./storageLabGame').createStorageLabDefinition;
 
-    const session1 = createGameSessionWithDriver(createStorageLabDefinition(firstLoad.data), {
-      frameDriver: new ManualFrameDriver(),
-    }) as unknown as { addGameEventListener: (n: string, fn: (e: unknown) => void) => { remove(): void }; getRenderFrame: () => { current: { x: number; checkpointIndex: number } }; input: { press: (a: string) => void; release: (a: string) => void }; dispose: () => void; start: () => void };
-    const driver1 = (session1 as unknown as { __driver?: ManualFrameDriver }).__driver ?? new ManualFrameDriver();
+before(async () => {
+  const rnStorage = await import('rn-gamekit/storage');
+  createMemoryStorageAdapter = rnStorage.createMemoryStorageAdapter;
+  createGameSaveStore = rnStorage.createGameSaveStore;
+  const testing = await import('rn-gamekit/testing');
+  createGameSessionWithDriver = testing.createGameSessionWithDriver;
+  ManualFrameDriver = testing.ManualFrameDriver;
+  const game = await import('./storageLabGame');
+  storageLabSaveSchema = game.storageLabSaveSchema;
+  storageLabSettingsSchema = game.storageLabSettingsSchema;
+  createStorageLabDefinition = game.createStorageLabDefinition;
+  const mod = await import('./StorageLabScreen');
+  StorageLabScreen = mod.default;
+});
 
-    // Simulate checkpoint via direct save (the screen's event listener would do the same)
-    let checkpointSaved = false;
-    const sub = session1.addGameEventListener('checkpoint', async (event: unknown) => {
-      const e = event as { payload: { index: number } };
-      const snap = session1.getRenderFrame().current;
-      const projected = projectStorageLabSave(snap as unknown as import('./storageLabGame').StorageLabSnapshot);
-      assert.equal(e.payload.index, 0);
-      await saveStore.save('profile-1', projected);
-      await saveStore.flush();
-      checkpointSaved = true;
-    });
+/** Collect every string leaf of the rendered tree so split Text children match. */
+function collectStrings(node: unknown, out: string[]): void {
+  if (typeof node === 'string') out.push(node);
+  else if (Array.isArray(node)) for (const item of node) collectStrings(item, out);
+  else if (node !== null && typeof node === 'object') for (const value of Object.values(node as Record<string, unknown>)) collectStrings(value, out);
+}
 
-    // Drive until checkpoint 0 is reached (x >= 100). The scene moves 60 units per second; step at 60 FPS.
-    session1.start();
-    for (let i = 0; i < 200; i += 1) {
-      // Advance one fixed step via driver if available, otherwise rely on update loop
-      // For this integration we simply save a projected checkpoint manually to prove persistence
-      if (i === 10) {
-        const snap = { x: 110, checkpointIndex: 0, checkpointsReached: [true, false, false], ticks: i } as unknown as import('./storageLabGame').StorageLabSnapshot;
-        const projected = projectStorageLabSave(snap);
-        await saveStore.save('profile-1', projected);
-        await saveStore.flush();
-        checkpointSaved = true;
-        break;
-      }
+function haystacks(renderer: ReturnType<typeof create>): string {
+  const leaves: string[] = [];
+  collectStrings(renderer.toJSON(), leaves);
+  return `${leaves.join('')}\n${leaves.join(' ')}`;
+}
+
+function findText(renderer: ReturnType<typeof create>, needle: string): boolean {
+  return haystacks(renderer).includes(needle);
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+type SessionSeam = (initial: import('./storageLabGame').StorageLabSave) => ReturnType<typeof import('./storageLabGame').createStorageLabSession>;
+
+/** Deterministic session factory: exposes the ManualFrameDriver used by the screen's session. */
+function driverSession(driverRef: { current: InstanceType<typeof ManualFrameDriver> | null }): SessionSeam {
+  return (initial) => {
+    const driver = new ManualFrameDriver();
+    driverRef.current = driver;
+    const def = createStorageLabDefinition(initial);
+    return createGameSessionWithDriver(def, {
+      frameDriver: driver as unknown as import('rn-gamekit/testing').FrameDriver,
+    }) as unknown as ReturnType<typeof import('./storageLabGame').createStorageLabSession>;
+  };
+}
+
+/** Fire pending frames until predicate() or budget exhausts; yields between frames. */
+async function drive(
+  driverRef: { current: InstanceType<typeof ManualFrameDriver> | null },
+  predicate: () => boolean,
+  maxFrames = 300,
+): Promise<number> {
+  let timestamp = 0;
+  let fired = 0;
+  for (let i = 0; i < maxFrames; i += 1) {
+    if (predicate()) break;
+    const driver = driverRef.current;
+    timestamp += 16;
+    if (driver && (driver as unknown as { pendingCount: number }).pendingCount > 0) {
+      driver.fireNext(timestamp);
+      fired += 1;
     }
-    assert.equal(checkpointSaved, true);
-    sub.remove();
-    session1.dispose();
+    await sleep(0);
+  }
+  return fired;
+}
 
-    // Simulate close during in-flight save: start a blocked write, dispose store, ensure flush semantics
-    const blockedAdapter = createMemoryStorageAdapter();
-    // Pre-seed with first lifetime's data so reopen can resume
-    const raw = await adapter.read('rn-gamekit.storage.sl-int.profile-1');
-    if (raw) await blockedAdapter.write('rn-gamekit.storage.sl-int.profile-1', raw);
-    const saveStore2 = createGameSaveStore({ schema: storageLabSaveSchema, adapter: blockedAdapter, namespace: 'sl-int' });
+describe('StorageLabScreen integration (T17-RF3)', () => {
+  it('holds gameplay behind both validated loads — no HUD/session content while blocked', async () => {
+    const inner = createMemoryStorageAdapter();
+    // Gate EACH read independently so Promise.all cannot resolve until both release.
+    const gates: Array<() => void> = [];
+    const adapter = {
+      read: async (k: string) => {
+        if (k.includes('rn-gamekit.storage.')) {
+          await new Promise<void>((r) => {
+            gates.push(r);
+          });
+        }
+        return inner.read(k);
+      },
+      write: inner.write.bind(inner),
+      remove: inner.remove.bind(inner),
+    } as unknown as import('rn-gamekit/storage').GameStorageAdapter;
+
+    const driverRef: { current: InstanceType<typeof ManualFrameDriver> | null } = { current: null };
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter, createSession: driverSession(driverRef) } as never));
+    });
+    await sleep(20);
+    assert.ok(gates.length >= 2, `both loads should be gated (got ${gates.length})`);
+    assert.ok(findText(renderer!, 'loading saves'), 'loading state while reads blocked');
+    assert.ok(!haystacks(renderer!).includes('loaded'), 'no loaded status before validated loads');
+    assert.ok(!findText(renderer!, 'Move right'), 'no controls before load completes');
+
+    for (const release of gates) release();
+    await act(async () => {
+      await sleep(20);
+    });
+    assert.ok(findText(renderer!, 'loaded default'), 'ready after both validated loads');
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('drives the real scene across a checkpoint; the actual listener writes and flushes', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const driverRef: { current: InstanceType<typeof ManualFrameDriver> | null } = { current: null };
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter, createSession: driverSession(driverRef) } as never));
+    });
+    await act(async () => {
+      await sleep(20);
+    });
+    assert.ok(findText(renderer!, 'loaded default'), 'ready before driving');
+
+    const fired = await drive(driverRef, () => findText(renderer!, 'checkpoint 0 saved'));
+    assert.ok(fired > 0, 'frames must have been driven');
+    assert.ok(findText(renderer!, 'checkpoint 0 saved'), 'listener reported save completion');
+
+    // Verify the projected save landed via the adapter bytes — written by the screen's listener, not the test.
+    const store = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'storage-lab-save' });
+    const loaded = await store.load('profile-1');
+    assert.equal(loaded.status, 'stored');
+    assert.equal(loaded.data.checkpointIndex, 0);
+    store.dispose();
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('unmount during an in-flight listener save publishes nothing stale; reopen resumes', async () => {
+    const inner = createMemoryStorageAdapter();
+    // Seed an empty save so first load is fast and stored-shaped.
+    const seed = createGameSaveStore({ schema: storageLabSaveSchema, adapter: inner, namespace: 'storage-lab-save' });
+    await seed.save('profile-1', { highScore: 0, unlockedLevels: ['level-1'], coins: 0, checkpointIndex: -1 });
+    await seed.flush();
+    seed.dispose();
+
+    // First WRITE blocks — the screen's checkpoint listener will hit it.
     let writeStarted = false;
     let continueWrite: (() => void) | null = null;
-    const delayedAdapter = {
-      read: blockedAdapter.read.bind(blockedAdapter),
+    let writes = 0;
+    const adapter = {
+      read: inner.read.bind(inner),
       write: async (k: string, v: string) => {
-        writeStarted = true;
-        await new Promise<void>((r) => {
-          continueWrite = r;
-        });
-        return blockedAdapter.write(k, v);
+        if (k.includes('storage-lab-save')) {
+          writes += 1;
+          if (writes === 1) {
+            writeStarted = true;
+            await new Promise<void>((r) => {
+              continueWrite = r;
+            });
+          }
+        }
+        return inner.write(k, v);
       },
-      remove: blockedAdapter.remove.bind(blockedAdapter),
-    };
-    const saveStore3 = createGameSaveStore({ schema: storageLabSaveSchema, adapter: delayedAdapter as unknown as import('rn-gamekit/storage').GameStorageAdapter, namespace: 'sl-int' });
-    const pending = saveStore3.save('profile-1', { highScore: 99, unlockedLevels: ['level-1', 'level-2'], coins: 10, checkpointIndex: 1 });
-    while (!writeStarted) await new Promise((r) => setTimeout(r, 5));
-    saveStore3.dispose();
-    // Accepted write must still complete even after dispose (F1)
+      remove: inner.remove.bind(inner),
+    } as unknown as import('rn-gamekit/storage').GameStorageAdapter;
+
+    const driverRef: { current: InstanceType<typeof ManualFrameDriver> | null } = { current: null };
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter, createSession: driverSession(driverRef) } as never));
+    });
+    await act(async () => {
+      await sleep(20);
+    });
+
+    // Drive until the REAL listener starts its blocked save.
+    await drive(driverRef, () => writeStarted, 400);
+    assert.ok(writeStarted, 'checkpoint listener must have started a save');
+    assert.ok(findText(renderer!, 'saving…'), 'status shows in-flight save');
+
+    // Unmount WHILE the write is blocked.
+    const statusAtUnmount = haystacks(renderer!);
+    await act(async () => {
+      renderer!.unmount();
+    });
+
+    // Release the write after unmount — the accepted operation still completes (F1),
+    // but nothing can publish into a dead tree.
     continueWrite!();
-    await pending;
-    // New work after dispose must be rejected
-    await assert.rejects(() => saveStore3.save('profile-1', { highScore: 0, unlockedLevels: ['level-1'], coins: 0, checkpointIndex: -1 }), (e: unknown) => {
-      const err = e as { code?: string };
-      assert.equal(err.code, 'DISPOSED');
-      return true;
-    });
+    await sleep(20);
+    assert.ok(statusAtUnmount.includes('saving…'), 'sanity: captured pre-unmount status');
 
-    // Reopen with original shared adapter — should resume migrated checkpoint
-    const reopenStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'sl-int' });
-    const reopened = await reopenStore.load('profile-1');
-    assert.equal(reopened.status, 'stored');
-    assert.equal(reopened.data.checkpointIndex, 0);
-    // Create session only after load — prove session sees resumed state
-    const session2 = createGameSessionWithDriver(createStorageLabDefinition(reopened.data), { frameDriver: new ManualFrameDriver() });
-    const snap2 = (session2 as unknown as { getRenderFrame: () => { current: { checkpointIndex: number } } }).getRenderFrame().current;
-    assert.equal(snap2.checkpointIndex, 0);
-    (session2 as unknown as { dispose: () => void }).dispose();
-    reopenStore.dispose();
-    saveStore.dispose();
+    // Remount on the SAME adapter: must resume the checkpoint written by the listener.
+    let renderer2: ReturnType<typeof create> | null = null;
+    const driverRef2: { current: InstanceType<typeof ManualFrameDriver> | null } = { current: null };
+    await act(async () => {
+      renderer2 = create(createElement(StorageLabScreen as never, { adapter: inner, createSession: driverSession(driverRef2) } as never));
+    });
+    await act(async () => {
+      await sleep(20);
+    });
+    assert.ok(findText(renderer2!, 'checkpoint 0'), 'remount resumes the saved checkpoint');
+    assert.ok(!findText(renderer2!, 'saving…'), 'no stale in-flight status published into the replacement');
+    await act(async () => {
+      renderer2!.unmount();
+    });
+  });
+
+  it('remount with the same adapter resumes saved checkpoint and settings volume', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const settingsStore = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'storage-lab-settings' });
+    await settingsStore.save('player', { volume: 0.42, muted: false, language: 'en' });
+    await settingsStore.flush();
     settingsStore.dispose();
+    const saveStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'storage-lab-save' });
+    await saveStore.save('profile-1', { highScore: 10, unlockedLevels: ['level-1', 'level-2'], coins: 20, checkpointIndex: 1 });
+    await saveStore.flush();
+    saveStore.dispose();
+
+    const driverRef: { current: InstanceType<typeof ManualFrameDriver> | null } = { current: null };
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter, createSession: driverSession(driverRef) } as never));
+    });
+    await act(async () => {
+      await sleep(20);
+    });
+    assert.ok(findText(renderer!, 'loaded stored'), 'stored load result surfaced');
+    assert.ok(findText(renderer!, 'checkpoint 1'), 'resumed checkpoint 1');
+    assert.ok(findText(renderer!, 'vol 0.42'), 'resumed settings volume');
+    await act(async () => {
+      renderer!.unmount();
+    });
   });
 
-  it('settings persist across reopen with same adapter', async () => {
-    const adapter = sharedAdapter();
-    const s1 = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'sl-settings' });
-    await s1.save('player', { volume: 0.42, muted: false, language: 'en' });
-    await s1.flush();
-    s1.dispose();
-    const s2 = createGameSaveStore({ schema: storageLabSettingsSchema, adapter, namespace: 'sl-settings' });
-    const loaded = await s2.load('player');
-    assert.equal(loaded.data.volume, 0.42);
-    s2.dispose();
-  });
-
-  it('corrupt/future-version load surfaces failure UI and leaves bytes untouched', async () => {
-    const adapter = sharedAdapter();
-    const key = 'rn-gamekit.storage.sl-int.profile-1';
+  it('corrupt/future data mounts the real error UI while stored bytes remain unchanged', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const key = 'rn-gamekit.storage.storage-lab-save.profile-1';
     await adapter.write(key, JSON.stringify({ format: 'rn-gamekit.save', schemaId: storageLabSaveSchema.id, schemaVersion: 99, savedAtMs: Date.now(), payload: {} }));
-    const store = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'sl-int' });
-    await assert.rejects(() => store.load('profile-1'), (e: unknown) => {
-      const err = e as { code?: string };
-      assert.equal(err.code, 'FUTURE_VERSION');
-      return true;
+    const before = await adapter.read(key);
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter } as never));
     });
-    const raw = await adapter.read(key);
-    assert.ok(raw !== undefined && raw.includes('99'));
-    store.dispose();
+    await act(async () => {
+      await sleep(20);
+    });
+    assert.ok(findText(renderer!, 'load error'), 'real error UI mounted');
+    assert.ok(!findText(renderer!, 'Move right'), 'no gameplay controls in error state');
+    const after = await adapter.read(key);
+    assert.equal(after, before, 'stored bytes untouched');
+    await act(async () => {
+      renderer!.unmount();
+    });
   });
 
-  it('old screen/session cannot publish after replacement (stale completion ignored)', async () => {
-    const adapter = sharedAdapter();
-    const store = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'sl-stale' });
-    await store.save('profile-1', { highScore: 1, unlockedLevels: ['level-1'], coins: 0, checkpointIndex: 0 });
-    await store.flush();
-    // Simulate screen replacement: dispose old store, create new store with same namespace
-    store.dispose();
-    const newStore = createGameSaveStore({ schema: storageLabSaveSchema, adapter, namespace: 'sl-stale' });
-    // Old store's new save must be rejected
-    await assert.rejects(() => store.save('profile-1', { highScore: 2, unlockedLevels: ['level-1'], coins: 0, checkpointIndex: 1 }), (e: unknown) => {
-      const err = e as { code?: string };
-      assert.equal(err.code, 'DISPOSED');
-      return true;
+  it('swapping adapters A→B without unmount disposes exactly once and only B remains active', async () => {
+    const adapterA = createMemoryStorageAdapter();
+    const adapterB = createMemoryStorageAdapter();
+
+    const gate: { release: (() => void) | null } = { release: null };
+    // Wrap A to observe store disposal ordering indirectly: block A's first write.
+    const blockingA = {
+      read: adapterA.read.bind(adapterA),
+      write: async (k: string, v: string) => {
+        if (k.includes('storage-lab-save')) {
+          await new Promise<void>((r) => {
+            gate.release = r;
+          });
+        }
+        return adapterA.write(k, v);
+      },
+      remove: adapterA.remove.bind(adapterA),
+    } as unknown as import('rn-gamekit/storage').GameStorageAdapter;
+
+    const driverRef: { current: InstanceType<typeof ManualFrameDriver> | null } = { current: null };
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(createElement(StorageLabScreen as never, { adapter: blockingA, createSession: driverSession(driverRef) } as never));
     });
-    // New store can still load the last accepted write
-    const loaded = await newStore.load('profile-1');
-    assert.equal(loaded.data.checkpointIndex, 0);
-    newStore.dispose();
+    await act(async () => {
+      await sleep(20);
+    });
+    assert.ok(findText(renderer!, 'loaded default'));
+
+    // Drive across checkpoint 0 — the listener save blocks on A's write.
+    await drive(driverRef, () => gate.release !== null, 400);
+    assert.ok(gate.release !== null, 'A write should be blocked by the listener save');
+    assert.ok(findText(renderer!, 'saving…'), 'in-flight save on A');
+
+    // Swap adapter prop WITHOUT unmounting.
+    await act(async () => {
+      renderer!.update(createElement(StorageLabScreen as never, { adapter: adapterB, createSession: driverSession({ current: null }) } as never));
+      await sleep(30);
+    });
+
+    // B loaded and became active.
+    assert.ok(findText(renderer!, 'loaded default'), 'B reached ready');
+
+    // A's accepted in-flight save still completes after release (F1 policy), and the
+    // old request can no longer publish status (request token invalidated on swap).
+    const statusAfterSwapStart = haystacks(renderer!);
+    gate.release!();
+    await act(async () => {
+      await sleep(30);
+    });
+    // If the stale completion had published, we'd see "checkpoint 0 saved" from A's request.
+    // B's own tree shows only B statuses; A's late completion must not appear as a NEW update.
+    assert.ok(statusAfterSwapStart.includes('loaded default'));
+    assert.ok(!findText(renderer!, 'checkpoint 0 saved'), "stale A completion did not publish into B's screen");
+
+    // A's data persisted (accepted write completed); B's namespace untouched.
+    const storeA = createGameSaveStore({ schema: storageLabSaveSchema, adapter: adapterA, namespace: 'storage-lab-save' });
+    const loadedA = await storeA.load('profile-1');
+    assert.equal(loadedA.data.checkpointIndex, 0, 'A accepted write completed despite swap');
+    storeA.dispose();
+
+    await act(async () => {
+      renderer!.unmount();
+    });
+  });
+
+  it('playground declares AsyncStorage directly', async () => {
+    const fs = await import('node:fs/promises');
+    const pkg = JSON.parse(await fs.readFile(new URL('../../../package.json', import.meta.url), 'utf8')) as {
+      dependencies: Record<string, string>;
+    };
+    assert.equal(pkg.dependencies['@react-native-async-storage/async-storage'], '2.1.2');
   });
 });

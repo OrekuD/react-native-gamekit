@@ -5,7 +5,7 @@ import { GameStorageError } from '../src/storage/errors';
 import { defineGameSave } from '../src/storage/schema';
 import { createGameSaveStore } from '../src/storage/store';
 import { createMemoryStorageAdapter, createFailingStorageAdapter } from '../src/storage/adapters/memory';
-import { STORAGE_LIMITS } from '../src/storage/types';
+import { STORAGE_LIMITS, type GameStorageAdapter } from '../src/storage/types';
 import { cloneAndValidatePlainData, parseEnvelope, serializeEnvelope } from '../src/storage/serialization';
 
 // ---------------------------------------------------------------------------
@@ -581,5 +581,308 @@ describe('storage: async store and adapters (T17.3)', () => {
     assert.equal(await mem.read('rn-gamekit.storage.ns.slot1'), 'world');
     await mem.remove('rn-gamekit.storage.ns.slot1');
     assert.equal(await mem.read('rn-gamekit.storage.ns.slot1'), undefined);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T17-RF1 — F1–F3 RED regression tests (must fail against 051052a)
+// ---------------------------------------------------------------------------
+
+const sleep5 = (): Promise<void> => new Promise((r) => setTimeout(r, 5));
+
+describe('storage: F1–F3 RED regressions (T17-RF1)', () => {
+  it('F1: immediate dispose after accepted save does not cancel it (no microtask yield)', async () => {
+    const inner = createMemoryStorageAdapter();
+    let writeStarted = false;
+    let continueWrite: (() => void) | null = null;
+    const adapter = {
+      read: inner.read.bind(inner),
+      write: async (k: string, v: string) => {
+        writeStarted = true;
+        await new Promise<void>((r) => {
+          continueWrite = r;
+        });
+        return inner.write(k, v);
+      },
+      remove: inner.remove.bind(inner),
+    };
+    const store = createGameSaveStore({ schema: settingsSchema, adapter: adapter as unknown as GameStorageAdapter, namespace: 'rf1-immediate' });
+    const pending = store.save('slot1', { volume: 0.5, muted: false, language: 'en' });
+    // No microtask yield — dispose immediately after acceptance
+    store.dispose();
+    // New work must be rejected
+    await assert.rejects(() => store.save('slot2', { volume: 0.5, muted: false, language: 'en' }), (e: unknown) => {
+      assert.ok(e instanceof GameStorageError);
+      assert.equal((e as GameStorageError).code, 'DISPOSED');
+      return true;
+    });
+    // Accepted save must still reach adapter
+    assert.equal(writeStarted, true);
+    continueWrite!();
+    await pending;
+    // Verify bytes were actually written despite dispose
+    const raw = await inner.read('rn-gamekit.storage.rf1-immediate.slot1');
+    assert.ok(raw !== undefined);
+  });
+
+  it('F1: two queued same-slot saves, dispose while first blocked, both complete in order', async () => {
+    const inner = createMemoryStorageAdapter();
+    let firstStarted = false;
+    let continueFirst: (() => void) | null = null;
+    let secondStarted = false;
+    const adapter = {
+      read: inner.read.bind(inner),
+      write: async (k: string, v: string) => {
+        if (!firstStarted) {
+          firstStarted = true;
+          await new Promise<void>((r) => {
+            continueFirst = r;
+          });
+        } else {
+          secondStarted = true;
+        }
+        return inner.write(k, v);
+      },
+      remove: inner.remove.bind(inner),
+    };
+    const store = createGameSaveStore({ schema: settingsSchema, adapter: adapter as unknown as GameStorageAdapter, namespace: 'rf1-queued' });
+    const p1 = store.save('slot1', { volume: 0.1, muted: false, language: 'en' });
+    const p2 = store.save('slot1', { volume: 0.9, muted: true, language: 'ja' });
+    while (!firstStarted) await new Promise((r) => setTimeout(r, 5));
+    store.dispose();
+    // Third save after dispose must reject
+    await assert.rejects(() => store.save('slot1', { volume: 0.5, muted: false, language: 'en' }), (e: unknown) => {
+      assert.ok(e instanceof GameStorageError);
+      assert.equal((e as GameStorageError).code, 'DISPOSED');
+      return true;
+    });
+    assert.equal(secondStarted, false);
+    continueFirst!();
+    await p1;
+    // Second queued save must still run after first despite dispose, and in order
+    await p2;
+    assert.equal(secondStarted, true);
+    const loaded = await inner.read('rn-gamekit.storage.rf1-queued.slot1');
+    assert.ok(loaded !== undefined && loaded.includes('"language":"ja"'));
+  });
+
+  it('F2: two simultaneous flush() over one blocked operation both resolve', async () => {
+    const inner = createMemoryStorageAdapter();
+    let writeStarted = false;
+    let continueWrite: (() => void) | null = null;
+    const adapter = {
+      read: inner.read.bind(inner),
+      write: async (k: string, v: string) => {
+        writeStarted = true;
+        await new Promise<void>((r) => {
+          continueWrite = r;
+        });
+        return inner.write(k, v);
+      },
+      remove: inner.remove.bind(inner),
+    };
+    const store = createGameSaveStore({ schema: settingsSchema, adapter: adapter as unknown as GameStorageAdapter, namespace: 'rf2-concurrent' });
+    const pending = store.save('slot1', { volume: 0.3, muted: false, language: 'en' });
+    while (!writeStarted) await new Promise((r) => setTimeout(r, 5));
+    const flushA = store.flush();
+    const flushB = store.flush();
+    let aDone = false;
+    let bDone = false;
+    flushA.then(() => {
+      aDone = true;
+    });
+    flushB.then(() => {
+      bDone = true;
+    });
+    assert.equal(aDone, false);
+    assert.equal(bDone, false);
+    continueWrite!();
+    await pending;
+    await flushA;
+    await flushB;
+    assert.equal(aDone, true);
+    assert.equal(bDone, true);
+  });
+
+  it('F2: flush watermark — later blocked op does not extend earlier flush', async () => {
+    const base = createMemoryStorageAdapter();
+    const store = createGameSaveStore({ schema: settingsSchema, adapter: base, namespace: 'rf2-watermark' });
+    await store.save('slot1', { volume: 0.1, muted: false, language: 'en' });
+    await store.flush();
+
+    // Two independently gated writes: first on slot1 (flush A's boundary), then on
+    // slot2 accepted AFTER flush A was called (must NOT extend A).
+    const gates = {
+      first: null as (() => void) | null,
+      second: null as (() => void) | null,
+    };
+    const state = { firstStarted: false, secondStarted: false };
+    const delayedInner = createMemoryStorageAdapter();
+    const delayedAdapter: GameStorageAdapter = {
+      read: (k) => delayedInner.read(k),
+      write: async (k, v) => {
+        if (!state.firstStarted) {
+          state.firstStarted = true;
+          await new Promise<void>((r) => {
+            gates.first = r;
+          });
+        } else if (!state.secondStarted) {
+          state.secondStarted = true;
+          await new Promise<void>((r) => {
+            gates.second = r;
+          });
+        }
+        return delayedInner.write(k, v);
+      },
+      remove: (k) => delayedInner.remove(k),
+    };
+    const store2 = createGameSaveStore({ schema: settingsSchema, adapter: delayedAdapter, namespace: 'rf2-watermark2' });
+
+    // Blocked save #1 (inside flush A's snapshot)
+    const p1 = store2.save('slot1', { volume: 0.2, muted: false, language: 'en' });
+    while (gates.first === null) await sleep5();
+    const flushA = store2.flush();
+
+    // Later blocked save #2 accepted after flush A — must not extend A
+    const p2 = store2.save('slot2', { volume: 0.8, muted: false, language: 'de' });
+    while (gates.second === null) await sleep5();
+
+    let aDone = false;
+    void flushA.then(() => {
+      aDone = true;
+    });
+    gates.first!();
+    await p1;
+    await flushA;
+    assert.equal(aDone, true, 'flush A resolved with only its snapshot');
+    assert.equal(state.secondStarted, true, 'later op ran concurrently on its own slot');
+
+    const flushB = store2.flush();
+    let bDone = false;
+    void flushB.then(() => {
+      bDone = true;
+    });
+    gates.second!();
+    await p2;
+    await flushB;
+    assert.equal(bDone, true);
+    store2.dispose();
+    store.dispose();
+  });
+
+  it('F2: flush does not hang on failed operation and post-disposal flush resolves', async () => {
+    const inner = createMemoryStorageAdapter();
+    const failing = createFailingStorageAdapter(inner, { failWrite: () => new Error('write fail') });
+    const store = createGameSaveStore({ schema: settingsSchema, adapter: failing, namespace: 'rf2-failed' });
+    const p = store.save('slot1', { volume: 0.5, muted: false, language: 'en' }).catch(() => {});
+    const flush = store.flush();
+    await flush;
+    await p;
+    // Post-disposal flush with no pending should resolve immediately
+    store.dispose();
+    await store.flush();
+  });
+
+  it('F3: oversized raw UTF-8 bytes rejected before parse with SIZE_EXCEEDED and bytes untouched', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const store = createGameSaveStore({ schema: saveSchemaV3, adapter, namespace: 'rf3-oversized-raw' });
+    const key = 'rn-gamekit.storage.rf3-oversized-raw.slot1';
+    const big = 'a'.repeat(STORAGE_LIMITS.MAX_SERIALIZED_BYTES + 1);
+    const raw = JSON.stringify({ format: 'rn-gamekit.save', schemaId: saveSchemaV3.id, schemaVersion: 3, savedAtMs: Date.now(), payload: { s: big } });
+    await adapter.write(key, raw);
+    const before = await adapter.read(key);
+    await assert.rejects(() => store.load('slot1'), (e: unknown) => {
+      assert.ok(e instanceof GameStorageError);
+      assert.equal((e as GameStorageError).code, 'SIZE_EXCEEDED');
+      assert.equal((e as GameStorageError).operation, 'load');
+      assert.equal((e as GameStorageError).namespace, 'rf3-oversized-raw');
+      return true;
+    });
+    const after = await adapter.read(key);
+    assert.equal(after, before);
+    store.dispose();
+  });
+
+  it('F3: excessive depth/nodes, unsafe keys rejected before migration with full context', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const store = createGameSaveStore({ schema: saveSchemaV3, adapter, namespace: 'rf3-bounds' });
+    // Depth
+    let deep: unknown = 0;
+    for (let i = 0; i < STORAGE_LIMITS.MAX_DEPTH + 2; i += 1) deep = { next: deep };
+    const keyDepth = 'rn-gamekit.storage.rf3-bounds.slot1';
+    await adapter.write(keyDepth, JSON.stringify({ format: 'rn-gamekit.save', schemaId: saveSchemaV3.id, schemaVersion: 1, savedAtMs: Date.now(), payload: deep }));
+    await assert.rejects(() => store.load('slot1'), (e: unknown) => {
+      assert.ok(e instanceof GameStorageError);
+      assert.ok((e as GameStorageError).code === 'DEPTH_EXCEEDED' || (e as GameStorageError).code === 'SIZE_EXCEEDED');
+      assert.equal((e as GameStorageError).operation, 'load');
+      return true;
+    });
+    // Unsafe key
+    const polluted: Record<string, unknown> = {};
+    Object.defineProperty(polluted, '__proto__', { value: { polluted: true }, enumerable: true, configurable: true, writable: true });
+    const keyUnsafe = 'rn-gamekit.storage.rf3-bounds.slot2';
+    await adapter.write(keyUnsafe, JSON.stringify({ format: 'rn-gamekit.save', schemaId: saveSchemaV3.id, schemaVersion: 1, savedAtMs: Date.now(), payload: polluted }));
+    await assert.rejects(() => store.load('slot2'), (e: unknown) => {
+      assert.ok(e instanceof GameStorageError);
+      assert.equal((e as GameStorageError).operation, 'load');
+      return true;
+    });
+    store.dispose();
+  });
+
+  it('F3: migration that mutates input is isolated via frozen input', async () => {
+    let mutated = false;
+    const schema = defineGameSave({
+      id: 'com.example.rf3-mutate',
+      version: 2,
+      createDefault: () => ({ a: 1 }),
+      validate: (v) => v as { a: number; b: number },
+      migrations: {
+        1: (v: unknown) => {
+          const o = v as Record<string, unknown>;
+          try {
+            (o as Record<string, unknown>).b = 2;
+            mutated = true;
+          } catch {
+            mutated = false;
+          }
+          return { ...(v as object), b: 2 };
+        },
+      },
+    });
+    const adapter = createMemoryStorageAdapter();
+    const key = 'rn-gamekit.storage.rf3-mutate.slot1';
+    await adapter.write(key, JSON.stringify({ format: 'rn-gamekit.save', schemaId: 'com.example.rf3-mutate', schemaVersion: 1, savedAtMs: Date.now(), payload: { a: 1 } }));
+    const store = createGameSaveStore({ schema, adapter, namespace: 'rf3-mutate' });
+    const res = await store.load('slot1');
+    assert.equal(mutated, false);
+    assert.deepEqual(res.data, { a: 1, b: 2 });
+    store.dispose();
+  });
+
+  it('F3: oversized intermediate migration output rejected with SIZE_EXCEEDED', async () => {
+    const schema = defineGameSave({
+      id: 'com.example.rf3-oversize-migrate',
+      version: 2,
+      createDefault: () => ({ a: 0 }),
+      validate: (v) => v as { a: number; big: string },
+      migrations: {
+        1: () => ({ a: 1, big: 'a'.repeat(STORAGE_LIMITS.MAX_SERIALIZED_BYTES) }),
+      },
+    });
+    const adapter = createMemoryStorageAdapter();
+    const key = 'rn-gamekit.storage.rf3-oversize-migrate.slot1';
+    await adapter.write(key, JSON.stringify({ format: 'rn-gamekit.save', schemaId: 'com.example.rf3-oversize-migrate', schemaVersion: 1, savedAtMs: Date.now(), payload: { a: 0 } }));
+    const before = await adapter.read(key);
+    const store = createGameSaveStore({ schema, adapter, namespace: 'rf3-oversize-migrate' });
+    await assert.rejects(() => store.load('slot1'), (e: unknown) => {
+      assert.ok(e instanceof GameStorageError);
+      assert.equal((e as GameStorageError).code, 'SIZE_EXCEEDED');
+      assert.equal((e as GameStorageError).operation, 'load');
+      return true;
+    });
+    const after = await adapter.read(key);
+    assert.equal(after, before);
+    store.dispose();
   });
 });
