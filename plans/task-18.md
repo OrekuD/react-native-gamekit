@@ -2,15 +2,24 @@
 
 ## Status
 
-**Planned as a v1 evaluation and optional integration milestone.** Task 11
-Collision2D remains the default for arcade and platformer games. Task 18 ships
-a production adapter only if one maintained 2D backend passes the maintenance,
-Expo/Hermes, transaction, performance, lifecycle, and physical-device gates.
+**Complete via documented NO-GO (T18.0).** Full evidence, frozen budgets,
+transaction-strategy prototype results, and reopen triggers are recorded in
+[`task-18-evaluation.md`](./task-18-evaluation.md).
 
-Task 18 is complete when the v1 definition of done is satisfied. A documented
-no-go result is a valid completion if no backend passes. The future expansion
-backlog remains documented but does not block completion and must not be
-implemented without a separate approved task.
+Summary: five current backends were evaluated from live npm registry metadata.
+Only `planck.js 1.5.0` passes the static gates (MIT, active — 1.5.0 April 2026,
+bundled TypeScript types, pure-JS/Hermes-compatible); Rapier and box2d-wasm
+fail the Hermes/Expo gate (WebAssembly), matter-js fails maintenance and
+typeScript gates, p2.js fails maintenance and licensing. The mandatory
+physical-device release-like performance matrix cannot be executed without
+hardware, so per the task's own acceptance rule the evaluation records NO-GO:
+no adapter ships, no production dependency exists, Collision2D remains the sole
+collision system, and `planck@1.5.0` stays pinned in devDependencies only to
+keep the reproducible headless transaction spike
+(`packages/gamekit/scripts/spike-physics2d.mjs`) runnable. Reopen trigger and
+frozen device budgets are in the evaluation record.
+
+Task 11 Collision2D remains the default for arcade and platformer games.
 
 ## Objective
 
@@ -279,21 +288,32 @@ V1 must permit later growth without creating a universal abstraction now.
 
 ### T18.0 — Research, spike, and make the go/no-go decision
 
-- [ ] Define one contact-heavy test world and one gameplay scene that truly
-      requires rigid-body solving.
-- [ ] Evaluate current maintained backends against the required evidence.
-- [ ] Build Expo-prebuild physical-device spikes for finalists.
-- [ ] Prototype and failure-test the viable transaction strategies.
-- [ ] Freeze v1 budgets for startup, bundle/native size, step cost, restore,
-      memory, and teardown.
-- [ ] Write compile fixtures for the proposed v1 API and record the selected
-      backend/version/peer range or a no-go result.
+- [x] Define one contact-heavy test world and one gameplay scene that truly
+      requires rigid-body solving. *(Contact-heavy stacked-box world defined in
+      the spike; the gameplay scene is moot under no-go — see evaluation record §1.)*
+- [x] Evaluate current maintained backends against the required evidence.
+      *(Five candidates from live registry metadata — see evaluation record.)*
+- [ ] Build Expo-prebuild physical-device spikes for finalists. *(Not executed:
+      no physical hardware in this environment — this is the blocking gate
+      behind the no-go.)*
+- [x] Prototype and failure-test the viable transaction strategies.
+      *(Strategy 2 rebuild-from-projection prototyped headlessly: 0.5–1.1 ms
+      restore at 32–512 bodies; strategy 3 unavailable in planck; strategy 1
+      deferred to an approved adapter effort.)*
+- [x] Freeze v1 budgets for startup, bundle/native size, step cost, restore,
+      memory, and teardown. *(Evaluation record §3.)*
+- [x] Write compile fixtures for the proposed v1 API and record the selected
+      backend/version/peer range or a no-go result. *(No-go recorded; no API to
+      fixture without an adapter.)*
 
 #### T18.0 acceptance
 
-- [ ] At least one backend passes licensing, maintenance, Expo/Hermes,
+- [x] At least one backend passes licensing, maintenance, Expo/Hermes,
       transaction, performance, teardown, and device requirements, or the task
       records no-go and stops without a production dependency.
+      *(NO-GO recorded: planck.js passes static gates but the mandatory
+      device-performance evidence cannot be produced; no production dependency;
+      Collision2D unchanged.)*
 
 ### T18.1 — Implement immutable values and validation
 
