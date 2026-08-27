@@ -8,6 +8,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LabHeader } from '../../components/LabHeader';
 import type { GameSession } from 'rn-gamekit';
 import { GameButton, GameButtonPad } from 'rn-gamekit/react';
 
@@ -145,6 +146,7 @@ export default function PlatformerLabContent({
 
   return (
     <View style={styles.screen} testID="platformer-lab-content">
+      <LabHeader title="Platformer Lab" onExit={onExit} testID="platformer-back" />
       <View style={styles.hud} pointerEvents="none">
         <Text style={styles.title}>Platformer Lab</Text>
         <Text style={styles.diag} testID="platformer-hud">
@@ -185,44 +187,53 @@ export default function PlatformerLabContent({
         </View>
       ) : null}
 
+      {/* Realistic gamepad: movement on the left, actions on the right.
+          The pad itself is the bottom row (see styles.controls). Its
+          direct children are the measured GameButtons, so hit zones are
+          pad-local — a spacer View in the middle pushes the two clusters
+          to opposite thumbs without introducing nested coordinate offsets. */}
       <GameButtonPad
         game={session}
         hitSlop={12}
         style={styles.controls}
         testID="platformer-controls"
       >
-        {(['left', 'drop', 'jump', 'right'] as const).map((action) => (
-          <GameButton
-            key={action}
-            action={action}
-            testID={`platformer-${action}`}
-            accessibilityRole="button"
-            style={[
-              styles.button,
-              action === 'drop' ? styles.small : undefined,
-              action === 'jump' ? styles.wide : undefined,
-            ]}
-          >
-            <Text style={styles.buttonText}>
-              {action === 'left'
-                ? '\u2190'
-                : action === 'right'
-                  ? '\u2192'
-                  : action === 'drop'
-                    ? '\u2193'
-                    : 'Jump'}
-            </Text>
-          </GameButton>
-        ))}
-      </GameButtonPad>
-        <Pressable
-          testID="platformer-back"
+        {/* Left thumb: movement */}
+        <GameButton
+          action="left"
+          testID="platformer-left"
           accessibilityRole="button"
-          onPress={onExit}
-          style={[styles.button, styles.exit]}
+          style={[styles.button, styles.dpad]}
         >
-          <Text style={styles.buttonText}>{'\u2715'}</Text>
-        </Pressable>
+          <Text style={styles.buttonText}>{'\u2190'}</Text>
+        </GameButton>
+        <GameButton
+          action="right"
+          testID="platformer-right"
+          accessibilityRole="button"
+          style={[styles.button, styles.dpad]}
+        >
+          <Text style={styles.buttonText}>{'\u2192'}</Text>
+        </GameButton>
+        <View style={styles.spacer} pointerEvents="none" />
+        {/* Right thumb: actions */}
+        <GameButton
+          action="drop"
+          testID="platformer-drop"
+          accessibilityRole="button"
+          style={[styles.button, styles.small, styles.action]}
+        >
+          <Text style={styles.buttonText}>{'\u2193'}</Text>
+        </GameButton>
+        <GameButton
+          action="jump"
+          testID="platformer-jump"
+          accessibilityRole="button"
+          style={[styles.button, styles.wide, styles.actionPrimary]}
+        >
+          <Text style={styles.buttonText}>A</Text>
+        </GameButton>
+      </GameButtonPad>
       {/* The paused overlay is owned by the shell; controls stay inert while
           paused because the session rejects sampled input. */}
     </View>
@@ -231,7 +242,12 @@ export default function PlatformerLabContent({
 
 const styles = StyleSheet.create({
   screen: { flex: 1 },
-  hud: { position: 'absolute', top: 12, left: 16, zIndex: 10 },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
+  backButton: { backgroundColor: 'rgba(255,255,255,0.14)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, minWidth: 36, alignItems: 'center' },
+  backText: { color: 'white', fontSize: 14, fontWeight: '700' },
+  headerTitle: { color: 'white', fontSize: 18, fontWeight: '700' },
+  headerSpacer: { flex: 1 },
+  hud: { position: 'absolute', top: 64, left: 16, zIndex: 10 },
   title: { color: 'white', fontSize: 16, fontWeight: '700' },
   diag: { color: '#94a3b8', fontSize: 11, fontVariant: ['tabular-nums'] },
   controls: {
@@ -253,6 +269,14 @@ const styles = StyleSheet.create({
   small: { flex: 0, minWidth: 48 },
   wide: { flex: 1.4 },
   exit: { flex: 0, minWidth: 48, backgroundColor: 'rgba(248,113,113,0.25)' },
+  dpad: { backgroundColor: 'rgba(255,255,255,0.16)', borderColor: 'rgba(255,255,255,0.12)', borderWidth: 1 },
+  action: { backgroundColor: 'rgba(148,163,184,0.18)', borderColor: 'rgba(148,163,184,0.14)', borderWidth: 1 },
+  actionPrimary: {
+    backgroundColor: 'rgba(251,191,36,0.22)',
+    borderColor: 'rgba(251,191,36,0.32)',
+    borderWidth: 1.5,
+  },
+  spacer: { flex: 1.6, minWidth: 24 },
   buttonText: { color: 'white', textAlign: 'center', fontWeight: '700', fontSize: 15 },
   clearOverlay: {
     position: 'absolute',

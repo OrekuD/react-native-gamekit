@@ -208,7 +208,7 @@ describe('Platformer Lab mounted controls (T16-F2)', () => {
     act(() => {
       const back = root.findAll(
         (n: { props?: { testID?: string; onPress?: () => void } }) =>
-          n.props?.testID === 'platformer-back',
+          n.props?.testID === 'platformer-back' && typeof n.props?.onPress === 'function',
       )[0]!;
       back.props.onPress?.();
     });

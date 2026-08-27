@@ -40,6 +40,12 @@ mock.module('react-native', {
     BackHandler: { addEventListener: () => ({ remove: () => {} }) },
   },
 });
+mock.module('react-native-safe-area-context', {
+  namedExports: {
+    useSafeAreaInsets: () => ({ top: 47, bottom: 34, left: 0, right: 0 }),
+    SafeAreaView: host('safe-area'),
+  },
+});
 
 /** Every Text render pass records its joined children here (TF1 evidence). */
 const textRenderLog: string[] = [];

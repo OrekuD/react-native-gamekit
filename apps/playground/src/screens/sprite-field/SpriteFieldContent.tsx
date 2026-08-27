@@ -11,7 +11,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { LabHeader } from '../../components/LabHeader';
 
 
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
@@ -128,18 +128,9 @@ export default function SpriteFieldContent({
   }, [diagnostics, session]);
 
   return (
-    <SafeAreaView pointerEvents="box-none" edges={['top', 'right', 'bottom', 'left']} style={styles.screen}>
-      <View style={styles.topBar}>
-        <Pressable
-          accessibilityLabel="Back to playground"
-          accessibilityRole="button"
-          hitSlop={12}
-          onPress={onExit}
-          style={styles.backButton}
-        >
-          <Text style={styles.backLabel}>‹ Playground</Text>
-        </Pressable>
-        <Text style={styles.title}>Sprite Field</Text>
+    <View style={styles.screen}>
+      <LabHeader title="Sprite Field" onExit={onExit} testID="sprite-field-back" />
+      <View style={styles.headerMeta}>
         <Text style={styles.meta}>
           {state.status === 'loading'
             ? `loading ${Math.round(state.progress * 100)}%`
@@ -212,7 +203,7 @@ export default function SpriteFieldContent({
           <Text style={styles.loadingLabel}>Loading sprites…</Text>
         </View>
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -248,6 +239,7 @@ function sameDiagnostics(
 }
 
 const styles = StyleSheet.create({
+  headerMeta: { paddingHorizontal: 16, paddingTop: 8 },
   screen: {
     flex: 1,
     backgroundColor: 'transparent',

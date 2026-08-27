@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { LabHeader } from '../../components/LabHeader';
+
 import { createGameAudio } from 'rn-gamekit/audio';
 import { createGameHaptics } from 'rn-gamekit/haptics';
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
@@ -264,26 +265,8 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
   }, [session]);
 
   return (
-    <SafeAreaView pointerEvents="box-none"
-      edges={['top', 'right', 'bottom', 'left']}
-      style={styles.screen}
-    >
-      <View style={styles.topBar} testID={BRICK_BREAKER_LAYOUT.topBar.testID}>
-        <Pressable
-          accessibilityLabel="Back to playground"
-          accessibilityRole="button"
-          hitSlop={8}
-          onPress={onExit}
-          style={({ pressed }) => [styles.backButton, pressed && styles.backButtonPressed]}
-          testID={BRICK_BREAKER_LAYOUT.topBar.back.testID}
-        >
-          <Text style={styles.backIcon}>‹</Text>
-        </Pressable>
-        <Text numberOfLines={1} style={styles.title}>
-          {BRICK_BREAKER_LAYOUT.topBar.title}
-        </Text>
-        <View aria-hidden style={styles.topBarSide} />
-      </View>
+    <View style={styles.screen}>
+      <LabHeader title={BRICK_BREAKER_LAYOUT.topBar.title} onExit={onExit} testID={BRICK_BREAKER_LAYOUT.topBar.back.testID} />
 
       <View
         pointerEvents={BRICK_BREAKER_LAYOUT.stage.pointerEvents}
@@ -334,7 +317,7 @@ export default function BrickBreakerContent({ game, onExit }: PlaygroundGameCont
           />
         ) : null}
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
 

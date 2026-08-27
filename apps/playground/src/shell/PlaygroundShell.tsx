@@ -11,8 +11,6 @@ import { useGameAssets } from 'rn-gamekit/react';
 
 import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreakerGame';
 import { createGameSession } from 'rn-gamekit';
-import { paddleGame } from '../docs-examples/paddle-tutorial/game';
-import { PaddleRenderer } from '../docs-examples/paddle-tutorial/Renderer';
 import { collisionLabDefinition , labAssets } from '../screens/collision-lab/collisionLabGame';
 import { spriteFieldCamera } from '../screens/sprite-field/spriteFieldCamera';
 import { cameraLabCamera } from '../screens/camera-lab/cameraLabCamera';
@@ -46,7 +44,6 @@ import {
 } from './surfaceSlot';
 import HomeScreen from '../screens/home/HomeScreen';
 import BrickBreakerContent from '../screens/brick-breaker/BrickBreakerContent';
-import PaddleContent from '../screens/paddle/PaddleContent';
 import CollisionLabContent from '../screens/collision-lab/CollisionLabContent';
 import BootstrapContent from '../screens/bootstrap/BootstrapContent';
 import LabContent from '../screens/lab/LabContent';
@@ -270,13 +267,6 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     pointer: true,
     assets: { manifest: spriteFieldAssets as unknown, groups: ['boot', 'gameplay'] },
     camera2D: spriteFieldCamera as unknown as GameCamera2DDefinition<never>,
-  },
-  'paddle': {
-    renderer: PaddleRenderer as unknown as ComponentType<GameRendererProps<never>>,
-    content: PaddleContent,
-    createSession: () => createGameSession(paddleGame) as unknown as GameSession,
-    pointer: true,
-    pointerAction: 'steer',
   },
   'collision-lab': {
     renderer: CollisionLabRenderer as unknown as ComponentType<GameRendererProps<never>>,

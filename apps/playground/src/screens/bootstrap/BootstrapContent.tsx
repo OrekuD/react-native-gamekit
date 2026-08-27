@@ -6,6 +6,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
+import { LabHeader } from '../../components/LabHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import type { GameSession } from 'rn-gamekit';
@@ -24,21 +25,9 @@ export default function BootstrapContent({ game, onExit }: PlaygroundGameContent
 
   return (
     <View style={styles.safeArea}>
-      <View
-        pointerEvents="box-none"
-        style={[styles.header, { paddingTop: insets.top + 44 }]}
-      >
-        <Pressable
-          accessibilityLabel="Back to playground"
-          accessibilityRole="button"
-          hitSlop={12}
-          onPress={onExit}
-          style={styles.backButton}
-        >
-          <Text style={styles.backLabel}>‹ Playground</Text>
-        </Pressable>
+      <LabHeader title="First runtime slice" onExit={onExit} testID="bootstrap-back" />
+      <View style={styles.headerMeta}>
         <Text style={styles.eyebrow}>React Native GameKit</Text>
-        <Text style={styles.title}>First runtime slice</Text>
         <Text style={styles.meta}>
           {Platform.OS} · {Math.round(width)} × {Math.round(height)} pt
         </Text>
@@ -64,6 +53,7 @@ export default function BootstrapContent({ game, onExit }: PlaygroundGameContent
 }
 
 const styles = StyleSheet.create({
+  headerMeta: { paddingHorizontal: 16, paddingTop: 8 },
   safeArea: {
     flex: 1,
   },

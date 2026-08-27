@@ -37,6 +37,18 @@ export function batchVisibleBounds2D(
   };
 }
 
+function isFiniteBounds(bounds: Aabb2D): boolean {
+  'worklet';
+  return (
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width >= 0 &&
+    bounds.height >= 0
+  );
+}
+
 /** Axis-aligned intersection test, worklet-safe (no validation).
  *
  * Inclusive comparisons, matching the public `intersectsAabbAabb2D`
@@ -58,17 +70,5 @@ export function intersectsBounds2D(first: Aabb2D, second: Aabb2D): boolean {
     first.x + first.width >= second.x &&
     first.y <= second.y + second.height &&
     first.y + first.height >= second.y
-  );
-}
-
-function isFiniteBounds(bounds: Aabb2D): boolean {
-  'worklet';
-  return (
-    Number.isFinite(bounds.x) &&
-    Number.isFinite(bounds.y) &&
-    Number.isFinite(bounds.width) &&
-    Number.isFinite(bounds.height) &&
-    bounds.width >= 0 &&
-    bounds.height >= 0
   );
 }

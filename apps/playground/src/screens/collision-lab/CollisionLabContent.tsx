@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LabHeader } from '../../components/LabHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GameSession } from 'rn-gamekit';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
@@ -20,17 +21,7 @@ export default function CollisionLabContent({ game, onExit }: PlaygroundGameCont
 
   return (
     <View pointerEvents="box-none" style={styles.safeArea}>
-      <View pointerEvents="box-none" style={[styles.header, { paddingTop: insets.top + 44 }]}>
-        <Pressable
-          accessibilityLabel="Back to playground"
-          accessibilityRole="button"
-          hitSlop={12}
-          onPress={onExit}
-          style={styles.backButton}
-        >
-          <Text style={styles.backLabel}>Back</Text>
-        </Pressable>
-      </View>
+      <LabHeader title="Collision Lab" onExit={onExit} testID="collision-back" />
 
       <View pointerEvents="box-none" style={[styles.controls, { bottom: insets.bottom + 108 }]}>
         {(

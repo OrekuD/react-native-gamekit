@@ -38,12 +38,6 @@ export const PLAYGROUND_GAMES = [
     label: 'Run',
   },
   {
-    id: 'paddle',
-    title: 'Paddle',
-    description: 'The getting-started tutorial game: steer with your finger, keep the ball alive, pause anytime.',
-    label: 'Play',
-  },
-  {
     id: 'camera-lab',
     title: 'Camera Lab',
     description: 'Follow, zoom, rotation, cuts, shake, world bounds, and culling on one screen.',

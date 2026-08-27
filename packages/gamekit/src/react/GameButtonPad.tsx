@@ -202,11 +202,18 @@ export function GameButtonPad<TScenes extends SceneMap, TInput extends InputMap>
   );
   const gesture = useManualGesture(gestureConfig);
 
+  // When a style is provided the caller owns the layout (e.g. an
+  // absolutely-positioned bottom row). Otherwise default to a full-surface
+  // invisible overlay so buttons can be placed anywhere via their own
+  // styles. Using a fallback instead of [absoluteFill, style] avoids the
+  // "tall pad" bug where merging top:0 from absoluteFill with a bottom-
+  // anchored row stretches the container to full height and vertically
+  // centers its children in the middle of the screen.
   return (
     <GestureDetector gesture={gesture}>
       <View
         pointerEvents="box-none"
-        style={[StyleSheet.absoluteFill, style]}
+        style={style ?? StyleSheet.absoluteFill}
         testID={testID}
       >
         <ButtonPadContext.Provider value={context}>{children}</ButtonPadContext.Provider>

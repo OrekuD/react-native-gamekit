@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { LabHeader } from '../../components/LabHeader';
 import { createGameSaveStore, createGameStorageAdapter, type GameStorageAdapter } from 'rn-gamekit/storage';
 
 import {
@@ -15,6 +16,8 @@ type LoadState = 'loading' | 'ready' | 'error';
 type LabSession = ReturnType<typeof createStorageLabSession>;
 
 export type StorageLabScreenProps = {
+  /** Playground shell back navigation — header uses the same design as Particle/Audio labs. */
+  onExit?: () => void;
   /** Injectable adapter seam for mounted tests — playground uses AsyncStorage. */
   adapter?: GameStorageAdapter;
   /** Injectable session factory for deterministic driver tests — defaults to real session. */
@@ -42,7 +45,7 @@ interface RequestOwner {
   session: LabSession | null;
 }
 
-export default function StorageLabScreen({ adapter: injectedAdapter, createSession: injectedCreateSession }: StorageLabScreenProps) {
+export default function StorageLabScreen({ onExit, adapter: injectedAdapter, createSession: injectedCreateSession }: StorageLabScreenProps) {
   // Identity of the request whose results are published. Replacement gating
   // happens AT RENDER TIME: when either incoming identity field differs from
   // the published one, the very first committed frame after the prop change
@@ -308,7 +311,8 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
 
   return (
     <View style={styles.screen}>
-      <Text style={styles.title}>Storage Lab</Text>
+      <LabHeader title="Storage Lab" onExit={onExit} testID="storage-back" />
+      <View style={styles.body}>
       <Text style={styles.line}>x {hud?.x ?? 0} · checkpoint {hud?.checkpoint ?? -1} · ticks {hud?.ticks ?? 0}</Text>
       <Text style={styles.line}>{status}</Text>
       <Text style={styles.hint}>Checkpoint events commit deterministically; saves happen async after the tick and never block simulation.</Text>
@@ -336,12 +340,18 @@ export default function StorageLabScreen({ adapter: injectedAdapter, createSessi
       </View>
 
       <Text style={styles.hint}>Settings are saved on user change, not every tick. Saves are per-slot serialized; stale store writes are rejected.</Text>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#080b12', padding: 16, gap: 8, justifyContent: 'center' },
+  screen: { flex: 1, backgroundColor: '#080b12' },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' },
+  backButton: { backgroundColor: 'rgba(255,255,255,0.14)', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, minWidth: 36, alignItems: 'center' },
+  backText: { color: 'white', fontSize: 14, fontWeight: '700' },
+  headerSpacer: { flex: 1 },
+  body: { flex: 1, padding: 16, gap: 8, justifyContent: 'center' },
   title: { color: 'white', fontSize: 18, fontWeight: '700' },
   line: { color: '#cbd5e1', fontSize: 13 },
   hint: { color: '#64748b', fontSize: 11 },

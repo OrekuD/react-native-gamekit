@@ -193,3 +193,4 @@ The playground demo games use third-party asset packs (not part of the `rn-gamek
 - [Mossy Cavern](https://maaot.itch.io/mossy-cavern) by maaot
 - [Pixel Adventure 1](https://pixelfrog-assets.itch.io/pixel-adventure-1) by Pixel Frog
 - [Brackeys' Platformer Bundle](https://brackeysgames.itch.io/brackeys-platformer-bundle) by Brackeys Games
+- [Mixkit Game Sound Effects](https://mixkit.co/free-sound-effects/game/) — free SFX for the audio demos (see [mixkit.co/license](https://mixkit.co/license/))

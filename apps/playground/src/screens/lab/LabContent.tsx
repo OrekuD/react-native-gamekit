@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';import { LabHeader } from '../../components/LabHeader';
 
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import type { RunSurfaceEvent } from '../../shell/surfaceSlot.ts';
@@ -131,21 +130,9 @@ export default function LabContent({
   };
 
   return (
-    <SafeAreaView pointerEvents="box-none"
-      edges={['top', 'right', 'bottom', 'left']}
-      style={styles.screen}
-    >
-      <View style={styles.header}>
-        <Pressable
-          accessibilityLabel="Back to playground"
-          accessibilityRole="button"
-          hitSlop={12}
-          onPress={onExit}
-          style={styles.backButton}
-        >
-          <Text style={styles.backLabel}>‹ Playground</Text>
-        </Pressable>
-        <Text style={styles.title}>Performance Lab</Text>
+    <View style={styles.screen}>
+      <LabHeader title="Performance Lab" onExit={onExit} testID="perf-back" />
+      <View style={styles.headerMeta}>
         <Text style={styles.meta}>
           {activeRun !== null
             ? `run ${activeRun.runId} · ${activeRun.scenario} (${SCENARIO_DURATION_MS} ms)…`
@@ -217,11 +204,12 @@ export default function LabContent({
           onRunSurfaceEvent={onRunSurfaceEvent ?? ignoreRunSurfaceEvent}
         />
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  headerMeta: { paddingHorizontal: 16, paddingTop: 8 },
   screen: {
     flex: 1,
   },

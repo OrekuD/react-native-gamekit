@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Canvas } from '@shopify/react-native-skia';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Canvas, Rect } from '@shopify/react-native-skia';
+import { LabHeader } from '../../components/LabHeader';
 import { useSharedValue } from 'react-native-reanimated';
 
 import { defineParticleEffect, createParticleSystem } from 'rn-gamekit/particles';
@@ -85,7 +87,8 @@ const sparks = defineParticleEffect({
   fadeOut: true,
 });
 
-export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) {
+export default function ParticleLabScreen({ game, onExit }: PlaygroundGameContentProps) {
+  const insets = useSafeAreaInsets();
   const session = game as ReturnType<typeof createGameSession>;
   const [status, setStatus] = useState('tap to burst');
   const [paused, setPaused] = useState(false);
@@ -163,15 +166,17 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
     offsetY: 0,
   });
 
-  const moveCamera = (dx: number, dy: number): void => {
+  const moveCamera = (dx: number, dy: number): void => { // larger step so movement is visually obvious
+
     const current = cameraSV.value;
     if (current === undefined) return;
     const c = current.camera.center;
+    // Invert so ← moves the pink world left on screen (was inverted)
     cameraSV.value = {
-      camera: { center: { x: c.x + dx, y: c.y + dy }, zoom: current.camera.zoom, rotationRadians: current.camera.rotationRadians },
+      camera: { center: { x: c.x - dx, y: c.y - dy }, zoom: current.camera.zoom, rotationRadians: current.camera.rotationRadians },
       cutId: current.cutId + 1,
     };
-    setStatus(`camera (${Math.round(c.x + dx)},${Math.round(c.y + dy)})`);
+    setStatus(`camera (${Math.round(c.x - dx)},${Math.round(c.y - dy)}) — world moves with arrows`);
   };
   const zoomCamera = (factor: number): void => {
     const current = cameraSV.value;
@@ -219,15 +224,23 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
             }}
           />
         ) : null}
-        {/* T15-SF4: world-space row inside GameWorld2D — camera transform and
-            culling apply here; the screen effects above stay fixed. */}
+        {/* Visible world frame so camera moves are obvious even before you emit.
+            The faint pink rectangle IS the world — it pans/zooms/rotates with the
+            camera above. Screen effects (Burst/Drops/Sparks) stay fixed. */}
         <GameWorld2D viewport={viewportSV} camera={cameraSV}>
+          <Rect x={0} y={0} width={320} height={480} color="rgba(244,114,182,0.07)" />
+          <Rect x={0} y={0} width={320} height={480} style="stroke" strokeWidth={2} color="rgba(244,114,182,0.40)" />
+          {/* center crosshair */}
+          <Rect x={156} y={238} width={8} height={2} color="rgba(244,114,182,0.95)" />
+          <Rect x={159} y={235} width={2} height={8} color="rgba(244,114,182,0.95)" />
+          <Rect x={100} y={140} width={120} height={1} color="rgba(244,114,182,0.18)" />
+          <Rect x={100} y={140} width={1} height={120} color="rgba(244,114,182,0.18)" />
           <ParticleView system={system} effect="worldBurst" width={320} height={480} presentation={presentation} />
         </GameWorld2D>
       </Canvas>
 
+      <LabHeader title="Particle Lab" onExit={onExit} testID="particle-back" />
       <View pointerEvents="box-none" style={styles.hud}>
-        <Text style={styles.title}>Particle Lab</Text>
         <Text style={styles.line}>{status}</Text>
         <Text style={styles.diag}>
           burst a:{String(d1?.active ?? 0)} e:{String(d1?.emitted ?? 0)} d:{String(d1?.dropped ?? 0)} r:
@@ -241,46 +254,90 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
         </Text>
       </View>
 
-      <View pointerEvents="box-none" style={[styles.controls, styles.cameraControls]}>
-        <Pressable onPress={() => moveCamera(-40, 0)} style={styles.miniCam}>
-          <Text style={styles.camText}>{'\u2190'}</Text>
-        </Pressable>
-        <Pressable onPress={() => moveCamera(40, 0)} style={styles.miniCam}>
-          <Text style={styles.camText}>{'\u2192'}</Text>
-        </Pressable>
-        <Pressable onPress={() => moveCamera(0, -40)} style={styles.miniCam}>
-          <Text style={styles.camText}>{'\u2191'}</Text>
-        </Pressable>
-        <Pressable onPress={() => moveCamera(0, 40)} style={styles.miniCam}>
-          <Text style={styles.camText}>{'\u2193'}</Text>
-        </Pressable>
-        <Pressable onPress={() => zoomCamera(1.25)} style={styles.miniCam}>
-          <Text style={styles.camText}>+</Text>
-        </Pressable>
-        <Pressable onPress={() => zoomCamera(0.8)} style={styles.miniCam}>
-          <Text style={styles.camText}>{'\u2212'}</Text>
-        </Pressable>
-        <Pressable onPress={() => rotateCamera(Math.PI / 12)} style={styles.miniCam}>
-          <Text style={styles.camText}>{'\u21BB'}</Text>
-        </Pressable>
+      <View pointerEvents="box-none" style={[styles.cameraShelf, { marginBottom: insets.bottom }]}>
+        <Text style={styles.shelfLabel}>Camera — World only (pink)</Text>
+        <View style={styles.cameraRow}>
+          <Pressable
+            onPress={() => moveCamera(-40, 0)}
+            style={styles.miniCam}
+            accessibilityLabel="Move camera left"
+          >
+            <Text style={styles.camText}>{'\u2190'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => moveCamera(40, 0)}
+            style={styles.miniCam}
+            accessibilityLabel="Move camera right"
+          >
+            <Text style={styles.camText}>{'\u2192'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => moveCamera(0, -40)}
+            style={styles.miniCam}
+            accessibilityLabel="Move camera up"
+          >
+            <Text style={styles.camText}>{'\u2191'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => moveCamera(0, 40)}
+            style={styles.miniCam}
+            accessibilityLabel="Move camera down"
+          >
+            <Text style={styles.camText}>{'\u2193'}</Text>
+          </Pressable>
+          <View style={styles.camDivider} />
+          <Pressable
+            onPress={() => zoomCamera(1.25)}
+            style={styles.miniCam}
+            accessibilityLabel="Zoom in"
+          >
+            <Text style={styles.camText}>+</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => zoomCamera(0.8)}
+            style={styles.miniCam}
+            accessibilityLabel="Zoom out"
+          >
+            <Text style={styles.camText}>{'\u2212'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => rotateCamera(Math.PI / 12)}
+            style={styles.miniCam}
+            accessibilityLabel="Rotate camera"
+          >
+            <Text style={styles.camText}>{'\u21BB'}</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.shelfHint}>Arrows pan, + − zoom, ↻ rotate. Only World (pink) moves with camera; others are screen-space.</Text>
       </View>
 
-      <View pointerEvents="box-none" style={styles.controls}>
-        <Pressable onPress={emitBurst} style={styles.button}>
-          <Text style={styles.buttonText}>Burst (recycle-oldest)</Text>
-        </Pressable>
-        <Pressable onPress={emitDrops} style={styles.button}>
-          <Text style={styles.buttonText}>Drops (drop-new)</Text>
-        </Pressable>
-        <Pressable onPress={emitSparks} style={styles.button}>
-          <Text style={styles.buttonText}>Sparks (Atlas)</Text>
-        </Pressable>
-        <Pressable onPress={emitWorldBurst} style={styles.button}>
-          <Text style={styles.buttonText}>World</Text>
-        </Pressable>
-        <Pressable onPress={togglePause} style={[styles.button, paused && styles.buttonActive]}>
-          <Text style={styles.buttonText}>{paused ? 'Resume' : 'Pause'}</Text>
-        </Pressable>
+      <View pointerEvents="box-none" style={[styles.controls, { paddingBottom: insets.bottom > 0 ? 4 : 0 }]}>
+        <View style={styles.effectsRow}>
+          <Pressable onPress={emitBurst} style={styles.button} accessibilityLabel="Emit burst">
+            <Text style={styles.buttonText}>Burst</Text>
+            <Text style={styles.buttonSub}>recycle</Text>
+          </Pressable>
+          <Pressable onPress={emitDrops} style={styles.button} accessibilityLabel="Emit drops">
+            <Text style={styles.buttonText}>Drops</Text>
+            <Text style={styles.buttonSub}>drop-new</Text>
+          </Pressable>
+          <Pressable onPress={emitSparks} style={styles.button} accessibilityLabel="Emit sparks (Atlas sprite)">
+            <Text style={styles.buttonText}>Sparks</Text>
+            <Text style={styles.buttonSub}>Atlas</Text>
+          </Pressable>
+          <Pressable onPress={emitWorldBurst} style={styles.button} accessibilityLabel="Emit world burst">
+            <Text style={styles.buttonText}>World</Text>
+            <Text style={styles.buttonSub}>world-space</Text>
+          </Pressable>
+          <Pressable
+            onPress={togglePause}
+            style={[styles.button, paused && styles.buttonActive]}
+            accessibilityLabel={paused ? 'Resume' : 'Pause'}
+          >
+            <Text style={styles.buttonText}>{paused ? 'Resume' : 'Pause'}</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.controlsHint}>Burst/Drops/Sparks = screen-space (fixed to screen). World = pink rectangles inside GameWorld2D, moves with camera above.</Text>
       </View>
     </View>
   );
@@ -288,33 +345,66 @@ export default function ParticleLabScreen({ game }: PlaygroundGameContentProps) 
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#080b12' },
-  hud: { position: 'absolute', top: 64, left: 16, right: 16, gap: 4 },
+  hud: { position: 'absolute', top: 12, left: 16, right: 16, gap: 4, zIndex: 10 },
+  hudTopRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  backButton: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    minWidth: 36,
+    alignItems: 'center',
+  },
+  backText: { color: 'white', fontSize: 14, fontWeight: '700' },
   title: { color: 'white', fontSize: 18, fontWeight: '700' },
   line: { color: '#cbd5e1', fontSize: 13 },
   diag: { color: '#64748b', fontSize: 11, fontVariant: ['tabular-nums'] },
   hint: { color: '#475569', fontSize: 10 },
-  controls: {
+  cameraShelf: {
     position: 'absolute',
-    bottom: 24,
+    bottom: 88,
     left: 16,
     right: 16,
-    flexDirection: 'row',
-    gap: 8,
+    gap: 6,
+    backgroundColor: 'rgba(15,23,42,0.55)',
+    padding: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
+  shelfLabel: { color: '#93c5fd', fontSize: 11, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase' },
+  cameraRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  camDivider: { width: 1, height: 24, backgroundColor: 'rgba(255,255,255,0.10)', marginHorizontal: 2 },
+  shelfHint: { color: '#64748b', fontSize: 10, lineHeight: 13 },
+  controls: {
+    position: 'absolute',
+    bottom: 12,
+    left: 16,
+    right: 16,
+    gap: 6,
+  },
+  effectsRow: { flexDirection: 'row', gap: 8 },
+  controlsHint: { color: '#475569', fontSize: 9, lineHeight: 12, textAlign: 'center' },
   button: {
     flex: 1,
     backgroundColor: 'rgba(255,255,255,0.12)',
-    padding: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
     borderRadius: 8,
+    alignItems: 'center',
+    gap: 2,
   },
   buttonActive: { backgroundColor: 'rgba(96,165,250,0.35)' },
-  cameraControls: { bottom: 76 },
   miniCam: {
+    flex: 1,
     backgroundColor: 'rgba(255,255,255,0.10)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     borderRadius: 6,
+    minWidth: 32,
+    alignItems: 'center',
   },
-  camText: { color: '#e2e8f0', textAlign: 'center', fontSize: 13 },
-  buttonText: { color: 'white', textAlign: 'center', fontSize: 11, fontWeight: '600' },
+  camText: { color: '#e2e8f0', textAlign: 'center', fontSize: 14, fontWeight: '600' },
+  buttonText: { color: 'white', textAlign: 'center', fontSize: 11, fontWeight: '700' },
+  buttonSub: { color: '#94a3b8', textAlign: 'center', fontSize: 8, fontWeight: '600', letterSpacing: 0.3, textTransform: 'uppercase' },
 });

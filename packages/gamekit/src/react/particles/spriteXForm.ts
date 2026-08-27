@@ -35,6 +35,7 @@ export interface ParticleSpriteXform {
 }
 
 export function particleSpriteXform(input: ParticleSpriteXformInput): ParticleSpriteXform {
+  'worklet';
   // T15-SF2: Atlas draws the SOURCE rect, so the authored-to-source ratio
   // must ride in scos/ssin or the drawn size ignores particle.size entirely.
   const effScale = input.scale * (input.drawWidth / input.frameWidth);
