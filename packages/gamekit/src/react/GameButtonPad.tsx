@@ -16,6 +16,7 @@
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -23,7 +24,8 @@ import {
   type ReactNode,
 } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { GestureDetector, useManualGesture } from 'react-native-gesture-handler';
+import { GestureDetector, useManualGesture, type ManualGestureConfig } from 'react-native-gesture-handler';
+import { scheduleOnRN } from 'react-native-worklets';
 import type { StyleProp, ViewStyle } from 'react-native';
 
 import { createButtonPadController } from '../core/input/buttonPad';
@@ -126,42 +128,77 @@ export function GameButtonPad<TScenes extends SceneMap, TInput extends InputMap>
     [input],
   );
 
-  const gestureConfig = useMemo(
-    () => ({
-      runOnJS: true as const,
-      shouldCancelWhenOutside: false,
-      onTouchesDown: (event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
-        const diff = controllerRef.current?.touchesDown(event.allTouches) ?? { pressed: [], released: [] };
-        for (const action of diff.released) {
-          input.release(action);
-        }
-        for (const action of diff.pressed) {
-          input.press(action);
-        }
-      },
-      onTouchesMove: (event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
-        const diff = controllerRef.current?.touchesMove(event.allTouches) ?? { pressed: [], released: [] };
-        for (const action of diff.released) {
-          input.release(action);
-        }
-        for (const action of diff.pressed) {
-          input.press(action);
-        }
-      },
-      onTouchesUp: (event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
-        const diff = controllerRef.current?.touchesUp(event.changedTouches) ?? { pressed: [], released: [] };
-        for (const action of diff.released) {
-          input.release(action);
-        }
-      },
-      onTouchesCancel: (event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
-        const diff = controllerRef.current?.touchesCancel(event.changedTouches) ?? { pressed: [], released: [] };
-        for (const action of diff.released) {
-          input.release(action);
-        }
-      },
-    }),
+  // JS-side handlers — called from the UI worklet via scheduleOnRN
+  const onDownJS = useCallback(
+    (event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
+      const diff = controllerRef.current?.touchesDown(event.allTouches) ?? { pressed: [], released: [] };
+      for (const action of diff.released) input.release(action);
+      for (const action of diff.pressed) input.press(action);
+    },
     [input],
+  );
+  const onMoveJS = useCallback(
+    (event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
+      const diff = controllerRef.current?.touchesMove(event.allTouches) ?? { pressed: [], released: [] };
+      for (const action of diff.released) input.release(action);
+      for (const action of diff.pressed) input.press(action);
+    },
+    [input],
+  );
+  const onUpJS = useCallback(
+    (event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
+      const diff = controllerRef.current?.touchesUp(event.changedTouches) ?? { pressed: [], released: [] };
+      for (const action of diff.released) input.release(action);
+    },
+    [input],
+  );
+  const onCancelJS = useCallback(
+    (event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
+      const diff = controllerRef.current?.touchesCancel(event.changedTouches) ?? { pressed: [], released: [] };
+      for (const action of diff.released) input.release(action);
+    },
+    [input],
+  );
+
+  type ManualTouchHandler = NonNullable<ManualGestureConfig['onTouchesDown']>;
+  const handleTouchesDown = useCallback<ManualTouchHandler>(
+    (event) => {
+      'worklet';
+      scheduleOnRN(onDownJS, event as never);
+    },
+    [onDownJS],
+  );
+  const handleTouchesMove = useCallback<ManualTouchHandler>(
+    (event) => {
+      'worklet';
+      scheduleOnRN(onMoveJS, event as never);
+    },
+    [onMoveJS],
+  );
+  const handleTouchesUp = useCallback<ManualTouchHandler>(
+    (event) => {
+      'worklet';
+      scheduleOnRN(onUpJS, event as never);
+    },
+    [onUpJS],
+  );
+  const handleTouchesCancel = useCallback<ManualTouchHandler>(
+    (event) => {
+      'worklet';
+      scheduleOnRN(onCancelJS, event as never);
+    },
+    [onCancelJS],
+  );
+
+  const gestureConfig = useMemo<ManualGestureConfig>(
+    () => ({
+      shouldCancelWhenOutside: false,
+      onTouchesDown: handleTouchesDown,
+      onTouchesMove: handleTouchesMove,
+      onTouchesUp: handleTouchesUp,
+      onTouchesCancel: handleTouchesCancel,
+    }),
+    [handleTouchesCancel, handleTouchesDown, handleTouchesMove, handleTouchesUp],
   );
   const gesture = useManualGesture(gestureConfig);
 
