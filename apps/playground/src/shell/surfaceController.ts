@@ -146,6 +146,7 @@ export class SurfaceController {
       renderer: entry.renderer,
       content: entry.content as unknown as ComponentType<{ readonly game: GameSession }>,
       pointer: entry.pointer,
+      pointerAction: entry.pointerAction,
       camera2D: entry.camera2D,
     });
   }

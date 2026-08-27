@@ -159,7 +159,6 @@ export function TileMapLayer2D({
   const pendingSV = useSharedValue(false);
   const warnedCapacitySV = useSharedValue(false);
   const capacityWarnPendingSV = useSharedValue(false);
-  const boundsScratch = useSharedValue({ minX: 0, minY: 0, maxX: 0, maxY: 0 });
 
   // Stable fill params: built once per binding, never per frame.
   const fillParams = useMemo(
@@ -217,8 +216,13 @@ export function TileMapLayer2D({
       }
       return -2;
     }
-    const bounds = boundsScratch.value;
-    if (!writeLayerVisibleBounds(camera as never, viewportSV as never, px, py, padWorld, bounds)) {
+    // Whole-value assignment: the bounds object is created ON the UI runtime
+    // and replaces the shared value in one step. Mutating the keys of a
+    // JS-originated shared-value object from a worklet is rejected by the
+    // worklets runtime (serializable protection), so the previous out-param
+    // scratch pattern silently dropped its writes.
+    const bounds = writeLayerVisibleBounds(camera as never, viewportSV as never, px, py, padWorld);
+    if (bounds === null) {
       return 0;
     }
     const cx0 = Math.max(0, Math.floor((bounds.minX - originX) / cw));

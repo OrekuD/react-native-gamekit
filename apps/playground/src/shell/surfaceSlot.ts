@@ -82,6 +82,9 @@ export interface SurfaceSlot {
   readonly assets?: SlotAssets;
   /** Pointer active only when a real session is published. */
   readonly pointer: boolean;
+  /** The declared pointer action the shell's GamePointerInput binds
+   * (SurfaceGameEntry.pointerAction); reference games default to `primary`. */
+  readonly pointerAction?: string;
   /**
    * The catalogued camera definition (T12-F1), present only for ready
    * gameplay bindings whose frames carry the authored camera. Neutral and
@@ -106,6 +109,8 @@ export type SurfaceEvent =
       readonly renderer: ComponentType<GameRendererProps<never>>;
       readonly content?: ComponentType<{ readonly game: GameSession }>;
       readonly pointer: boolean;
+      /** The declared pointer action the shell's GamePointerInput binds. */
+      readonly pointerAction?: string;
       readonly camera2D?: GameCamera2DDefinition<never>;
     }
   | {
@@ -228,6 +233,7 @@ function reduceOpenReady(state: SurfaceSlot, event: Extract<SurfaceEvent, { kind
       content: event.content,
       assets: undefined,
       pointer: event.pointer,
+      pointerAction: event.pointerAction,
       camera2D: event.camera2D,
       run: undefined,
       retiring: retireReplaced(state, event.generation),

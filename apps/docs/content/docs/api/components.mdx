@@ -11,6 +11,9 @@ All components below come from the `rn-gamekit/react` entry. The [Components](..
 | --- | --- |
 | `GameView` | Presentation surface: borrows the session, starts on mount, pauses on background, hands `frame`/`alpha`/`viewport` shared values to the renderer. |
 | `GamePointerInput` | Touch adapter for one declared pointer action: ownership, cancellation, coalescing. |
+| `GameButtonPad` | Multitouch button surface: maps every active pointer to measured `GameButton` zones and flows press and release edges into declared button actions. Full-surface overlay with `pointerEvents="box-none"`; position buttons anywhere with ordinary styles and render any React children underneath. |
+| `GameButton` | One touch zone of `GameButtonPad`. Its measured bounds become the hit area for `action`. Must be rendered inside `GameButtonPad`. |
+| `ButtonActionName<TInput>` | Type helper that extracts declared button action names from `TInput`. |
 
 ## Sprites
 

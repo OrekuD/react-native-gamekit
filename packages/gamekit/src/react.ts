@@ -39,6 +39,8 @@ export type {
 export type { GameRendererProps, GameViewProps } from './react/GameView';
 export { GamePointerInput } from './react/GamePointerInput';
 export type { GamePointerInputProps } from './react/GamePointerInput';
+export { GameButtonPad, GameButton } from './react/GameButtonPad';
+export type { GameButtonPadProps, GameButtonProps, ButtonActionName } from './react/GameButtonPad';
 export type { GamePointerInstrumentation, GameViewInstrumentation } from './react/instrumentation';
 export { ParticleView } from './react/particles/ParticleView';
 export type { ParticleViewProps } from './react/particles/ParticleView';

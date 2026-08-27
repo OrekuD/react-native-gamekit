@@ -42,6 +42,7 @@ function openReady(
   active: SessionStub,
   gameId = 'brick-breaker',
   pointer = true,
+  pointerAction?: string,
 ): SurfaceEvent {
   return {
     kind: 'open-ready',
@@ -52,6 +53,7 @@ function openReady(
     renderer: RENDERER,
     content: CONTENT,
     pointer,
+    pointerAction,
   };
 }
 
@@ -84,6 +86,18 @@ function commit(generation: number): SurfaceEvent {
 }
 
 describe('surface state machine (T8 canonical transitions)', () => {
+  it('carries the declared pointer action onto the ready slot (paddle steer)', () => {
+    const { slot } = reduceSurfaceState(neutral(), openReady(1, 2, session('A'), 'paddle', true, 'steer'));
+    assert.equal(slot.status, 'ready');
+    assert.equal(slot.pointer, true, 'pointer stays enabled for the binding');
+    assert.equal(slot.pointerAction, 'steer', 'the shell must bind the declared action, not a hardcoded primary');
+  });
+
+  it('defaults the pointer action to undefined so GameSurface binds primary', () => {
+    const { slot } = reduceSurfaceState(neutral(), openReady(1, 2, session('A')));
+    assert.equal(slot.pointerAction, undefined, 'reference games keep the primary convention');
+  });
+
   it('same game id with a new request id publishes a new session and generation', () => {
     const first = reduceSurfaceState(neutral(), openReady(1, 2, session('A'))).slot;
     const reopen = reduceSurfaceState(first, openReady(2, 3, session('B'))).slot;

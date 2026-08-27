@@ -124,3 +124,11 @@ The first supported line (validated in the playground):
 | Expo Asset | `~57.0.8` |
 
 See `apps/docs/content/docs/compatibility.mdx` for the documented compatibility page.
+
+## Credits
+
+The playground demo games use third-party asset packs (not part of the `rn-gamekit` package). Follow each pack's license terms if you redistribute them:
+
+- [Mossy Cavern](https://maaot.itch.io/mossy-cavern) by maaot
+- [Pixel Adventure 1](https://pixelfrog-assets.itch.io/pixel-adventure-1) by Pixel Frog
+- [Brackeys' Platformer Bundle](https://brackeysgames.itch.io/brackeys-platformer-bundle) by Brackeys Games

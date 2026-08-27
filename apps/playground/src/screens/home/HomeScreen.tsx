@@ -1,10 +1,5 @@
-import {
-  Column,
-  Host,
-  ListItem,
-  ScrollView as ExpoScrollView,
-  Text as ExpoText,
-} from "@expo/ui";
+import { Host, List, ListItem, Text as ExpoText } from "@expo/ui";
+import { StatusBar } from "expo-status-bar";
 import { StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
@@ -18,49 +13,35 @@ export default function HomeScreen({
 }) {
   return (
     <SafeAreaView edges={["bottom"]} style={styles.safeArea}>
-      <Host
-        colorScheme="dark"
-        seedColor="#7c3aed"
-        style={styles.listHost}
-        useViewportSizeMeasurement
-      >
-        <ExpoScrollView
-          showsIndicators={false}
-          style={{ paddingHorizontal: 24 }}
-          testID="game-scroll-view"
+      {/* Light catalog surface: dark status-bar text overrides the shell's
+          global light-on-dark bar; unmounting restores it for game screens. */}
+      <StatusBar style="dark" />
+      <Host colorScheme="light" seedColor="#6558D9" style={styles.host}>
+        <ExpoText
+          style={styles.header}
+          textStyle={textStyles.headerTitle}
         >
-          <Column
-            alignment="start"
-            spacing={8}
-            style={{
-              paddingBottom: 20,
-              paddingTop: 24,
-            }}
-            testID="playground-header"
-          >
-            <ExpoText textStyle={styles.headerTitle}>
-              {"React Native GameKit\nPlayground"}
-            </ExpoText>
-            <ExpoText textStyle={styles.headerSubtitle}>
-              Small games, built with the same runtime you can use in your app.
-            </ExpoText>
-          </Column>
+          {"React Native GameKit\nPlayground"}
+        </ExpoText>
+        <ExpoText
+          style={styles.subheader}
+          textStyle={textStyles.headerSubtitle}
+        >
+          Small games, built with the same runtime you can use in your app.
+        </ExpoText>
+        <List testID="showcase-home-list">
           {PLAYGROUND_GAMES.map((game) => (
             <ListItem
               key={game.id}
               onPress={() => onOpenGame(game.id)}
               supportingText={game.description}
-              testID={`game-row-${game.id}`}
-              trailing={
-                <ExpoText textStyle={styles.nativeTrailing}>
-                  {game.label}
-                </ExpoText>
-              }
+              testID={`home-component-${game.id}`}
+              trailing="›"
             >
-              {game.title}
+              <ExpoText textStyle={textStyles.itemTitle}>{game.title}</ExpoText>
             </ListItem>
           ))}
-        </ExpoScrollView>
+        </List>
       </Host>
     </SafeAreaView>
   );
@@ -69,27 +50,38 @@ export default function HomeScreen({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#080b12",
+    backgroundColor: "#ffffff",
   },
+  host: {
+    flex: 1,
+  },
+  header: {
+    paddingHorizontal: 24,
+    paddingTop: 24,
+  },
+  subheader: {
+    paddingHorizontal: 24,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+});
+
+const textStyles = StyleSheet.create({
   headerTitle: {
-    color: "#f4f4f5",
+    color: "#18181b",
     fontSize: 32,
     fontWeight: "700",
     letterSpacing: -0.7,
   },
   headerSubtitle: {
-    color: "#a1a1aa",
+    color: "#52525b",
     fontSize: 15,
     lineHeight: 22,
-    marginTop: 8,
     maxWidth: 420,
   },
-  listHost: {
-    flex: 1,
-    minHeight: 160,
-  },
-  nativeTrailing: {
-    color: "#a78bfa",
-    fontWeight: "700",
+  itemTitle: {
+    color: "#18181b",
+    fontSize: 17,
+    fontWeight: "500",
   },
 });

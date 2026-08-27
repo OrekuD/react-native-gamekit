@@ -83,12 +83,15 @@ export function SpriteFieldRenderer({ frame, alpha, viewport, camera, assets }: 
                 camera,
                 viewport,
                 padding: 32,
-                bounds: (enemy) => ({
-                  x: enemy.x - 10,
-                  y: enemy.y - 10,
-                  width: 20,
-                  height: 20,
-                }),
+                bounds: (enemy) => {
+                  'worklet';
+                  return {
+                    x: enemy.x - 10,
+                    y: enemy.y - 10,
+                    width: 20,
+                    height: 20,
+                  };
+                },
               }
         }
       />

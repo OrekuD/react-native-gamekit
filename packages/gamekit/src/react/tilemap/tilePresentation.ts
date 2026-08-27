@@ -124,6 +124,7 @@ export function windowCovers(
   snap: TileWindowSnapshot,
   x0: number, y0: number, x1: number, y1: number,
 ): boolean {
+  'worklet';
   if (snap.w === 0 || snap.h === 0) return false;
   return snap.x0 <= x0 && snap.y0 <= y0 && snap.x0 + snap.w - 1 >= x1 && snap.y0 + snap.h - 1 >= y1;
 }
@@ -169,19 +170,19 @@ export function writeLayerVisibleBounds(
   parallaxX: number,
   parallaxY: number,
   paddingWorld: number,
-  out: LayerBounds,
-): boolean {
+): LayerBounds | null {
   'worklet';
   const view = viewport?.value?.visibleLogicalBounds;
-  if (view === undefined) return false;
+  if (view === undefined) return null;
   const cam = camera?.value?.camera;
   if (cam === undefined) {
     // Viewport-only world: no zoom, no rotation, no parallax correction.
-    out.minX = view.x - paddingWorld;
-    out.minY = view.y - paddingWorld;
-    out.maxX = view.x + view.width + paddingWorld;
-    out.maxY = view.y + view.height + paddingWorld;
-    return true;
+    return {
+      minX: view.x - paddingWorld,
+      minY: view.y - paddingWorld,
+      maxX: view.x + view.width + paddingWorld,
+      maxY: view.y + view.height + paddingWorld,
+    };
   }
   const hx = view.width / (2 * cam.zoom);
   const hy = view.height / (2 * cam.zoom);
@@ -199,11 +200,12 @@ export function writeLayerVisibleBounds(
     centerX = logicalCx + (centerX - logicalCx) * parallaxX;
     centerY = logicalCy + (centerY - logicalCy) * parallaxY;
   }
-  out.minX = centerX - ex;
-  out.minY = centerY - ey;
-  out.maxX = centerX + ex;
-  out.maxY = centerY + ey;
-  return true;
+  return {
+    minX: centerX - ex,
+    minY: centerY - ey,
+    maxX: centerX + ex,
+    maxY: centerY + ey,
+  };
 }
 
 /** Slot-buffer contract shared by the component and tests. */

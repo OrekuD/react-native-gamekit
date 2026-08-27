@@ -144,6 +144,10 @@ export type PlatformerLabManifest = GameAssetManifest<typeof platformerLabAssets
 
 export const platformerLabEvents = defineGameEvents({
   checkpoint: gameEvent<{ readonly index: number; readonly x: number }>(),
+  /** Fired exactly once when the final checkpoint is reached. */
+  finish: gameEvent<{ readonly elapsedSeconds: number; readonly falls: number }>(),
+  /** Fired each time the player falls below the world and respawns. */
+  fall: gameEvent<{ readonly falls: number; readonly elapsedSeconds: number }>(),
 });
 
 // ---------------------------------------------------------------------------
@@ -167,6 +171,10 @@ export interface PlatformerLabSnapshot {
   };
   readonly checkpoints: readonly PlatformerCheckpointState[];
   readonly elapsed: number;
+  /** How many times the player fell below the world (respawn counter). */
+  readonly falls: number;
+  /** Set once every checkpoint is reached; a finished run freezes in place. */
+  readonly finished: boolean;
   /** Monotonic committed tick count (render-schedule comparisons). */
   readonly ticks: number;
 }
@@ -180,6 +188,9 @@ interface PlatformerLabState {
   readonly contacts: PlatformerLabSnapshot['contacts'];
   readonly checkpointsReached: readonly boolean[];
   readonly elapsed: number;
+  readonly falls: number;
+  /** Set once every checkpoint is reached; a finished run freezes in place. */
+  readonly finished: boolean;
   readonly ticks: number;
   /** One-shot cut signal so the camera snaps to the spawn on frame one. */
   readonly spawnCut: boolean;
@@ -195,6 +206,8 @@ function makeState(): PlatformerLabState {
     contacts: { floor: false, leftWall: false, rightWall: false, ceiling: false },
     checkpointsReached: PLATFORMER_LAB_CONFIG.checkpoints.map(() => false),
     elapsed: 0,
+    falls: 0,
+    finished: false,
     ticks: 0,
     spawnCut: true,
   };
@@ -203,10 +216,15 @@ function makeState(): PlatformerLabState {
 const platformerLabScene = defineScene({
   actions: ['left', 'right', 'jump', 'drop'],
   transitions: [],
-  emits: ['checkpoint'],
+  emits: ['checkpoint', 'finish', 'fall'],
   events: platformerLabEvents,
   create: makeState,
   update: ({ state, input, events, deltaSeconds }): PlatformerLabState => {
+    // A finished run freezes in place: inputs are ignored and physics stops,
+    // but time still advances so the HUD stays live.
+    if (state.finished) {
+      return { ...state, elapsed: state.elapsed + deltaSeconds, ticks: state.ticks + 1 };
+    }
     const left = input.button('left').held ?? false;
     const right = input.button('right').held ?? false;
     const drop = input.button('drop').held ?? false;
@@ -229,6 +247,33 @@ const platformerLabScene = defineScene({
       floorSnapDistance: PLATFORMER_LAB_CONFIG.floorSnapDistance,
     });
 
+    // Fall-out-of-world guard: below the map there is no recovery — respawn
+    // at the spawn point. Reached checkpoints PERSIST (standard checkpoint
+    // semantics: death costs position, not progress). The camera keeps
+    // following the body, so without this the player just falls forever.
+    const mapBottom = PLATFORMER_LAB_CONFIG.mapRows * PLATFORMER_LAB_CONFIG.cellSize;
+    if (result.body.y > mapBottom + 2 * PLATFORMER_LAB_CONFIG.cellSize) {
+      const falls = (state.falls ?? 0) + 1;
+      events.emit('fall', {
+        falls,
+        elapsedSeconds: state.elapsed + deltaSeconds,
+      });
+      return {
+        body: PLAYER_SPAWN,
+        vx: 0,
+        vy: 0,
+        onGround: false,
+        facingRight: true,
+        contacts: { floor: false, leftWall: false, rightWall: false, ceiling: false },
+        checkpointsReached: state.checkpointsReached,
+        elapsed: state.elapsed + deltaSeconds,
+        falls,
+        finished: false,
+        ticks: state.ticks + 1,
+        spawnCut: false,
+      };
+    }
+
     const onGround = result.contacts.floor !== undefined;
     const checkpointsReached = PLATFORMER_LAB_CONFIG.checkpoints.map(
       (cx, index) =>
@@ -245,9 +290,20 @@ const platformerLabScene = defineScene({
       }
     });
 
+    // Course clear: the tick that completes the last checkpoint emits exactly
+    // one typed finish event and freezes the run.
+    const finishedNow =
+      !state.finished && checkpointsReached.every((reached) => reached);
+    if (finishedNow) {
+      events.emit('finish', {
+        elapsedSeconds: state.elapsed + deltaSeconds,
+        falls: state.falls,
+      });
+    }
+
     return {
       body: result.body,
-      vx,
+      vx: finishedNow ? 0 : vx,
       vy: onGround ? 0 : result.velocity.y,
       onGround,
       facingRight: vx > 0 ? true : vx < 0 ? false : state.facingRight,
@@ -259,6 +315,8 @@ const platformerLabScene = defineScene({
       },
       checkpointsReached,
       elapsed: state.elapsed + deltaSeconds,
+      falls: state.falls,
+      finished: finishedNow || state.finished,
       ticks: state.ticks + 1,
       // The cut fires only on the very first update after create().
       spawnCut: false,
@@ -274,6 +332,8 @@ const platformerLabScene = defineScene({
       reached: state.checkpointsReached[index]!,
     })),
     elapsed: state.elapsed,
+    falls: state.falls,
+    finished: state.finished,
     ticks: state.ticks,
   }),
 });

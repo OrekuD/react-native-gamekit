@@ -23,15 +23,15 @@ export function CameraLabRenderer({ frame, viewport, camera }: RendererProps) {
       return '';
     }
     const snap = envelope.current as unknown as CameraLabSnapshot;
-    const path = Skia.Path.Make();
     const visible = new Set(snap.visibleMarkerIds);
+    const builder = Skia.PathBuilder.Make();
     for (const marker of snap.markers) {
       if (!visible.has(marker.id)) {
         continue;
       }
-      path.addRect(Skia.XYWHRect(marker.x - 6, marker.y - 6, 12, 12));
+      builder.addRect(Skia.XYWHRect(marker.x - 6, marker.y - 6, 12, 12));
     }
-    return path;
+    return builder.build();
   });
 
   const boundsX = useDerivedValue(() => {

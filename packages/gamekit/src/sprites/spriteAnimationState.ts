@@ -33,12 +33,14 @@ export interface SpriteAnimationState<TClipName extends string = string> {
 }
 
 function assertFinitePositiveSpeed(speed: number): void {
+  'worklet';
   if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) {
     throw new Error('sprite animation speed must be a finite number greater than zero');
   }
 }
 
 function assertFiniteDelta(deltaSeconds: number): void {
+  'worklet';
   if (typeof deltaSeconds !== 'number' || !Number.isFinite(deltaSeconds)) {
     throw new Error('sprite animation delta must be a finite number of seconds');
   }

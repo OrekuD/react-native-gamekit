@@ -18,12 +18,18 @@ export function NeutralRenderer({ viewport }: GameRendererProps<never>) {
     }
     return surface.contentBounds;
   });
+  // Skia consumes each scalar as a shared value, so nothing ever reads
+  // `.value` on the JS thread during render.
+  const x = useDerivedValue(() => frame.value.x);
+  const y = useDerivedValue(() => frame.value.y);
+  const width = useDerivedValue(() => frame.value.width);
+  const height = useDerivedValue(() => frame.value.height);
   return (
     <Rect
-      x={frame.value.x}
-      y={frame.value.y}
-      width={frame.value.width}
-      height={frame.value.height}
+      x={x}
+      y={y}
+      width={width}
+      height={height}
       color="#080b12"
     />
   );

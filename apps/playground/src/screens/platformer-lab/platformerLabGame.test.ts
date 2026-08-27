@@ -34,6 +34,8 @@ interface PlatformerSnapshot {
   readonly onGround: boolean;
   readonly contacts: { floor: boolean; leftWall: boolean; rightWall: boolean; ceiling: boolean };
   readonly checkpoints: readonly { reached: boolean }[];
+  readonly falls: number;
+  readonly finished: boolean;
   readonly ticks: number;
 }
 
@@ -53,6 +55,50 @@ function harness() {
   const snap = (): PlatformerSnapshot => session.getRenderFrame().current as unknown as PlatformerSnapshot;
   return { session, tick, snap };
 }
+
+it('falling below the world respawns at the spawn point and counts a fall', () => {
+    const h = harness();
+    // Walk right with a fixed hop cadence. Eventually a hop mistimes a gap
+    // and the player drops below the world — the exact failure real play
+    // produced (camera following a body that fell out of the level).
+    let falls = 0;
+    const fallEvents: { falls: number }[] = [];
+    h.session.addGameEventListener('fall' as never, (event) => {
+      fallEvents.push((event as unknown as { payload: { falls: number } }).payload);
+    });
+    h.session.input.press('right');
+    let jumpedAt = -Infinity;
+    for (let frame = 0; frame < 60 * 120 && falls === 0; frame += 1) {
+      if (frame - jumpedAt >= 24) {
+        h.session.input.press('jump');
+        h.tick(1);
+        h.session.input.release('jump');
+        jumpedAt = frame;
+        continue;
+      }
+      h.tick(1);
+      falls = h.snap().falls ?? 0;
+    }
+    h.session.input.release('right');
+    assert.equal(falls, 1, 'a missed gap must register exactly one fall');
+    assert.equal(
+      fallEvents.length,
+      1,
+      `exactly one typed fall event fires (${JSON.stringify(fallEvents)})`,
+    );
+    assert.equal(fallEvents[0]?.falls, 1, 'the fall event carries the running fall count');
+    const snapAfterFall = h.snap();
+    assert.equal(snapAfterFall.falls, 1, 'the fall counter persists on the snapshot');
+    assert.ok(
+      Math.abs(snapAfterFall.body.x - PLAYER_SPAWN.x) < 2,
+      `respawned near the spawn x (${String(snapAfterFall.body.x)})`,
+    );
+    assert.ok(snapAfterFall.body.y <= PLAYER_SPAWN.y + 2, 'respawned at spawn height');
+    // The session keeps ticking after respawn (no crash, no stuck state).
+    const ticksBefore = snapAfterFall.ticks;
+    h.tick(30);
+    assert.ok(h.snap().ticks > ticksBefore);
+  });
 
 /** Hold `right` and hop periodically — enough to clear both gaps. */
 function walkRightWithJumps(
@@ -92,13 +138,50 @@ describe('platformer lab fixed-step simulation', () => {
         received.push((event as unknown as { payload: { index: number } }).payload.index);
       });
 
-      // ~14 s of walking right with a hop every ~0.55 s.
-      walkRightWithJumps(h, Math.round(14 / (1 / 60)), 33);
+      // Walk right with a hop every ~0.55 s. Falls now respawn the player at
+      // the spawn (progress persists), so the budget covers respawn travel.
+      walkRightWithJumps(h, Math.round(30 / (1 / 60)), 33);
 
       const snap = h.snap();
       assert.equal(snap.checkpoints.length, PLATFORMER_LAB_CONFIG.checkpoints.length);
       for (const cp of snap.checkpoints) assert.equal(cp.reached, true);
       assert.deepEqual(received, [0, 1, 2]);
+    } finally {
+      h.session.dispose();
+    }
+  });
+
+  it('completing the course fires one finish event, freezes, and restartScene resets', () => {
+    const h = harness();
+    try {
+      let finishEvents = 0;
+      h.session.addGameEventListener('finish' as never, () => {
+        finishEvents += 1;
+      });
+      walkRightWithJumps(h, Math.round(30 / (1 / 60)), 33);
+      assert.equal(finishEvents, 1, 'exactly one typed finish event fires');
+      const finishedSnap = h.snap();
+      assert.equal(finishedSnap.finished, true, 'the snapshot reports the finish');
+      const bodyAtFinish = finishedSnap.body;
+      const ticksAtFinish = finishedSnap.ticks;
+
+      // Finished runs FREEZE: held inputs no longer move the player.
+      h.session.input.press('right');
+      h.tick(30);
+      h.session.input.release('right');
+      const frozenSnap = h.snap();
+      assert.equal(frozenSnap.body.x, bodyAtFinish.x, 'a finished run ignores movement input');
+      assert.ok(frozenSnap.ticks > ticksAtFinish, 'time still advances');
+
+      // restartScene() restores a fresh run (commits at the next fixed step).
+      h.session.restartScene();
+      h.tick(1);
+      const restartedSnap = h.snap();
+      assert.equal(restartedSnap.falls, 0, 'restart clears the fall counter');
+      assert.equal(restartedSnap.finished, false, 'restart clears the finish');
+      for (const cp of restartedSnap.checkpoints) {
+        assert.equal(cp.reached, false, 'restart clears checkpoint progress');
+      }
     } finally {
       h.session.dispose();
     }

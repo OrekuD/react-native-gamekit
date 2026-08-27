@@ -375,15 +375,13 @@ describe('tilemap layer mounted contract', () => {
     // Pure level: parallax applied AFTER base bounds; p=0 is camera-fixed.
     const cam = { value: { camera: { center: { x: 200, y: 100 }, zoom: 1, rotationRadians: 0 } } };
     const vp = { value: { visibleLogicalBounds: { x: 0, y: 0, width: 320, height: 480 } } };
-    const out = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    assert.equal(Presentation.writeLayerVisibleBounds(cam, vp, 1, 1, 0, out), true);
-    assert.equal(out.minX, 200 - 160);
-    const fixedOut = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    Presentation.writeLayerVisibleBounds(cam, vp, 0, 0, 0, fixedOut);
+    const out = Presentation.writeLayerVisibleBounds(cam, vp, 1, 1, 0);
+    assert.ok(out !== null, 'valid camera+viewport produce bounds');
+    assert.equal(out!.minX, 200 - 160);
+    const fixedOut = Presentation.writeLayerVisibleBounds(cam, vp, 0, 0, 0)!;
     assert.equal(fixedOut.minX, 0);
     assert.equal(fixedOut.maxX, 320);
-    const halfOut = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    Presentation.writeLayerVisibleBounds(cam, vp, 0.5, 0.5, 0, halfOut);
+    const halfOut = Presentation.writeLayerVisibleBounds(cam, vp, 0.5, 0.5, 0)!;
     assert.equal(halfOut.minX, (200 - 160 + 0) / 2);
 
     // Component level: a parallax layer mounts WITHOUT an outer GameLayer2D
@@ -407,11 +405,10 @@ describe('tilemap layer mounted contract', () => {
     r!.unmount();
 
     // Rotation grows the conservative extents.
-    const rotOut = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-    Presentation.writeLayerVisibleBounds(
+    const rotOut = Presentation.writeLayerVisibleBounds(
       { value: { camera: { center: { x: 200, y: 100 }, zoom: 1, rotationRadians: Math.PI / 2 } } },
-      vp, 1, 1, 0, rotOut,
-    );
+      vp, 1, 1, 0,
+    )!;
     const w = (b: { minX: number; maxX: number }): number => b.maxX - b.minX;
     const h = (b: { minY: number; maxY: number }): number => b.maxY - b.minY;
     assert.ok(w(rotOut) > w(out) || h(rotOut) > h(out));
@@ -584,8 +581,7 @@ describe('tilemap layer mounted contract', () => {
       const filled = lastDerived();
       assert.ok(filled > 0, `${label} 45deg at minZoom must fill (${filled})`);
       const padWorld = 1 * Math.max(cw, ch);
-      const out = { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-      Presentation.writeLayerVisibleBounds(camSV as never, vp as never, 1, 1, padWorld, out);
+      const out = Presentation.writeLayerVisibleBounds(camSV as never, vp as never, 1, 1, padWorld)!;
       const cx0 = Math.max(0, Math.floor(out.minX / cw));
       const cy0 = Math.max(0, Math.floor(out.minY / ch));
       const cx1 = Math.min(95, Math.floor(out.maxX / cw));

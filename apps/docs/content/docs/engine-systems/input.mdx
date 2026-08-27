@@ -3,9 +3,10 @@ title: Input
 description: Pointer actions, immutable per-tick sampling, ownership, cancellation, and the latency tradeoffs of coalescing.
 ---
 
-> **Provisional.** One primary pointer action is implemented. Multitouch
-> gameplay, virtual sticks, keyboard, mouse hover, and controllers are future
-> work.
+> **Provisional.** Pointer input supports one primary action through
+> `GamePointerInput`. Button input supports true multitouch through
+> `GameButtonPad`; virtual sticks, keyboard, mouse hover, and controllers
+> remain future work.
 
 ## Declaring a pointer action
 
@@ -18,8 +19,13 @@ const game = defineGame({
 });
 ```
 
-Button actions (`type: 'button'`) still exist. Calling a button operation on a
-pointer action or a pointer operation on a button action throws at runtime.
+Button actions (`type: 'button'`) are fully supported. You can declare any
+number of named button actions — a d-pad, AB buttons, start and select, or
+`left`, `right`, `jump`, and `drop` — and read them with the same
+per-tick semantics as the pointer. The headless controller behind
+`GameButtonPad` lives in `core/input/buttonPad` so the multitouch mapping is
+testable without React. Calling a button operation on a pointer action or a
+pointer operation on a button action throws at runtime.
 
 ## Reading the pointer
 
@@ -49,6 +55,61 @@ Gesture Handler event objects never enter the simulation API.
 The first pointer to begin owns the action until it releases or cancels.
 Secondary pointers are ignored: their begins, moves, and ends have no effect.
 Ownership transfers only after the owner releases or cancels.
+
+## Declaring button actions
+
+Button actions use the same map as pointer actions, with `type: 'button'`:
+
+```ts
+const game = defineGame({
+  input: {
+    left: { type: 'button' },
+    right: { type: 'button' },
+    jump: { type: 'button' },
+  },
+  // ...
+});
+```
+
+You can declare as many as you need. Names are yours — there is no fixed
+set.
+
+## Reading button state
+
+Scenes read button state once per simulation tick, alongside the pointer:
+
+```ts
+const left = input.button('left').held;      // true while held
+const jumpPressed = input.button('jump').pressed; // one-tick edge
+```
+
+`held` is true for the whole press. `pressed`, `released`, and
+`cancelled` are one-tick edges. Edges let pulse actions like jump re-arm
+correctly: a jump held across ticks only fires once until it releases and
+presses again.
+
+## Mounting the button pad
+
+`GameButtonPad` is the button counterpart to `GamePointerInput`. It is an
+invisible full-surface overlay — it draws nothing and its empty areas let
+touches pass through — so you can position each `GameButton` anywhere on
+screen and render whatever React children you like underneath.
+
+```tsx
+import { GameButton, GameButtonPad } from 'rn-gamekit/react';
+
+<GameButtonPad game={session} hitSlop={12}>
+  <GameButton action="left" style={styles.left}>{"\u2190"}</GameButton>
+  <GameButton action="jump" style={styles.jump}>Jump</GameButton>
+</GameButtonPad>
+```
+
+Each `GameButton` measures its own bounds on layout. A finger that lands
+inside a zone presses its action; a finger that slides between zones
+reassigns (release plus press); lifting or cancelling releases. An action
+stays held while any finger covers its zone, so two fingers on `jump` keep
+it held until the last one lifts. Unmount releases every held action so no
+input outlives the pad.
 
 ## Mounting the adapter
 

@@ -1,0 +1,25 @@
+---
+title: Asset Credits
+description: "The third-party asset packs the playground demos ship with, and where they come from."
+---
+---
+
+The playground ships demo games that use third-party asset packs. These packs are **not part of the `rn-gamekit` package** — nothing in the library imports them, and apps that install Gamekit never download them. They exist so the reference games look like real games instead of colored rectangles.
+
+If you redistribute the playground or its assets, follow each pack's license terms on its page.
+
+## Mossy Cavern
+
+By [maaot](https://maaot.itch.io/mossy-cavern). A cave-themed tileset used by the Platformer Lab's world.
+
+## Pixel Adventure 1
+
+By [Pixel Frog](https://pixelfrog-assets.itch.io/pixel-adventure-1). Character sprites and enemies — the animated player, enemies, and tiles you see across the sprite demos.
+
+## Brackeys' Platformer Bundle
+
+By [Brackeys Games](https://brackeysgames.itch.io/brackeys-platformer-bundle). Platformer tiles and props.
+
+## Using your own assets
+
+Games declare their own manifests through [`defineAssets`](./guides/load-assets), so swapping these packs for your own art is a manifest change, not a code change.

@@ -1,6 +1,6 @@
 ---
 title: Components
-description: "GameView, GamePointerInput, and the sprite components: what each one owns and where it mounts."
+description: "GameView, GamePointerInput, GameButtonPad, and the sprite components: what each one owns and where it mounts."
 ---
 
 All components come from the `rn-gamekit/react` entry. This page lists what each one does and when you need it.
@@ -28,6 +28,44 @@ The touch adapter. It maps Gesture Handler events for one declared pointer actio
 ```
 
 Props: `game`, `action` (a declared pointer action name), `instrumentation`. One instance per pointer action; secondary pointers are ignored until the owner releases. See [Input](../engine-systems/input).
+
+## GameButtonPad and GameButton
+
+The multitouch button surface. It maps every active pointer to the
+measured bounds of a `GameButton` and flows press and release edges into
+the session's declared button actions. Unlike `Pressable`, simultaneous
+fingers on different buttons all register, so you can hold left and jump at
+the same time.
+
+The pad itself is an invisible full-surface overlay. It draws nothing and
+its empty areas let touches pass through (`pointerEvents="box-none"`), so
+you can render whatever React children you like underneath and position
+each button anywhere on screen with ordinary styles.
+
+```tsx
+import { GameButton, GameButtonPad } from 'rn-gamekit/react';
+
+<GameButtonPad game={session} hitSlop={12}>
+  <GameButton action="left" style={styles.left}>{"\u2190"}</GameButton>
+  <GameButton action="right" style={styles.right}>{"\u2192"}</GameButton>
+  <GameButton action="jump" style={styles.jump}>Jump</GameButton>
+</GameButtonPad>
+```
+
+Actions are not fixed. Each `GameButton` presses the button action name
+you declared in `defineGame` — `left`, `right`, `jump`, `attack`,
+`pause`, or any other string in `Record<string, { type: 'button' }>`. The
+same primitive covers a GameBoy-style d-pad, AB buttons, and system
+buttons: every zone is just a named button.
+
+Props — `GameButtonPad`: `game` (required), `children` (one or more
+`GameButton` elements plus any non-interactive art), `style` (layered over
+the default full-surface overlay), `hitSlop` (extra hit area around every
+zone), `testID`. Props — `GameButton`: `action` (a declared button
+action name), `style`, `children`, `testID`, `accessibilityRole`. Each
+button measures its own bounds on layout; sliding between zones reassigns
+the pointer, release edges always fire, and unmount releases every held
+action so no input outlives the pad. See [Input](../engine-systems/input).
 
 ## Sprite components
 

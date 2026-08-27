@@ -10,7 +10,7 @@ import {
 import type { GameSession, PointerInputAction, SceneDefinitionMarker } from 'rn-gamekit';
 
 import { AssetGateOverlay } from './AssetGateOverlay';
-import { isPlaygroundGameId, type PlaygroundGameId } from '../catalog/games';
+import { type PlaygroundGameId } from '../catalog/games';
 import type { PlaygroundGameContentProps } from './PlaygroundGameContentProps';
 import { effectiveBinding, type RunSurfaceEvent, type SurfaceSlot } from './surfaceSlot';
 
@@ -97,12 +97,10 @@ export function GameSurface({
           <GamePointerInput
             key={slot.generation}
             game={bound.pointerGame as GameSession<SceneDefinitionMarkerMap, Record<string, PointerInputAction>>}
-            action={
-              // Pointer action is catalog-driven; default to primary.
-              // The registry lives in PlaygroundShell, but for the isolated
-              // surface we resolve via the catalog helper when available.
-              slot.gameId !== null && isPlaygroundGameId(slot.gameId) ? 'primary' : 'primary'
-            }
+            // The declared action travels with the open-ready event
+            // (SurfaceGameEntry.pointerAction); reference games default to
+            // `primary`.
+            action={slot.pointerAction ?? 'primary'}
             instrumentation={bound.instrumentation?.pointer ?? slot.run?.pointer}
           />
         ) : null}

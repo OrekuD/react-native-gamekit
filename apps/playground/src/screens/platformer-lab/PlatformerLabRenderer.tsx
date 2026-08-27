@@ -33,6 +33,8 @@ const OFFSCREEN_SNAPSHOT: PlatformerLabSnapshot = {
   onGround: false,
   facingRight: true,
   contacts: { floor: false, leftWall: false, rightWall: false, ceiling: false },
+  falls: 0,
+  finished: false,
   checkpoints: PLATFORMER_LAB_CONFIG.checkpoints.map((x) => ({ x, reached: false })),
   elapsed: 0,
   ticks: 0,
@@ -48,7 +50,11 @@ function snapshotOf(frame: FrameSV): PlatformerLabSnapshot {
 }
 
 export function PlatformerLabRenderer({ frame, viewport, camera, assets }: RendererProps) {
-  const tiles = assets?.get(platformerLabAssets.world.tiles);
+  // The lease returns a LOADED WRAPPER ({descriptor,width,height,image}); the
+  // Atlas needs the decoded SkImage itself, not the wrapper object.
+  const tiles = (assets?.get(platformerLabAssets.world.tiles) as
+    | { readonly image: unknown }
+    | undefined)?.image;
 
   const bodyX = useDerivedValue(() => {
     'worklet';
@@ -78,8 +84,15 @@ export function PlatformerLabRenderer({ frame, viewport, camera, assets }: Rende
     return snapshotOf(frame).checkpoints.every((cp) => cp.reached) ? 1 : 0.35;
   });
 
+  // Asset boundary (checked AFTER all hooks): rendering before acquisition
+  // hands Skia an undefined image (HostFunction crash). Same contract as
+  // SpriteFieldRenderer.
+  const ready = tiles !== undefined;
+
   return (
     <GameWorld2D viewport={viewport} camera={camera}>
+      {ready ? (
+      <>
       {/* Parallax background: decorative clouds move at half speed. The
           layer owns the whole parallax contract — visual transform AND
           culling derive from the same factor (T16-RF2). */}
@@ -122,6 +135,8 @@ export function PlatformerLabRenderer({ frame, viewport, camera, assets }: Rende
       />
       {/* Debug contact indicator: dot under the player while grounded. */}
       <Circle cx={bodyX as never} cy={indicatorY as never} r={4} color="#22c55e" />
+      </>
+      ) : null}
     </GameWorld2D>
   );
 }
