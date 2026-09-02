@@ -1,6 +1,8 @@
 export { GameView } from './react/GameView';
 export { useGameSession } from './react/useGameSession';
 export { useGameSessionStatus } from './react/useGameSessionStatus';
+export { createGameLifecycleSource, GameLifecycleProvider, useGameLifecycleSource } from './react/lifecycleSource';
+export type { GameLifecycleSource } from './core/session/types';
 export { createGameAssetStore } from './react/assets/decodeSkiaImage';
 export { useGameAssets, stableGroupsKey } from './react/assets/useGameAssets';
 export type { GameAssetsState } from './react/assets/useGameAssets';

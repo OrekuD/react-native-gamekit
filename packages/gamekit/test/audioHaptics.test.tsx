@@ -536,11 +536,11 @@ describe('T14.5 haptics paused and background', () => {
   it('drops haptics while paused or backgrounded', async () => {
     const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
     const h = createGameHaptics();
-    (h as unknown as { _setPaused: (p:boolean)=>void })._setPaused(true);
+    h.setPaused(true);
     let r=h.play('impact');
     assert.equal(r.played, false);
     assert.equal(r.reason, 'paused');
-    (h as unknown as { _setPaused: (p:boolean)=>void })._setPaused(false);
+    h.setPaused(false);
     (h as unknown as { _setBackgrounded: (b:boolean)=>void })._setBackgrounded(true);
     r=h.play('impact');
     assert.equal(r.played, false);
@@ -549,6 +549,147 @@ describe('T14.5 haptics paused and background', () => {
     r=h.play('impact');
     assert.equal(r.played, true);
     h.dispose();
+  });
+});
+
+describe('T20.7 public lifecycle pause (setPaused / bindLifecycle)', () => {
+  it('setPaused gates play with reason paused and unpauses cleanly', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    h.setPaused(true);
+    let r = h.play('impact');
+    assert.equal(r.played, false);
+    assert.equal(r.reason, 'paused');
+    h.setPaused(false);
+    r = h.play('impact');
+    assert.equal(r.played, true);
+    h.dispose();
+  });
+
+  it('setPaused throws after dispose', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    h.dispose();
+    assert.throws(() => h.setPaused(true), /disposed/);
+  });
+
+  it('bindLifecycle follows status transitions and detach stops following', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    type Status = 'idle' | 'running' | 'paused' | 'disposed';
+    let status: Status = 'running';
+    const listeners = new Set<(s: Status) => void>();
+    const source = {
+      getStatus: (): Status => status,
+      subscribe(listener: (s: Status) => void): () => void {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    };
+    const detach = h.bindLifecycle(source);
+    assert.equal(h.play('impact').played, true);
+    status = 'paused';
+    for (const listener of [...listeners]) listener(status);
+    const paused = h.play('impact');
+    assert.equal(paused.played, false);
+    assert.equal(paused.reason, 'paused');
+    status = 'running';
+    for (const listener of [...listeners]) listener(status);
+    await new Promise((resolve) => setTimeout(resolve, 110)); // clear the 100ms throttle
+    assert.equal(h.play('impact').played, true);
+    detach();
+    status = 'paused';
+    for (const listener of [...listeners]) listener(status);
+    await new Promise((resolve) => setTimeout(resolve, 110));
+    assert.equal(h.play('impact').played, true); // no longer following
+    h.dispose();
+  });
+
+  it('bindLifecycle applies the current status immediately', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    h.bindLifecycle({ getStatus: () => 'paused' as const, subscribe: () => () => {} });
+    const r = h.play('impact');
+    assert.equal(r.played, false);
+    assert.equal(r.reason, 'paused');
+    h.dispose();
+  });
+
+  it('bindLifecycle throws after dispose', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    h.dispose();
+    assert.throws(
+      () => h.bindLifecycle({ getStatus: () => 'running' as const, subscribe: () => () => {} }),
+      /disposed/,
+    );
+  });
+
+  it('dispose detaches the active lifecycle source (T20L-R3)', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    let listeners = 0;
+    let transitioned = false;
+    const source = {
+      getStatus: () => 'running' as const,
+      subscribe(_listener: (s: 'running') => void) {
+        listeners += 1;
+        return () => {
+          listeners -= 1;
+        };
+      },
+    };
+    h.bindLifecycle(source);
+    assert.equal(listeners, 1);
+    h.dispose();
+    assert.equal(listeners, 0, 'disposal detaches the active source');
+    transitioned = true; // a post-disposal transition must reach nobody
+    void transitioned;
+  });
+
+  it('binding a replacement detaches the previous source; detach is idempotent (T20L-R3)', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    const counts = { a: 0, b: 0 };
+    const makeSource = (key: 'a' | 'b') => ({
+      getStatus: () => 'running' as const,
+      subscribe(_listener: (s: 'running') => void) {
+        counts[key] += 1;
+        return () => {
+          counts[key] -= 1;
+        };
+      },
+    });
+    const detachA = h.bindLifecycle(makeSource('a'));
+    h.bindLifecycle(makeSource('b'));
+    assert.deepEqual(counts, { a: 0, b: 1 }, 'the replacement detaches the previous source');
+    detachA();
+    detachA(); // idempotent
+    assert.deepEqual(counts, { a: 0, b: 1 });
+    h.dispose();
+    assert.deepEqual(counts, { a: 0, b: 0 }, 'disposal detaches the replacement');
+  });
+
+  it('lifecycle transitions after disposal reach nobody (T20L-R3)', async () => {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    const h = createGameHaptics();
+    const listeners: ((s: 'running' | 'paused') => void)[] = [];
+    const source = {
+      getStatus: () => 'running' as const,
+      subscribe(listener: (s: 'running' | 'paused') => void) {
+        listeners.push(listener);
+        return () => {
+          const index = listeners.indexOf(listener);
+          if (index >= 0) listeners.splice(index, 1);
+        };
+      },
+    };
+    h.bindLifecycle(source);
+    h.dispose();
+    for (const listener of [...listeners]) listener('paused');
+    assert.equal(listeners.length, 0, 'the source holds no listeners after disposal');
   });
 });
 

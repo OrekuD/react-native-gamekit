@@ -2,11 +2,15 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
 import type {
+  GameLifecycleSource,
+  GameSessionStatus,
+} from '../../core/session/types';
+import type {
   ParticleSystem,
   ParticleUiRegistry,
 } from '../../particles/types';
 
-export type SessionStatus = 'idle' | 'running' | 'paused' | 'disposed';
+export type SessionStatus = GameSessionStatus;
 
 /**
  * What the presentation hook hands to views (T15-SF1): a SCALAR active-time
@@ -47,9 +51,16 @@ function defaultSchedule(tick: () => void): () => void {
 export function useParticlePresentation(
   system: ParticleSystem,
   options?: {
-    /** Read the owning session's current status each frame / on change. */
+    /**
+     * The owning session's lifecycle source (T20.3) — the preferred way to
+     * follow a session. Supplied by `GameView` through
+     * `useGameLifecycleSource()`. When set, it takes precedence over the
+     * legacy `sessionStatus`/`sessionSubscribe` options.
+     */
+    readonly lifecycle?: GameLifecycleSource;
+    /** Legacy reader: read the owning session's status each frame / on change. */
     readonly sessionStatus?: () => SessionStatus;
-    /** Subscribe to session status changes for reactive pause application. */
+    /** Legacy reactive subscription for session status changes. */
     readonly sessionSubscribe?: (
       listener: (status: SessionStatus) => void,
     ) => () => void;
@@ -64,8 +75,19 @@ export function useParticlePresentation(
   const binding = useMemo(() => system.bindPresentation(), [system]);
   const clock = useSharedValue(binding.activeClock);
   const registry = useSharedValue<ParticleUiRegistry>(EMPTY_REGISTRY);
+  // T20F-R2: the driver effect must key ONLY on ownership inputs. Shared
+  // values are stable in Reanimated; the refs keep the effect closures
+  // pointing at the latest instance even where mocks hand back fresh objects.
+  const clockRef = useRef(clock);
+  const registryRef = useRef(registry);
+  useEffect(() => {
+    clockRef.current = clock;
+    registryRef.current = registry;
+  }, [clock, registry]);
 
   // Latest-source refs (frame loop + reactive callbacks read these).
+  const lifecycleRef = useRef(options?.lifecycle);
+  lifecycleRef.current = options?.lifecycle;
   const sessionRef = useRef(options?.sessionStatus);
   sessionRef.current = options?.sessionStatus;
   const manualReaderRef = useRef(options?.manualPaused);
@@ -84,9 +106,14 @@ export function useParticlePresentation(
     updateScheduling(): void;
   }>({ applyPause: () => {}, syncRegistry: () => {}, updateScheduling: () => {} });
 
-  function applyCombinedPause(): void {
+  // T20F-R2: STABLE across re-renders — it reads only refs plus `system`, so
+  // the driver effect below keeps a single acquire/subscription for the
+  // lifetime of one system instead of rebinding on every parent render.
+  const applyCombinedPause = useCallback((): void => {
     if (system.status === 'disposed') return;
-    const session = sessionRef.current?.() ?? 'running';
+    const session = lifecycleRef.current
+      ? lifecycleRef.current.getStatus()
+      : (sessionRef.current?.() ?? 'running');
     const effectivePaused =
       manualPausedRef.current ||
       (manualReaderRef.current?.() ?? false) ||
@@ -94,7 +121,7 @@ export function useParticlePresentation(
       session === 'disposed';
     if (effectivePaused) system.pauseIfRunning();
     else system.resumeIfPaused();
-  }
+  }, [system]);
 
   useEffect(() => {
     const driver = binding.acquireDriver();
@@ -123,10 +150,10 @@ export function useParticlePresentation(
     };
 
     const syncRegistry = (): void => {
-      if (binding.registryRevision !== registry.value.registryRevision) {
+      if (binding.registryRevision !== registryRef.current.value.registryRevision) {
         // Bounded transfer: only on membership changes (T15-SF1). Expiration
         // bumps the revision too, so the terminal prune ships (T15-TF1).
-        registry.value = binding.buildUiRegistry();
+        registryRef.current.value = binding.buildUiRegistry();
       }
     };
 
@@ -143,13 +170,16 @@ export function useParticlePresentation(
       // ALWAYS publish the terminal scalar — including the step that
       // transitions to zero actives, so renderers hide the expired record
       // before we sleep (T15-TF1).
-      clock.value = binding.activeClock;
+      clockRef.current.value = binding.activeClock;
 
-      if (!driver.isIdle()) {
+      // T20L-R2: the frame path enforces the same running guard as the
+      // reactive path — a paused step cannot expire particles, so scheduling
+      // another frame while paused would spin the driver forever.
+      if (system.status === 'running' && !driver.isIdle()) {
         startScheduling();
         return;
       }
-      // Idle: fully stop; emissions wake us again.
+      // Paused or idle: fully stop; resume transitions and emissions restart us.
       stopScheduling();
     };
 
@@ -180,29 +210,42 @@ export function useParticlePresentation(
     // Initial synchronous application at bind time.
     applyCombinedPause();
 
-    const unsubscribeSession =
-      options?.sessionSubscribe !== undefined
-        ? options.sessionSubscribe((status) => {
-            sessionRef.current = () => status;
-            controlRef.current.updateScheduling();
-          })
-        : undefined;
-
     stepFrame();
 
     return () => {
       cancelled = true;
       driver.setWakeListener(null);
-      unsubscribeSession?.();
       stopScheduling();
       driver.release();
     };
-  }, [system, binding, clock, applyCombinedPause]);
+  }, [system, binding, applyCombinedPause]);
+
+  // T20F-R2: the lifecycle subscription is keyed by the SOURCE identity, not
+  // by render — one subscribe/detach per system generation. Status changes
+  // route through the effect-owned control so pause transitions stay
+  // synchronous without rebinding the driver.
+  const lifecycleSource = options?.lifecycle ?? null;
+  const legacySubscribe = options?.sessionSubscribe ?? null;
+  useEffect(() => {
+    const onSessionStatus = (status: SessionStatus): void => {
+      sessionRef.current = () => status;
+      controlRef.current.updateScheduling();
+    };
+    const detach =
+      lifecycleSource !== null
+        ? lifecycleSource.subscribe(onSessionStatus)
+        : legacySubscribe?.(onSessionStatus);
+    // T20F-R2 re-review: a REPLACED source may already be paused (or running)
+    // — apply its current status immediately instead of waiting for its next
+    // transition, so paused emissions are never accepted in between.
+    controlRef.current.updateScheduling();
+    return detach;
+  }, [lifecycleSource, legacySubscribe]);
 
   // Initial registry transfer at bind time.
   useEffect(() => {
-    registry.value = binding.buildUiRegistry();
-  }, [binding, registry]);
+    registryRef.current.value = binding.buildUiRegistry();
+  }, [binding]);
 
   const setManualPaused = useCallback(
     (paused: boolean): void => {

@@ -7,6 +7,7 @@ import type {
   ParticleUiRegistry,
   ParticleDriverHandle,
   ParticleEffectDefinition,
+  ParticleEffectDefinitionInput,
   ParticlePresentationBinding,
   ParticleSlotSnapshot,
   ParticleSystem,
@@ -74,7 +75,12 @@ interface MutableSlot {
   spawnSequence: number;
 }
 
-export function createParticleSystem<TEffects extends Record<string, ParticleEffectDefinition>>(
+// T20A-R3: accept raw author definitions or already-normalized definitions
+// (normalized definitions are assignable to the author-input union); every
+// value is validated, cloned, and frozen at this boundary.
+export function createParticleSystem<
+  TEffects extends Record<string, ParticleEffectDefinitionInput>,
+>(
   options: ParticleSystemOptions & { effects: TEffects },
 ): ParticleSystem<TEffects> {
   if (options === null || typeof options !== 'object') {

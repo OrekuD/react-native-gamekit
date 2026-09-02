@@ -150,7 +150,10 @@ export function sampleEmission(
   const x = e.originX + e.vx * age + 0.5 * gravityX * age * age;
   const y = e.originY + e.vy * age + 0.5 * gravityY * age * age;
   const rotation = e.rotation + e.rotationSpeed * age;
-  const scale = e.scaleStart + (e.scaleEnd - e.scaleStart) * t;
+  // T20A-R1: definitions guarantee non-negative scale. The clamp keeps any
+  // legacy negative `scaleOverLife` value DEFINED (collapse to a point)
+  // instead of handing Skia a signed radius or rectangle extent.
+  const scale = Math.max(0, e.scaleStart + (e.scaleEnd - e.scaleStart) * t);
   const opacity = fadeOut ? 1 - t : 1;
   return { x, y, rotation, scale, opacity, alive: true };
 }
@@ -298,7 +301,8 @@ function SpriteSlots(props: {
               x,
               y,
               rotation: e.rotation + e.rotationSpeed * age,
-              scale: e.scaleStart + (e.scaleEnd - e.scaleStart) * t,
+              // T20A-R1: non-negative clamp — see the shape sampler note.
+              scale: Math.max(0, e.scaleStart + (e.scaleEnd - e.scaleStart) * t),
               drawWidth,
               drawHeight,
               frameWidth: frameRect.width,

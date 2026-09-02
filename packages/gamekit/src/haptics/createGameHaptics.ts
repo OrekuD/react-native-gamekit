@@ -1,6 +1,7 @@
 import { createHapticsInstallationError, GameHapticsError } from './errors';
 import { loadPulsar } from './resolver';
 import type { CreateGameHapticsOptions, GameHaptics, HapticPreset, HapticsResult } from './types';
+import type { GameLifecycleSource } from '../core/session/types';
 
 const PRESETS: readonly HapticPreset[] = [
   'impact',
@@ -90,6 +91,10 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   let paused = false;
   let backgrounded = false;
   let lastPlayAt = 0;
+  // T20L-R3: exactly one active lifecycle source per haptics instance. The
+  // active detach is retained so replacement swaps sources, repeated detach
+  // is idempotent, and disposal detaches before everything else.
+  let lifecycleDetach: (() => void) | null = null;
   const MIN_INTERVAL_MS = 100;
 
   // AppState integration (best-effort)
@@ -109,7 +114,7 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   } catch {}
 
   const haptics: GameHaptics & {
-    _setPaused?: (p:boolean)=>void;
+    /** Test-only backdoor for the AppState path; never part of the public type. */
     _setBackgrounded?: (b:boolean)=>void;
   } = {
     play(preset: HapticPreset): HapticsResult {
@@ -157,14 +162,45 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
       return muted;
     },
 
+    setPaused(next: boolean): void {
+      if (disposed) throw new GameHapticsError('GameHaptics is disposed');
+      paused = Boolean(next);
+    },
+
+    bindLifecycle(source: GameLifecycleSource): () => void {
+      if (disposed) throw new GameHapticsError('GameHaptics is disposed');
+      // One active source: a replacement detaches the previous one first.
+      lifecycleDetach?.();
+      lifecycleDetach = null;
+      // Apply the current status immediately, then follow transitions.
+      // AppState backgrounding stays independent (separate flag).
+      paused = source.getStatus() !== 'running';
+      // GameLifecycleSource.subscribe returns a bare detach function (T20.3).
+      const sourceDetach = source.subscribe((status) => {
+        paused = status !== 'running';
+      });
+      let detached = false;
+      const detach = (): void => {
+        if (detached) return;
+        detached = true;
+        sourceDetach();
+        if (lifecycleDetach === detach) lifecycleDetach = null;
+      };
+      lifecycleDetach = detach;
+      return detach;
+    },
+
     dispose(): void {
       if (disposed) return;
       disposed = true;
+      // T20L-R3: detach the active lifecycle source BEFORE removing the
+      // AppState listener so the session retains no closure.
+      lifecycleDetach?.();
+      lifecycleDetach = null;
       if (appStateSub) { try { appStateSub.remove(); } catch {} appStateSub=null; }
     },
   };
 
-  (haptics as unknown as { _setPaused: (p:boolean)=>void })._setPaused = (p:boolean)=>{ paused = p; };
   (haptics as unknown as { _setBackgrounded: (b:boolean)=>void })._setBackgrounded = (b:boolean)=>{ backgrounded = b; };
 
   return haptics;

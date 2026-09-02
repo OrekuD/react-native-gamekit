@@ -96,18 +96,47 @@ Haptics drop transient requests while `paused`, `backgrounded`, `disposed`, or `
 
 - `disposed` → `{ reason: 'disposed' }`
 - `muted` → `{ reason: 'muted' }`
-- `paused` or `backgrounded` (AppState or explicit `_setPaused`) → `{ reason: 'paused' }`
+- `paused` or `backgrounded` (AppState or `setPaused`) → `{ reason: 'paused' }`
 - `throttled` → `{ reason: 'throttled' }`
 
-AppState is observed best-effort. When the app backgrounds, haptics are suppressed (`paused`) and resume on `active`. `HapticSupport` is queried via `Pulsar_hapticSupport()` when available; a `NO_SUPPORT` device makes every `isSupported` and `play` return `unsupported`. For session lifecycle, drive a helper explicitly:
+AppState is observed best-effort. When the app backgrounds, haptics are
+suppressed (`paused`) and resume on `active`. `HapticSupport` is queried via
+`Pulsar_hapticSupport()` when available; a `NO_SUPPORT` device makes every
+`isSupported` and `play` return `unsupported`.
+
+Session lifecycle is a public concern (T20.7). Either set the pause gate
+explicitly:
 
 ```ts
 const statusSub = session.addStatusListener((status) => {
-  (haptics as unknown as { _setPaused: (p:boolean)=>void })._setPaused(status === 'paused');
+  haptics.setPaused(status !== 'running');
 });
 ```
 
-In production code prefer an explicit wrapper around `haptics.play` that checks your game state before calling.
+or — preferred — bind the haptics to the session's lifecycle source once;
+the binder applies the current status immediately, pauses on every
+non-running transition, resumes on `running`, and returns a detach function.
+One lifecycle source is active at a time: binding a replacement detaches the
+previous source, the returned detach is idempotent, and `dispose()` detaches
+the active source. AppState backgrounding stays independent from the session
+source:
+
+```ts
+const lifecycle = useGameLifecycleSource(); // supplied by the owning GameView
+const detachRef = useRef<(() => void) | null>(null);
+useEffect(() => {
+  if (lifecycle === undefined) return undefined;
+  detachRef.current?.();
+  detachRef.current = haptics.bindLifecycle(lifecycle);
+  return () => {
+    detachRef.current?.();
+    detachRef.current = null;
+  };
+}, [haptics, lifecycle]);
+```
+
+In production code prefer an explicit wrapper around `haptics.play` that
+checks your game state before calling.
 
 ## Example: brick hit
 

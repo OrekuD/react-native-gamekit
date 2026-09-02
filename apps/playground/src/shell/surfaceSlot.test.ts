@@ -43,6 +43,7 @@ function openReady(
   gameId = 'brick-breaker',
   pointer = true,
   pointerAction?: string,
+  presentationDispose?: () => void,
 ): SurfaceEvent {
   return {
     kind: 'open-ready',
@@ -54,6 +55,7 @@ function openReady(
     content: CONTENT,
     pointer,
     pointerAction,
+    ...(presentationDispose ? { presentationDispose } : {}),
   };
 }
 
@@ -152,7 +154,7 @@ describe('surface state machine (T8 canonical transitions)', () => {
       neutralRenderer: RENDERER,
     }).slot;
     const committed = reduceSurfaceState(closed, commit(3));
-    assert.deepEqual(committed.disposable, [session('A')]);
+    assert.deepEqual(committed.disposable.map((entry) => entry.session), [session('A')]);
     assert.equal(committed.slot.retiring.length, 0);
     const again = reduceSurfaceState(committed.slot, commit(3));
     assert.equal(again.disposable.length, 0, 'repeated acknowledgment is a no-op');
@@ -169,8 +171,92 @@ describe('surface state machine (T8 canonical transitions)', () => {
     }
     assert.equal(slot.retiring.length, 2, 'superseded sessions are held, not dropped');
     const settled = reduceSurfaceState(slot, commit(4));
-    assert.deepEqual(new Set(settled.disposable), new Set([opened[0], opened[1]]));
+    assert.deepEqual(new Set(settled.disposable.map((entry) => entry.session)), new Set([opened[0], opened[1]]));
     assert.equal(settled.slot.retiring.length, 0);
+  });
+
+  it('the presentation binding rides the slot into retirement and drains exactly once (T20.3)', () => {
+    let disposeCalls = 0;
+    const dispose = (): void => {
+      disposeCalls += 1;
+    };
+    const open = reduceSurfaceState(
+      neutral(),
+      openReady(1, 2, session('A'), 'brick-breaker', true, undefined, dispose),
+    ).slot;
+    assert.equal(open.presentationDispose, dispose, 'the binding lives on the slot');
+    const closed = reduceSurfaceState(open, {
+      kind: 'close',
+      generation: 3,
+      neutralSession: NEUTRAL_SESSION as never,
+      neutralRenderer: RENDERER,
+    }).slot;
+    assert.equal(closed.retiring[0]?.presentationDispose, dispose, 'retirement carries the binding');
+    assert.equal(disposeCalls, 0, 'nothing disposes before the commit');
+    const committed = reduceSurfaceState(closed, commit(3));
+    assert.equal(committed.disposable.length, 1);
+    assert.equal(committed.disposable[0]?.presentationDispose, dispose);
+    assert.equal(committed.slot.presentationDispose, undefined, 'the neutral slot carries none');
+    committed.disposable.forEach((entry) => entry.presentationDispose?.());
+    assert.equal(disposeCalls, 1);
+  });
+
+  it('run attach and detach carry the base presentation binding forward (T20.3)', () => {
+    const dispose = (): void => {};
+    let slot = reduceSurfaceState(
+      neutral(),
+      openReady(1, 2, session('A'), 'brick-breaker', true, undefined, dispose),
+    ).slot;
+    slot = reduceSurfaceState(slot, {
+      kind: 'run-attached',
+      generation: 3,
+      attachment: { session: session('A') as never, pointer: {} as never, view: {} as never },
+    }).slot;
+    assert.equal(slot.presentationDispose, dispose, 'attaching a run keeps the binding');
+    slot = reduceSurfaceState(slot, {
+      kind: 'run-detached',
+      generation: 4,
+      session: session('A') as never,
+    }).slot;
+    assert.equal(slot.presentationDispose, dispose, 'detaching a run keeps the binding');
+  });
+
+  it('asset readiness publishes the catalog pointer contract, not forced input (T20F-R1)', () => {
+    const dispose = (): void => {};
+    const loading = reduceSurfaceState(neutral(), openLoading(5, 2, session('placeholder'))).slot;
+    assert.equal(loading.pointer, false, 'the loading slot stays pointer-disabled');
+    const ready = reduceSurfaceState(loading, {
+      kind: 'asset-ready',
+      requestId: 5,
+      generation: 3,
+      session: session('real') as never,
+      renderer: RENDERER,
+      pointer: false,
+      pointerAction: 'secondary',
+      assets: { descriptor: 'lease' },
+      presentationDispose: dispose,
+    }).slot;
+    assert.equal(ready.pointer, false, 'a pointer-disabled catalog entry stays disabled');
+    assert.equal(ready.pointerAction, 'secondary', 'the custom action is preserved');
+  });
+
+  it('asset readiness publishes the bound renderer and disposer atomically (T20L-R1)', () => {
+    const dispose = (): void => {};
+    const wrapped = (() => null) as never;
+    const loading = reduceSurfaceState(neutral(), openLoading(5, 2, session('placeholder'))).slot;
+    assert.equal(loading.renderer, RENDERER, 'the loading slot keeps the original renderer');
+    const ready = reduceSurfaceState(loading, {
+      kind: 'asset-ready',
+      requestId: 5,
+      generation: 3,
+      session: session('real') as never,
+      renderer: wrapped,
+      pointer: true,
+      assets: { descriptor: 'lease' },
+      presentationDispose: dispose,
+    }).slot;
+    assert.equal(ready.renderer, wrapped, 'the ready slot publishes the bound renderer');
+    assert.equal(ready.presentationDispose, dispose, 'the disposer is atomic with the session');
   });
 
   it('a stale asset-ready cannot replace the current request', () => {
@@ -180,6 +266,8 @@ describe('surface state machine (T8 canonical transitions)', () => {
       requestId: 4,
       generation: 9,
       session: session('stale-real') as never,
+      renderer: RENDERER,
+      pointer: false,
       assets: { descriptor: 'stale-lease' },
     });
     assert.equal(stale.slot, loading, 'stale readiness leaves the slot untouched');
@@ -193,6 +281,8 @@ describe('surface state machine (T8 canonical transitions)', () => {
       requestId: 1,
       generation: 5,
       session: session('B') as never,
+      renderer: RENDERER,
+      pointer: true,
       assets: { descriptor: 'lease' },
     });
     assert.equal(late.slot, ready);
@@ -207,11 +297,16 @@ describe('surface state machine (T8 canonical transitions)', () => {
       requestId: 5,
       generation: 3,
       session: real as never,
+      renderer: RENDERER,
+      pointer: true,
+      pointerAction: 'primary',
       assets,
     }).slot;
     assert.equal(ready.status, 'ready');
     assert.equal(ready.session, real, 'never the placeholder');
     assert.equal(ready.assets, assets);
+    assert.equal(ready.pointer, true, 'pointer follows the catalog declaration');
+    assert.equal(ready.pointerAction, 'primary');
     assert.equal(ready.pointer, true);
     assert.deepEqual(ready.retiring.map((r) => r.session), [session('placeholder')]);
   });
@@ -273,7 +368,7 @@ describe('surface state machine (T8 canonical transitions)', () => {
     assert.equal(detached.slot.run, undefined);
     assert.equal(detached.slot.retiring.length, 2);
     const settled = reduceSurfaceState(detached.slot, commit(5));
-    assert.deepEqual(new Set(settled.disposable), new Set([run1Session, run2Session]));
+    assert.deepEqual(new Set(settled.disposable.map((entry) => entry.session)), new Set([run1Session, run2Session]));
     assert.equal(settled.slot.generation, 5);
   });
 
@@ -373,6 +468,8 @@ describe('camera definition through the surface (T12-F1)', () => {
       requestId: 2,
       generation: 3,
       session: session('play') as never,
+      renderer: RENDERER,
+      pointer: true,
       assets: { descriptor: {} },
       camera2D: CAMERA_DEF as never,
     };

@@ -44,6 +44,22 @@ const drops = defineParticleEffect({
   fadeOut: true,
 });
 
+// T20.1: a real shrinking effect — ranged start/end envelope with
+// deterministic per-particle variation (start sampled before end).
+const embers = defineParticleEffect({
+  capacity: 40,
+  space: 'screen',
+  overflow: 'recycle-oldest',
+  particle: { kind: 'shape', shape: 'circle', radius: 3, color: '#fbbf24' },
+  burst: { count: 14 },
+  lifetimeSeconds: { min: 0.6, max: 1.2 },
+  speed: { min: 20, max: 70 },
+  direction: { min: -Math.PI, max: 0 },
+  gravity: { x: 0, y: -40 },
+  fadeOut: true,
+  scale: { start: { min: 0.85, max: 1.15 }, end: { min: 0.1, max: 0.3 } },
+});
+
 // T15-RF4: a real bundled sheet drives the Atlas sprite path.
 const particleAssets = defineAssets({
   effects: {
@@ -94,7 +110,7 @@ export default function ParticleLabScreen({ game, onExit }: PlaygroundGameConten
   const [paused, setPaused] = useState(false);
   // Created once per mount; disposed exactly once on unmount.
   const [system] = useState<ReturnType<typeof createParticleSystem>>(() =>
-    createParticleSystem({ effects: { burst, drops, sparks, worldBurst } }),
+    createParticleSystem({ effects: { burst, drops, sparks, worldBurst, embers } }),
   );
   const assetsState = useGameAssets(particleAssets, { groups: ['effects'] });
   useEffect(() => () => system.dispose(), [system]);
@@ -202,6 +218,15 @@ export default function ParticleLabScreen({ game, onExit }: PlaygroundGameConten
     setStatus(`world burst — active ${system.getDiagnostics('worldBurst').active}`);
   };
 
+  const emitEmbers = (): void => {
+    if (system.status !== 'running') return;
+    system.emit('embers', {
+      position: { x: 60 + Math.random() * 200, y: 300 + Math.random() * 140 },
+      seed: Math.floor(Date.now() * 31) >>> 0,
+    });
+    setStatus(`embers — active ${system.getDiagnostics('embers').active}`);
+  };
+
   // Diagnostics sampled during render are fine here because forceTick runs at ~8Hz.
   const d1 = system.getDiagnostics('burst');
   const d2 = system.getDiagnostics('drops');
@@ -211,6 +236,7 @@ export default function ParticleLabScreen({ game, onExit }: PlaygroundGameConten
       <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
         <ParticleView system={system} effect="burst" width={320} height={480} presentation={presentation} />
         <ParticleView system={system} effect="drops" width={320} height={480} presentation={presentation} />
+        <ParticleView system={system} effect="embers" width={320} height={480} presentation={presentation} />
         {assetsState.status === 'ready' ? (
           <ParticleView
             system={system}
@@ -320,6 +346,10 @@ export default function ParticleLabScreen({ game, onExit }: PlaygroundGameConten
           <Pressable onPress={emitDrops} style={styles.button} accessibilityLabel="Emit drops">
             <Text style={styles.buttonText}>Drops</Text>
             <Text style={styles.buttonSub}>drop-new</Text>
+          </Pressable>
+          <Pressable onPress={emitEmbers} style={styles.button} accessibilityLabel="Emit embers">
+            <Text style={styles.buttonText}>Embers</Text>
+            <Text style={styles.buttonSub}>shrink</Text>
           </Pressable>
           <Pressable onPress={emitSparks} style={styles.button} accessibilityLabel="Emit sparks (Atlas sprite)">
             <Text style={styles.buttonText}>Sparks</Text>

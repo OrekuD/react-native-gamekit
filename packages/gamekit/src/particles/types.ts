@@ -10,6 +10,45 @@ export interface Range {
   readonly max: number;
 }
 
+/**
+ * One author-input endpoint of an explicit scale envelope (T20.1): a fixed
+ * scalar or a `{ min, max }` sampling range for deterministic per-particle
+ * variation. `defineParticleEffect` normalizes scalars into frozen fixed
+ * ranges (T20A-R3).
+ */
+export type ParticleScaleEndpointInput = number | Range;
+
+/**
+ * Author-input scale envelope (T20.1): scale begins at `start` and ends at
+ * `end`, interpolated linearly from active age. Mutually exclusive with the
+ * legacy `scaleOverLife` range; the runtime rejects definitions that carry
+ * both (T20A-R3 keeps that check in the type layer as well).
+ */
+export interface ParticleScaleEnvelopeInput {
+  readonly start: ParticleScaleEndpointInput;
+  readonly end: ParticleScaleEndpointInput;
+}
+
+/**
+ * Normalized envelope endpoint (T20A-R3): always a frozen `{ min, max }`
+ * range — scalar author inputs never appear on a normalized definition.
+ */
+export type ParticleScaleEndpoint = Range;
+
+/**
+ * Normalized explicit scale envelope (T20.1): scale begins at `start` and
+ * ends at `end`, interpolated linearly from active age. Both endpoints are
+ * sampled independently (start first, then end) so shrinking, growth, and
+ * fixed scales are all directly expressible. Endpoints are non-negative and
+ * finite; zero collapses the particle to a point. Negative scale has no
+ * defined rendering semantics and is rejected at definition time (T20A-R1).
+ * Mutually exclusive with the legacy `scaleOverLife` range.
+ */
+export interface ParticleScaleEnvelope {
+  readonly start: ParticleScaleEndpoint;
+  readonly end: ParticleScaleEndpoint;
+}
+
 export interface SpriteParticleConfig {
   readonly kind: 'sprite';
   readonly sheet: string;
@@ -28,7 +67,7 @@ export interface ShapeParticleConfig {
 
 export type ParticleConfig = SpriteParticleConfig | ShapeParticleConfig;
 
-export interface ParticleEffectDefinition {
+export interface ParticleEffectDefinitionFields {
   readonly capacity: number;
   readonly space: ParticleSpace;
   readonly overflow: ParticleOverflow;
@@ -39,9 +78,57 @@ export interface ParticleEffectDefinition {
   readonly direction?: Range;
   readonly gravity: Point2D;
   readonly fadeOut: boolean;
-  readonly scaleOverLife?: Range;
   readonly rotation?: Range;
 }
+
+/**
+ * Normalized effect definition (T20A-R3): the scale fields are an exclusive
+ * union — a normalized definition carries the explicit `scale` envelope, the
+ * legacy `scaleOverLife` range, or neither, never both. Declared as a flat
+ * union (not an intersection) so normalized definitions remain assignable to
+ * the author-input type at every call site.
+ */
+interface NormalizedExplicitScale extends ParticleEffectDefinitionFields {
+  readonly scale: ParticleScaleEnvelope;
+  readonly scaleOverLife?: undefined;
+}
+
+interface NormalizedLegacyScale extends ParticleEffectDefinitionFields {
+  readonly scale?: undefined;
+  readonly scaleOverLife: Range;
+}
+
+interface NormalizedNoScale extends ParticleEffectDefinitionFields {
+  readonly scale?: undefined;
+  readonly scaleOverLife?: undefined;
+}
+
+export type ParticleEffectDefinition =
+  | NormalizedExplicitScale
+  | NormalizedLegacyScale
+  | NormalizedNoScale;
+
+/**
+ * Authoring shape for `defineParticleEffect` (T20A-R3): identical to the
+ * normalized definition except that scale envelope endpoints accept scalars,
+ * and legacy versus explicit scale authoring is an exclusive union — a
+ * definition carrying both `scale` and `scaleOverLife` fails to compile.
+ * The runtime boundary still validates every JavaScript input.
+ */
+export type ParticleEffectDefinitionInput = Omit<
+  ParticleEffectDefinition,
+  'scale' | 'scaleOverLife'
+> &
+  (
+    | {
+        readonly scale?: ParticleScaleEnvelopeInput | undefined;
+        readonly scaleOverLife?: undefined;
+      }
+    | {
+        readonly scale?: undefined;
+        readonly scaleOverLife?: Range | undefined;
+      }
+  );
 
 export interface ParticleEmitCommand {
   /** Center position of the burst origin (the anchor convention for every kind). */
@@ -50,7 +137,11 @@ export interface ParticleEmitCommand {
 }
 
 export interface ParticleSystemOptions {
-  readonly effects: Record<string, ParticleEffectDefinition>;
+  /**
+   * Raw author definitions or already-normalized definitions. Every value is
+   * validated, cloned, and frozen at the system boundary (T15-F6).
+   */
+  readonly effects: Record<string, ParticleEffectDefinitionInput>;
 }
 
 /**
@@ -85,7 +176,7 @@ export interface ParticleSlotSnapshot {
 }
 
 export interface ParticleSystem<
-  TEffects extends Record<string, ParticleEffectDefinition> = Record<string, ParticleEffectDefinition>,
+  TEffects extends Record<string, ParticleEffectDefinitionInput> = Record<string, ParticleEffectDefinition>,
 > {
   /** Validate + place a burst. Throws for unknown effect or malformed command, even while paused. */
   emit<K extends keyof TEffects & string>(effect: K, command: ParticleEmitCommand): void;

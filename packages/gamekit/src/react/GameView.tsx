@@ -28,6 +28,7 @@ import type { GameCamera2DDefinition } from './camera2d/defineGameCamera2D';
 import { usePresentedCameraBinding } from './camera2d/usePresentedCameraBinding';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
+import { createGameLifecycleSource, GameLifecycleProvider } from './lifecycleSource';
 import type { GameViewInstrumentation } from './instrumentation';
 import { bindingForViewport, type ViewportBinding } from './viewportBinding';
 
@@ -317,6 +318,10 @@ export function GameView<
     () => ({ presented: camera2D === undefined ? undefined : presentedCamera }),
     [camera2D, presentedCamera],
   );
+  // T20.3: one lifecycle source per session — replacement sessions replace
+  // the source, so consumers bound to the old generation never observe the
+  // new one (the presentation subtree is remounted per session, RF6).
+  const lifecycle = useMemo(() => createGameLifecycleSource(game), [game]);
 
   useEffect(() => {
     instrumentationRef.current = instrumentation;
@@ -336,14 +341,15 @@ export function GameView<
   return (
     <GameViewportContext.Provider value={viewportContext}>
       <GameCameraContext.Provider value={cameraContext}>
-        <View
-          style={[styles.surface, style]}
-          onLayout={(event) => {
-            const { width, height } = event.nativeEvent.layout;
-            binding.setSurfaceSize({ width, height });
-            viewportValue.value = binding.resolved;
-          }}
-        >
+        <GameLifecycleProvider value={lifecycle}>
+          <View
+            style={[styles.surface, style]}
+            onLayout={(event) => {
+              const { width, height } = event.nativeEvent.layout;
+              binding.setSurfaceSize({ width, height });
+              viewportValue.value = binding.resolved;
+            }}
+          >
           <Canvas style={StyleSheet.absoluteFill}>
             {/* RF6/T8.6: the per-session presentation is keyed by an explicit
                 presentation key when provided, otherwise by a stable
@@ -366,6 +372,7 @@ export function GameView<
             </View>
           )}
         </View>
+        </GameLifecycleProvider>
       </GameCameraContext.Provider>
     </GameViewportContext.Provider>
   );

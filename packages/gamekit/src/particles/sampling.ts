@@ -46,8 +46,13 @@ export interface SampledInitial {
 
 /**
  * Field consumption order is fixed and documented:
- * lifetime -> speed -> direction -> rotation -> rotationSpeed -> scaleStart.
+ * lifetime -> speed -> direction -> rotation -> rotationSpeed -> scaleStart
+ * -> scaleEnd (envelope only; the legacy `scaleOverLife` range draws once).
  */
+function toRange(endpoint: number | { min: number; max: number }): { min: number; max: number } {
+  return typeof endpoint === 'number' ? { min: endpoint, max: endpoint } : endpoint;
+}
+
 export function sampleInitialSlot(
   rng: () => number,
   def: ParticleEffectDefinition,
@@ -61,8 +66,18 @@ export function sampleInitialSlot(
   const direction = sampleRange(rng, directionRange);
   const rotation = def.rotation ? sampleRange(rng, def.rotation) : 0;
   const rotationSpeed = def.rotation ? sampleRange(rng, { min: -2, max: 2 }) : 0;
-  const scaleRange = def.scaleOverLife ?? { min: 1, max: 1 };
-  const scaleStart = sampleRange(rng, scaleRange);
+  let scaleStart: number;
+  let scaleEnd: number;
+  if (def.scale) {
+    // T20.1 explicit envelope: both endpoints are sampled, start before end.
+    scaleStart = sampleRange(rng, toRange(def.scale.start));
+    scaleEnd = sampleRange(rng, toRange(def.scale.end));
+  } else {
+    // Legacy semantics (byte-for-byte): one draw for the start, max as end.
+    const scaleRange = def.scaleOverLife ?? { min: 1, max: 1 };
+    scaleStart = sampleRange(rng, scaleRange);
+    scaleEnd = scaleRange.max;
+  }
   const vx = Math.cos(direction) * speed;
   const vy = Math.sin(direction) * speed;
   return {
@@ -75,7 +90,7 @@ export function sampleInitialSlot(
     rotation,
     rotationSpeed,
     scaleStart,
-    scaleEnd: scaleRange.max,
+    scaleEnd,
     scale: scaleStart,
     opacity: 1,
     color: def.particle.kind === 'shape' && def.particle.color ? def.particle.color : '#ffffff',

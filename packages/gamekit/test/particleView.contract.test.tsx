@@ -21,8 +21,12 @@ function host(tag: string) {
 }
 
 const recordedCircles: { x: number; y: number; r: number }[] = [];
+// T20A-RR1: RSXform buffer writes (scos, ssin, tx, ty) recorded so sprite
+// transform scale can be asserted through the mounted Atlas path.
+const recordedXforms: { a: number; b: number; c: number; d: number }[] = [];
 function resetCanvasRecording(): void {
   recordedCircles.length = 0;
+  recordedXforms.length = 0;
 }
 
 mock.module('react-native', {
@@ -50,7 +54,9 @@ mock.module('@shopify/react-native-skia', {
     }),
     useRSXformBuffer: (capacity: number) => ({
       value: Array.from({ length: capacity }, () => ({
-        set: (_a: number, _b: number, _c: number, _d: number) => {},
+        set: (a: number, b: number, c: number, d: number) => {
+          recordedXforms.push({ a, b, c, d });
+        },
       })),
     }),
     useColorBuffer: (capacity: number) => ({
@@ -373,6 +379,445 @@ describe('T15-RF1 analytic clock drives positions through one registry', () => {
     system.dispose();
   });
 });
+
+describe('T20.1 scale envelope through the mounted shape renderer', () => {
+  it('a real shrinking effect shrinks monotonically through ParticleView', async () => {
+    const def = defineParticleEffect({
+      capacity: 4,
+      space: 'screen',
+      overflow: 'drop-new',
+      particle: { kind: 'shape', shape: 'circle', radius: 4 },
+      burst: { count: 1 },
+      lifetimeSeconds: { min: 2, max: 2 },
+      speed: { min: 0, max: 0 },
+      gravity: { x: 0, y: 0 },
+      fadeOut: false,
+      scale: { start: 1, end: 0.2 },
+    });
+    const system = createParticleSystem({ effects: { fx: def } });
+    const binding = system.bindPresentation();
+    system.emit('fx', { position: { x: 50, y: 50 }, seed: 3 });
+
+    // ONE registry transfer; scale derives analytically from the active clock.
+    const registry = { value: binding.buildUiRegistry() };
+    const seenR: number[] = [];
+    for (const dt of [0, 1, 0.999]) {
+      binding.tick(dt);
+      resetCanvasRecording();
+      const holder = { clock: { value: binding.activeClock }, registry };
+      const renderer = await mount(
+        createElement(ParticleView as never, { system, effect: 'fx', width: 100, height: 100, presentation: holder } as never),
+      );
+      void renderer;
+      const last = recordedCircles[recordedCircles.length - 1]!;
+      seenR.push(last.r);
+      renderer.unmount();
+    }
+    assert.equal(seenR.length, 3);
+    // r = radius · scale: start 4 → midpoint 2.4 → near-expiry ≈ 0.8016.
+    assert.ok(Math.abs(seenR[0]! - 4) < 1e-6, `age zero must use the start scale, got ${seenR[0]}`);
+    assert.ok(Math.abs(seenR[1]! - 2.4) < 1e-6, `midpoint must interpolate, got ${seenR[1]}`);
+    assert.ok(
+      seenR[2]! < seenR[1]! && Math.abs(seenR[2]! - 0.8016) <= 1e-3,
+      `near expiry must approach the end scale, got ${seenR[2]}`,
+    );
+    system.dispose();
+  });
+});
+
+describe('T20A-RR1 legacy negative-scale clamp through mounted renderers', () => {
+  // A legacy definition whose ENTIRE scaleOverLife range is negative: the
+  // boundary still accepts it (compat), and the renderer clamp must collapse
+  // it to a point instead of passing signed geometry to Skia.
+  const legacyNegative = {
+    capacity: 2,
+    space: 'screen',
+    overflow: 'drop-new',
+    burst: { count: 1 },
+    lifetimeSeconds: { min: 2, max: 2 },
+    speed: { min: 0, max: 0 },
+    gravity: { x: 0, y: 0 },
+    fadeOut: false,
+    scaleOverLife: { min: -1, max: -0.4 },
+  } as const;
+
+  it('shape: a fully negative legacy scaleOverLife renders a zero radius', async () => {
+    const def = defineParticleEffect({
+      ...legacyNegative,
+      particle: { kind: 'shape', shape: 'circle', radius: 4 },
+    });
+    const system = createParticleSystem({ effects: { fx: def } });
+    try {
+      system.emit('fx', { position: { x: 50, y: 50 }, seed: 71 });
+      const binding = system.bindPresentation();
+      binding.tick(1.0); // midlife: sampled scale is -0.7 before the clamp
+      const reg = { value: binding.buildUiRegistry() };
+      const holder = { clock: { value: binding.activeClock }, registry: reg };
+      resetCanvasRecording();
+      const renderer = await mount(
+        createElement(ParticleView as never, { system, effect: 'fx', width: 100, height: 100, presentation: holder } as never),
+      );
+      void renderer;
+      assert.ok(recordedCircles.length >= 1, 'the alive particle must draw');
+      assert.equal(recordedCircles[recordedCircles.length - 1]!.r, 0);
+      renderer.unmount();
+    } finally {
+      system.dispose();
+    }
+  });
+
+  it('sprite: a fully negative legacy scaleOverLife renders a zero transform scale', async () => {
+    const def = defineParticleEffect({
+      ...legacyNegative,
+      particle: { kind: 'sprite', sheet: 's', frame: 'f', size: { width: 24, height: 24 } },
+    });
+    const system = createParticleSystem({ effects: { sp: def } });
+    try {
+      system.emit('sp', { position: { x: 50, y: 50 }, seed: 72 });
+      const binding = system.bindPresentation();
+      binding.tick(1.0); // midlife: sampled scale is -0.7 before the clamp
+      const reg = { value: binding.buildUiRegistry() };
+      const holder = { clock: { value: binding.activeClock }, registry: reg };
+      resetCanvasRecording();
+      const renderer = await mount(
+        createElement(ParticleView as never, {
+          system, effect: 'sp', width: 100, height: 100, presentation: holder,
+          spriteSource: { image: { __image: true } as never, frame: { x: 0, y: 0, width: 32, height: 32 } },
+        } as never),
+      );
+      void renderer;
+      assert.ok(recordedXforms.length >= 1, 'the alive sprite must write its transform');
+      const xf = recordedXforms[recordedXforms.length - 1]!;
+      // Rotation 0 → scos = scale·cos(0) = 0 and ssin = scale·sin(0) = 0;
+      // the pivot terms vanish, so the transform stays at the sampled center.
+      assert.equal(xf.a, 0);
+      assert.equal(xf.b, 0);
+      assert.equal(xf.c, 50);
+      assert.equal(xf.d, 50);
+      renderer.unmount();
+    } finally {
+      system.dispose();
+    }
+  });
+});
+
+describe('T20.3 lifecycle source drives particle presentation', () => {
+  type LifecycleStatus = 'idle' | 'running' | 'paused' | 'disposed';
+  interface FakeLifecycle {
+    getStatus(): LifecycleStatus;
+    subscribe(listener: (status: LifecycleStatus) => void): () => void;
+  }
+  function makeLifecycle(initial: LifecycleStatus = 'running') {
+    let status: LifecycleStatus = initial;
+    const listeners = new Set<(s: LifecycleStatus) => void>();
+    return {
+      source: {
+        getStatus: (): LifecycleStatus => status,
+        subscribe(listener: (s: LifecycleStatus) => void): () => void {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      } as FakeLifecycle,
+      transition(next: LifecycleStatus): void {
+        status = next;
+        for (const listener of [...listeners]) listener(next);
+      },
+    };
+  }
+
+  function Probe({ system, lifecycle, schedule }: {
+    system: ReturnType<typeof createParticleSystem>;
+    lifecycle: FakeLifecycle;
+    schedule?: (tick: () => void) => () => void;
+  }) {
+    useParticlePresentation(system, { lifecycle, ...(schedule ? { schedule } : {}) });
+    return null;
+  }
+
+  it('a paused source pauses the system; paused emissions drop; resume runs', async () => {
+    const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+    const { source, transition } = makeLifecycle('paused');
+    const ticks: (() => void)[] = [];
+    const schedule = (tick: () => void) => {
+      ticks.push(tick);
+      return () => {};
+    };
+    const renderer = await mount(createElement(Probe, { system, lifecycle: source, schedule }));
+    try {
+      assert.equal(system.status, 'paused');
+      assert.equal(ticks.length, 0);
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 1 });
+      // makeDef's burst is two particles; both drop with counted particles.
+      assert.equal(system.getDiagnostics('fx').emitted, 0);
+      assert.ok(system.getDiagnostics('fx').dropped >= 1);
+      assert.equal(ticks.length, 0, 'paused systems schedule nothing on emission');
+      transition('running');
+      assert.equal(system.status, 'running');
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 2 });
+      assert.equal(system.getDiagnostics('fx').emitted, 2);
+      assert.ok(ticks.length >= 1, 'resume schedules the active particles');
+    } finally {
+      renderer.unmount();
+      system.dispose();
+    }
+  });
+
+  it('a paused source with no active particles schedules nothing', async () => {
+    const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+    const { source } = makeLifecycle('paused');
+    const ticks: (() => void)[] = [];
+    const schedule = (tick: () => void) => {
+      ticks.push(tick);
+      return () => {};
+    };
+    const renderer = await mount(createElement(Probe, { system, lifecycle: source, schedule }));
+    try {
+      assert.equal(system.status, 'paused');
+      assert.equal(ticks.length, 0);
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 4 });
+      assert.equal(system.getDiagnostics('fx').emitted, 0);
+      assert.ok(system.getDiagnostics('fx').dropped >= 1);
+      assert.equal(ticks.length, 0);
+    } finally {
+      renderer.unmount();
+      system.dispose();
+    }
+  });
+
+  it('pause stops scheduling with active particles; resume restarts it', async () => {
+    const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+    const { source, transition } = makeLifecycle('running');
+    const ticks: (() => void)[] = [];
+    const schedule = (tick: () => void) => {
+      ticks.push(tick);
+      return () => {};
+    };
+    system.emit('fx', { position: { x: 0, y: 0 }, seed: 3 }); // active particle
+    const renderer = await mount(createElement(Probe, { system, lifecycle: source, schedule }));
+    try {
+      assert.equal(system.status, 'running');
+      assert.ok(ticks.length >= 1, 'running with active particles schedules');
+      const atRun = ticks.length;
+      transition('paused');
+      assert.equal(system.status, 'paused');
+      assert.equal(ticks.length, atRun, 'no further frames are scheduled while paused');
+      transition('running');
+      assert.ok(ticks.length > atRun, 'resume restarts scheduling');
+    } finally {
+      renderer.unmount();
+      system.dispose();
+    }
+  });
+
+  it('resume keeps exactly one presentation driver (exclusive lease)', async () => {
+    const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+    const { source, transition } = makeLifecycle('paused');
+    const renderer = await mount(createElement(Probe, { system, lifecycle: source }));
+    try {
+      transition('running');
+      const binding = system.bindPresentation();
+      assert.throws(() => binding.acquireDriver(), /already owned/);
+      // React runs effect cleanup inside act; the lease is released exactly
+      // once so a fresh driver binds after unmount.
+      await act(async () => {
+        renderer.unmount();
+      });
+      const driver = system.bindPresentation().acquireDriver();
+      driver.release();
+    } finally {
+      system.dispose();
+    }
+  });
+
+  it('dispose and unmount are safe in either order', async () => {
+    const a = createParticleSystem({ effects: { fx: makeDef(2, 'screen') } });
+    const rendererA = await mount(createElement(Probe, { system: a, lifecycle: makeLifecycle('running').source }));
+    a.dispose();
+    rendererA.unmount();
+
+    const b = createParticleSystem({ effects: { fx: makeDef(2, 'screen') } });
+    const rendererB = await mount(createElement(Probe, { system: b, lifecycle: makeLifecycle('running').source }));
+    rendererB.unmount();
+    b.dispose();
+  });
+
+  it('two independent lifecycle sources never cross', async () => {
+    const systemA = createParticleSystem({ effects: { fx: makeDef(2, 'screen') } });
+    const systemB = createParticleSystem({ effects: { fx: makeDef(2, 'screen') } });
+    const a = makeLifecycle('running');
+    const b = makeLifecycle('running');
+    const rendererA = await mount(createElement(Probe, { system: systemA, lifecycle: a.source }));
+    const rendererB = await mount(createElement(Probe, { system: systemB, lifecycle: b.source }));
+    try {
+      a.transition('paused');
+      assert.equal(systemA.status, 'paused');
+      assert.equal(systemB.status, 'running');
+      b.transition('disposed');
+      assert.equal(systemB.status, 'paused');
+      assert.equal(systemA.status, 'paused');
+    } finally {
+      rendererA.unmount();
+      rendererB.unmount();
+      systemA.dispose();
+      systemB.dispose();
+    }
+  });
+    it('an initially paused source with active particles schedules no frames until resume (T20L-R2)', async () => {
+      const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+      const { source, transition } = makeLifecycle('running');
+      const ticks: (() => void)[] = [];
+      const schedule = (tick: () => void) => {
+        ticks.push(tick);
+        return () => {};
+      };
+      // Particles become active BEFORE the hook binds; the source then pauses.
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 9 });
+      transition('paused');
+      const renderer = await mount(createElement(Probe, { system, lifecycle: source, schedule }));
+      try {
+        assert.equal(system.status, 'paused');
+        assert.equal(ticks.length, 0, 'no follow-up frames while initially paused with active particles');
+        transition('running');
+        assert.equal(system.status, 'running');
+        assert.equal(ticks.length, 1, 'resume restarts exactly one paused driver');
+        await act(async () => {
+          renderer.unmount();
+        });
+      } finally {
+        system.dispose();
+      }
+    });
+
+    it('a re-render while paused schedules nothing and keeps the paused state (T20L-R2)', async () => {
+      const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+      const { source, transition } = makeLifecycle('running');
+      const ticks: (() => void)[] = [];
+      const schedule = (tick: () => void) => {
+        ticks.push(tick);
+        return () => {};
+      };
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 10 });
+      const renderer = await mount(createElement(Probe, { system, lifecycle: source, schedule }));
+      const atRun = ticks.length;
+      assert.ok(atRun >= 1);
+      transition('paused');
+      assert.equal(ticks.length, atRun);
+      await act(async () => {
+        renderer.update(createElement(Probe, { system, lifecycle: source, schedule }));
+      });
+      assert.equal(system.status, 'paused');
+      assert.equal(ticks.length, atRun, 'no frames are scheduled while paused');
+      await act(async () => {
+        renderer.unmount();
+      });
+      system.dispose();
+    });
+
+    it('rerenders of the same system and source never rebind ownership (T20F-R2)', async () => {
+      const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+      let subscribeCount = 0;
+      let detachCount = 0;
+      let cancelCount = 0;
+      const { source, transition } = makeLifecycle('running');
+      const stableSource = {
+        getStatus: source.getStatus,
+        subscribe(listener: (status: 'idle' | 'running' | 'paused' | 'disposed') => void): () => void {
+          subscribeCount += 1;
+          const inner = source.subscribe(listener);
+          return () => {
+            detachCount += 1;
+            inner();
+          };
+        },
+      };
+      const ticks: (() => void)[] = [];
+      const schedule = (tick: () => void) => {
+        ticks.push(tick);
+        return () => {
+          cancelCount += 1;
+        };
+      };
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 10 });
+      const renderer = await mount(createElement(Probe, { system, lifecycle: stableSource, schedule }));
+      assert.equal(subscribeCount, 1, 'one lifecycle subscription at bind');
+      assert.equal(detachCount, 0, 'nothing detaches at bind');
+      const atRun = ticks.length;
+      assert.ok(atRun >= 1);
+      await act(async () => {
+        renderer.update(createElement(Probe, { system, lifecycle: stableSource, schedule }));
+      });
+      await act(async () => {
+        renderer.update(createElement(Probe, { system, lifecycle: stableSource, schedule }));
+      });
+      assert.equal(subscribeCount, 1, 'no resubscribe across parent renders');
+      assert.equal(detachCount, 0, 'no detach across parent renders');
+      assert.equal(cancelCount, 0, 'the scheduled frame owner is never cancelled');
+      assert.equal(ticks.length, atRun, 'no extra frames scheduled by renders');
+      assert.throws(
+        () => system.bindPresentation().acquireDriver(),
+        /already owned/,
+        'the original driver lease is still held across renders',
+      );
+      transition('paused');
+      assert.equal(system.status, 'paused', 'the stable subscription still applies transitions');
+      transition('running');
+      assert.equal(system.status, 'running');
+      const cancelsBeforeUnmount = cancelCount;
+      await act(async () => {
+        renderer.unmount();
+      });
+      assert.equal(subscribeCount, 1, 'unmount detaches without an extra resubscribe');
+      // T20FRR-R1: unmount cleanup is directly observed — exactly one
+      // lifecycle detach, exactly one final scheduler cancellation (the
+      // earlier pause legitimately cancelled its own frame), and a free
+      // driver lease a fresh consumer can acquire and release.
+      assert.equal(detachCount, 1, 'exactly one lifecycle detach after unmount');
+      assert.equal(
+        cancelCount - cancelsBeforeUnmount,
+        1,
+        'exactly one final scheduler cancellation after unmount',
+      );
+      const driver = system.bindPresentation().acquireDriver();
+      driver.release();
+      system.dispose();
+    });
+
+    it('replacing the lifecycle source applies its current status immediately (T20F-R2)', async () => {
+      const system = createParticleSystem({ effects: { fx: makeDef(4, 'screen') } });
+      const first = makeLifecycle('running');
+      const second = makeLifecycle('paused');
+      const ticks: (() => void)[] = [];
+      const schedule = (tick: () => void) => {
+        ticks.push(tick);
+        return () => {};
+      };
+      const renderer = await mount(createElement(Probe, { system, lifecycle: first.source, schedule }));
+      assert.equal(system.status, 'running');
+      // The replacement source is ALREADY paused: the swap must apply that
+      // status immediately, before its next transition.
+      await act(async () => {
+        renderer.update(createElement(Probe, { system, lifecycle: second.source, schedule }));
+      });
+      assert.equal(system.status, 'paused', 'the replacement source applies immediately');
+      system.emit('fx', { position: { x: 0, y: 0 }, seed: 11 });
+      assert.equal(system.getDiagnostics('fx').emitted, 0, 'paused emissions are dropped in between');
+      const third = makeLifecycle('running');
+      await act(async () => {
+        renderer.update(createElement(Probe, { system, lifecycle: third.source, schedule }));
+      });
+      assert.equal(system.status, 'running', 'a running replacement resumes immediately');
+      // Transitions from the DETACHED old source no longer affect the system.
+      first.transition('paused');
+      assert.equal(system.status, 'running', 'the detached source is powerless');
+      await act(async () => {
+        renderer.unmount();
+      });
+      system.dispose();
+    });
+});
+
 
 describe('T15-RF3 exclusive driver and idle/wake', () => {
   it('second acquire throws; tick rejected while owned; restored after release', async () => {

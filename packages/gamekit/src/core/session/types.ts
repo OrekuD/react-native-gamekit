@@ -16,6 +16,29 @@ export type DeepReadonly<T> = T extends (...arguments_: never[]) => unknown
 /** Lifecycle states of a headless game session. */
 export type GameSessionStatus = 'idle' | 'running' | 'paused' | 'disposed';
 
+/**
+ * Minimal read-only lifecycle surface for presentation layers (T20.3).
+ *
+ * Exposes exactly what a renderer-side consumer needs to follow its owning
+ * session — the current status and a way to observe transitions — and
+ * nothing it must not have: no `start`, `pause`, `press`, `setScene`, event
+ * subscription, or other session internals. `GameView` owns one source per
+ * session and supplies it to its renderer subtree; haptics and particle
+ * presentation consume it instead of casting to private session methods or
+ * reaching for module-global coordinators.
+ */
+export interface GameLifecycleSource {
+  /** The owning session's current lifecycle status. */
+  getStatus(): GameSessionStatus;
+  /**
+   * Observe lifecycle transitions. Returns a detach function. Subscribing
+   * to a disposed session returns a no-op detach: the terminal notification
+   * was already delivered, and `addStatusListener` follows the
+   * disposed-error policy for new subscribers.
+   */
+  subscribe(listener: (status: GameSessionStatus) => void): () => void;
+}
+
 /** One renderer-neutral simulation commit produced by a game session. */
 export interface CommitFrameBase<TSnapshot> {
   /** Snapshot immediately before the latest simulation update. */

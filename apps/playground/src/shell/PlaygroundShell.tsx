@@ -7,7 +7,7 @@ import type {
 } from 'rn-gamekit/react';
 import type { GameSession } from 'rn-gamekit';
 import { GameSurface } from './GameSurface';
-import { useGameAssets } from 'rn-gamekit/react';
+import { GameAssetAcquirer } from './gameAssetAcquirer';
 
 import { createBrickBreakerSession } from '../screens/brick-breaker/brickBreakerGame';
 import { createGameSession } from 'rn-gamekit';
@@ -21,6 +21,30 @@ import PlatformerLabContent from '../screens/platformer-lab/PlatformerLabContent
 import { PlatformerLabRenderer } from '../screens/platformer-lab/PlatformerLabRenderer';
 import { createPlatformerLabSession , platformerLabAssets } from '../screens/platformer-lab/platformerLabGame';
 import { platformerLabCamera } from '../screens/platformer-lab/platformerLabCamera';
+import MossyCavernContent from '../screens/mossy-cavern/MossyCavernContent';
+import { MossyCavernRenderer, type MossyCavernRendererProps } from '../screens/mossy-cavern/MossyCavernRenderer';
+import { mossyCavernCamera } from '../screens/mossy-cavern/mossyCavernCamera';
+import { createMossyCavernSession, mossyCavernAssets } from '../screens/mossy-cavern/mossyCavernGame';
+import {
+  bindMossyCavernParticleEvents,
+  createMossyCavernParticleSystem,
+} from '../screens/mossy-cavern/mossyCavernEffects';
+import { loadMossyCavernSave } from '../screens/mossy-cavern/mossyCavernData';
+import MossyCavern2Content from '../screens/mossy-cavern-2/MossyCavern2Content';
+import { MossyCavern2Renderer, type MossyCavern2RendererProps } from '../screens/mossy-cavern-2/MossyCavern2Renderer';
+import { mossyCavern2Camera } from '../screens/mossy-cavern-2/mossyCavern2Camera';
+import { createMossyCavern2Session, mossyCavern2Assets } from '../screens/mossy-cavern-2/mossyCavern2Game';
+import {
+  bindMossyCavern2ParticleEvents,
+  createMossyCavern2ParticleSystem,
+} from '../screens/mossy-cavern-2/mossyCavern2Effects';
+import { loadMossyCavern2Profile } from '../screens/mossy-cavern-2/mossyCavern2Save';
+import MossyCavern3Content from '../screens/mossy-cavern-3/MossyCavern3Content';
+import { MossyCavern3Renderer } from '../screens/mossy-cavern-3/MossyCavern3Renderer';
+import { mossyCavern3Camera } from '../screens/mossy-cavern-3/mossyCavern3Camera';
+import { mossyCavern3Assets } from '../screens/mossy-cavern-3/mossyCavern3Assets';
+import { createMossyCavern3Session } from '../screens/mossy-cavern-3/mossyCavern3Game';
+import { loadMossyCavern3Save } from '../screens/mossy-cavern-3/mossyCavern3Save';
 import AudioLabScreen from '../screens/audio-lab/AudioLabScreen';
 import ParticleLabScreen from '../screens/particle-lab/ParticleLabScreen';
 import StorageLabScreen from '../screens/storage-lab/StorageLabScreen';
@@ -88,6 +112,17 @@ export function PlaygroundShell() {
       createPlaceholder: () => createIdleSession() as unknown as GameSession,
       disposeSession,
       onSlot: (next) => setSlot(next),
+      onPrepareError: (info) => {
+        // T20.2: preparation failures ride the same retryable error UI as
+        // asset failures; retry opens a fresh request (aborting the dead one).
+        setAssetState({
+          requestId: info.requestId,
+          state: {
+            status: 'error',
+            error: info.error,
+          } as unknown as GameAssetsState<import('rn-gamekit').AssetGroupMap>,
+        });
+      },
       initialGeneration: INITIAL_GENERATION,
     });
   }
@@ -171,7 +206,8 @@ export function PlaygroundShell() {
       ? GAME_CONTENTS[slot.gameId as keyof typeof GAME_CONTENTS]?.assets
       : undefined;
   const contentAssetState =
-    activeAssets !== undefined && assetState?.requestId === slot.requestId
+    assetState?.requestId === slot.requestId &&
+    (activeAssets !== undefined || assetState.state.status === 'error')
       ? assetState.state
       : undefined;
 
@@ -202,42 +238,6 @@ export function PlaygroundShell() {
 }
 
 const INITIAL_GENERATION = 1;
-
-/**
- * The generic asset acquirer (T16-RF3): mounts for the whole request
- * lifetime (loading AND ready) of ANY asset-backed catalog entry and
- * unmounts only when the slot leaves the game — so the lease the renderer
- * borrows stays alive until the replacement binding commits (T8.5). It is
- * keyed by the request id: every request owns a fresh acquisition, and a
- * superseded request's lease is released exactly once by unmount. The
- * readiness callback carries the request id; the shell ignores it when the
- * request is no longer current and never creates a gameplay session for a
- * stale request.
- */
-function GameAssetAcquirer({
-  manifest,
-  groups,
-  requestId,
-  onReady,
-  onStateChange,
-}: {
-  readonly manifest: unknown;
-  readonly groups: readonly string[];
-  readonly requestId: number;
-  readonly onReady: (requestId: number, assets: SlotAssets) => void;
-  readonly onStateChange: (requestId: number, state: unknown) => void;
-}) {
-  const state = useGameAssets(manifest as never, { groups: groups as never[] });
-  useEffect(() => {
-    onStateChange(requestId, state);
-    if (state.status === 'ready') {
-      // The exact lease object passes through the slot unchanged: the
-      // renderer calls `assets.get(...)` on it, so it must never be wrapped.
-      onReady(requestId, state.assets as unknown as SlotAssets);
-    }
-  }, [onReady, onStateChange, requestId, state]);
-  return null;
-}
 
 /** Content registry: the catalog id maps to content, renderer, session
  * factory, pointer capability, and asset backing. */
@@ -291,6 +291,92 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     camera2D: platformerLabCamera as unknown as GameCamera2DDefinition<never>,
     assets: { manifest: platformerLabAssets as unknown, groups: ['world'] },
   },
+  'mossy-cavern': {
+    renderer: MossyCavernRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: MossyCavernContent as unknown as ComponentType<PlaygroundGameContentProps>,
+    // T20F-R2/T20F-R3: async prepared session — load and validate the save,
+    // then construct the deterministic session synchronously from it.
+    // T20G-R2: the loaded projection registers against the session so the
+    // shell can publish it as slot metadata for the content layer.
+    createSession: async (context) => {
+      const save = await loadMossyCavernSave(context.signal);
+      const session = createMossyCavernSession(save) as unknown as GameSession;
+      if (save !== undefined) mossyCavernStartupSaves.set(session, save);
+      return session;
+    },
+    startupSave: (session) => mossyCavernStartupSaves.get(session),
+    pointer: false,
+    camera2D: mossyCavernCamera as unknown as GameCamera2DDefinition<never>,
+    assets: { manifest: mossyCavernAssets as unknown, groups: ['world'] },
+    // T20.3: one session-scoped particle pool + event bridge per binding.
+    bindPresentation: (session) => {
+      const system = createMossyCavernParticleSystem();
+      const subscriptions = bindMossyCavernParticleEvents(system, session);
+      return {
+        renderer: (props) => (
+          <MossyCavernRenderer
+            {...(props as unknown as MossyCavernRendererProps)}
+            particleSystem={system}
+          />
+        ),
+        dispose: () => {
+          for (const subscription of subscriptions) subscription.remove();
+          system.dispose();
+        },
+      };
+    },
+  },
+  'mossy-cavern-2': {
+    renderer: MossyCavern2Renderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: MossyCavern2Content as unknown as ComponentType<PlaygroundGameContentProps>,
+    // T20F-R2/T20F-R3: async prepared session from the validated profile.
+    // T20G-R2: the loaded projection registers against the session so the
+    // shell can publish it as slot metadata for the content layer.
+    createSession: async (context) => {
+      const profile = await loadMossyCavern2Profile(context.signal);
+      const session = createMossyCavern2Session(profile) as unknown as GameSession;
+      if (profile !== undefined) mossyCavern2StartupSaves.set(session, profile);
+      return session;
+    },
+    startupSave: (session) => mossyCavern2StartupSaves.get(session),
+    pointer: false,
+    camera2D: mossyCavern2Camera as unknown as GameCamera2DDefinition<never>,
+    assets: { manifest: mossyCavern2Assets as unknown, groups: ['world'] },
+    // T20.3: one session-scoped particle pool + event bridge per binding.
+    bindPresentation: (session) => {
+      const system = createMossyCavern2ParticleSystem();
+      const subscriptions = bindMossyCavern2ParticleEvents(system, session);
+      return {
+        renderer: (props) => (
+          <MossyCavern2Renderer
+            {...(props as unknown as MossyCavern2RendererProps)}
+            particleSystem={system}
+          />
+        ),
+        dispose: () => {
+          for (const subscription of subscriptions) subscription.remove();
+          system.dispose();
+        },
+      };
+    },
+  },
+  'mossy-cavern-3': {
+    renderer: MossyCavern3Renderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: MossyCavern3Content as unknown as ComponentType<PlaygroundGameContentProps>,
+    // T20F-R2/T20F-R3: async prepared session from the validated save.
+    // T20G-R2: the loaded projection registers against the session so the
+    // shell can publish it as slot metadata for the content layer.
+    createSession: async (context) => {
+      const save = await loadMossyCavern3Save(context.signal);
+      const session = createMossyCavern3Session(save) as unknown as GameSession;
+      if (save !== undefined) mossyCavern3StartupSaves.set(session, save);
+      return session;
+    },
+    startupSave: (session) => mossyCavern3StartupSaves.get(session),
+    pointer: false,
+    camera2D: mossyCavern3Camera as unknown as GameCamera2DDefinition<never>,
+    assets: { manifest: mossyCavern3Assets as unknown, groups: ['world'] },
+  },
   'particle-lab': {
     renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
     content: ParticleLabScreen as unknown as ComponentType<PlaygroundGameContentProps>,
@@ -310,6 +396,11 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     pointer: false,
   },
 };
+
+/** T20G-R2: per-request startup projections, keyed by session identity. */
+const mossyCavernStartupSaves = new WeakMap<GameSession, unknown>();
+const mossyCavern2StartupSaves = new WeakMap<GameSession, unknown>();
+const mossyCavern3StartupSaves = new WeakMap<GameSession, unknown>();
 
 function disposeSession(session: GameSession): void {
   if (session.status !== 'disposed') {

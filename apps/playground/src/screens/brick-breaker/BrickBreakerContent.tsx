@@ -160,16 +160,16 @@ function useBrickBreakerFeedback(session: BrickBreakerSession) {
         const isDisposed = (session.status as string) === 'disposed';
         if (isPaused) {
           audio.pause();
-          (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(true);
+          haptics?.setPaused(true);
         }
         // Bind session pause to audio (lifecycle T14.4)
         const statusSub = session.addStatusListener((status) => {
           if (status === 'paused') {
             audio?.pause();
-            (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(true);
+            haptics?.setPaused(true);
           } else if (status === 'running') {
             audio?.resume();
-            (haptics as unknown as { _setPaused?: (p:boolean)=>void })?._setPaused?.(false);
+            haptics?.setPaused(false);
           } else if (status === 'disposed') {
             audio?.dispose();
             haptics?.dispose();

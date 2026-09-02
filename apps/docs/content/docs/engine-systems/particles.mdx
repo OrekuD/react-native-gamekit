@@ -38,7 +38,45 @@ const brickBurst = defineParticleEffect({
 });
 ```
 
-Validation rejects invalid definitions eagerly: capacity must be an integer in `[1, 1024]`, ranges must be finite with `min ≤ max`, `burst.count ≤ capacity`, and `space`/`overflow`/`particle.kind` are exact unions. Shape particles support only `circle` (with optional `radius`) and `rectangle` (with optional `width`/`height`) plus one `color`.
+Validation rejects invalid definitions eagerly: capacity must be an integer in
+`[1, 1024]`, ranges must be finite with `min ≤ max`, `burst.count ≤ capacity`,
+and `space`/`overflow`/`particle.kind` are exact unions. Shape particles
+support only `circle` (with optional `radius`) and `rectangle` (with optional
+`width`/`height`) plus one `color`.
+
+## Scale envelopes
+
+Use the explicit `scale` envelope to describe how a particle's scale changes
+over its lifetime. Each endpoint accepts a fixed scalar or a `{ min, max }`
+range for deterministic per-particle variation:
+
+```ts
+// Begin large and shrink to a small mote.
+const smoke = defineParticleEffect({
+  // ...
+  scale: { start: 1, end: 0.2 },
+});
+
+// Ranged endpoints vary per particle; start is sampled before end.
+const embers = defineParticleEffect({
+  // ...
+  scale: {
+    start: { min: 0.85, max: 1.15 },
+    end: { min: 0.1, max: 0.3 },
+  },
+});
+```
+
+Endpoints must be finite and non-negative. Zero collapses a particle to a
+point. Negative values are rejected at definition time because scale has no
+defined flip semantics — rendering never inverts a particle. The legacy
+`scaleOverLife` range still accepts what it always accepted, but renderers
+collapse any negative value it produces to a point instead of drawing signed
+geometry. A definition that specifies both `scale` and the legacy
+`scaleOverLife` range throws: `scaleOverLife` samples one value as the start
+and uses `max` as the end, which cannot express a clear large-to-small
+envelope. Prefer `scale` for new effects; `scaleOverLife` keeps its exact
+sampling behavior for existing definitions during the migration period.
 
 ## Creating the system
 
@@ -63,7 +101,7 @@ session.addGameEventListener('brick-hit', (event) => {
 });
 ```
 
-The seed drives a documented deterministic PRNG (mulberry32). Field consumption order is fixed: lifetime → speed → direction → rotation → rotation speed → scale start. The same command and seed therefore reproduce the same burst byte-for-byte within floating-point tolerance (`1e-4`). Never use `Math.random()` for seeds — event identity `(tick, ordinal)` is stable across catch-up replay.
+The seed drives a documented deterministic PRNG (mulberry32). Field consumption order is fixed: lifetime → speed → direction → rotation → rotation speed → scale start → scale end (the scale end draw happens only for the explicit `scale` envelope; the legacy `scaleOverLife` range draws once). The same command and seed therefore reproduce the same burst byte-for-byte within floating-point tolerance (`1e-4`). Never use `Math.random()` for seeds — event identity `(tick, ordinal)` is stable across catch-up replay.
 
 Invalid commands throw before any pool mutation: unknown effect names, non-finite positions, non-finite seeds.
 
@@ -92,6 +130,8 @@ Equal active age produces identical sampled values regardless of how updates wer
 ## One clock per system
 
 A system has exactly one presentation owner. `useParticlePresentation(system)` acquires the binding's exclusive driver lease (a second owner throws deterministically) and runs the only rAF loop; while the lease is held, ad-hoc `tick()` calls are rejected so nothing can double-advance age.
+
+The owning session reaches the hook as a `GameLifecycleSource` (T20.3): `GameView` creates one frozen source per session and supplies it to its renderer subtree, and renderers pass it through `useParticlePresentation(system, { lifecycle })`. `undefined` lifecycle means no session is present — manual pause still works, and nothing session-coupled runs. Replacing the session replaces the source, so a consumer bound to the old generation can never observe the new one.
 
 Per-frame boundary traffic is one scalar write: the active-time clock. Emission init records cross only when membership changes (bounded by live particles), and transforms are computed analytically on the UI runtime from `position = origin + v·t + ½·a·t²`. Pause sources are applied reactively through one effect-owned control — synchronously at bind, on session transitions through the subscribe seam, and via the returned `setManualPaused` control — so an emission accepted after a pause transition follows the paused-drop policy even while the driver was asleep. Scheduling runs only while the system is running and at least one particle is active; pausing empties the frame queue immediately (even with particles alive), and the terminal expiry of the last particle always publishes its final clock plus pruned registry before the driver sleeps.
 

@@ -25,4 +25,12 @@ export interface PlaygroundGameContentProps {
   readonly assetState?: GameAssetsState<
     import('rn-gamekit').AssetGroupMap
   >;
+  /**
+   * T20G-R2: the validated durable projection this session hydrated from
+   * (shell async factory → slot metadata). Content initializes its durable
+   * baseline from it synchronously — before event listeners register — so
+   * an early gameplay save can never overwrite hydrated fields with
+   * default-derived data. `undefined` means a fresh run.
+   */
+  readonly startupSave?: unknown;
 }

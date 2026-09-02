@@ -56,6 +56,24 @@ export const PLAYGROUND_GAMES = [
     label: 'Play',
   },
   {
+    id: 'mossy-cavern',
+    title: 'Mossy Cavern',
+    description: 'A glowing side-scroller with slimes, crystals, dashes, and moss bridges.',
+    label: 'Play',
+  },
+  {
+    id: 'mossy-cavern-2',
+    title: 'Mossy Cavern 2',
+    description: 'A new GameKit-built rootwake expedition: jump, dash, relics, shrine, and journal saves.',
+    label: 'Play',
+  },
+  {
+    id: 'mossy-cavern-3',
+    title: 'Mossy Cavern 3',
+    description: 'A clean-room mooncap run built across GameKit movement, camera, particles, audio, haptics, and saves.',
+    label: 'Play',
+  },
+  {
     id: 'particle-lab',
     title: 'Particle Lab',
     description: 'Seeded bursts, fixed pools, overflow policies, pause freeze, diagnostics.',

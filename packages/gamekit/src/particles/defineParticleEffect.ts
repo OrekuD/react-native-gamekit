@@ -1,5 +1,10 @@
 import { ParticleError } from './errors';
-import type { ParticleEffectDefinition } from './types';
+import type {
+  ParticleEffectDefinition,
+  ParticleEffectDefinitionInput,
+  ParticleScaleEnvelope,
+  Range,
+} from './types';
 
 function assertRange(range: unknown, name: string): void {
   if (!range || typeof range !== 'object') throw new ParticleError(`${name} must be {min,max}`);
@@ -16,7 +21,24 @@ function assertPoint(p: unknown, name: string): void {
   if (typeof pt.y !== 'number' || !Number.isFinite(pt.y)) throw new ParticleError(`${name}.y must be finite`);
 }
 
-export function defineParticleEffect(def: ParticleEffectDefinition): ParticleEffectDefinition {
+/**
+ * Validate one T20.1 envelope endpoint and normalize it to a frozen Range.
+ * Endpoints are non-negative and finite (T20A-R1): zero collapses to a point;
+ * negative scale has no defined rendering semantics and is rejected.
+ */
+function normalizeScaleEndpoint(value: unknown, name: string): Range {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new ParticleError(`${name} must be finite`);
+    if (value < 0) throw new ParticleError(`${name} must be >= 0`);
+    return Object.freeze({ min: value, max: value });
+  }
+  assertRange(value, name);
+  const r = value as Range;
+  if (r.min < 0 || r.max < 0) throw new ParticleError(`${name} must be >= 0`);
+  return Object.freeze({ min: r.min, max: r.max });
+}
+
+export function defineParticleEffect(def: ParticleEffectDefinitionInput): ParticleEffectDefinition {
   if (!def || typeof def !== 'object') throw new ParticleError('effect definition must be an object');
   if (typeof def.capacity !== 'number' || !Number.isFinite(def.capacity) || def.capacity < 1 || def.capacity > 1024 || Math.floor(def.capacity) !== def.capacity) {
     throw new ParticleError('capacity must be integer 1..1024');
@@ -42,8 +64,54 @@ export function defineParticleEffect(def: ParticleEffectDefinition): ParticleEff
   if (def.speed.min < 0) throw new ParticleError('speed.min must be >=0');
   if (def.direction) assertRange(def.direction, 'direction');
   if (def.rotation) assertRange(def.rotation, 'rotation');
-  if (def.scaleOverLife) assertRange(def.scaleOverLife, 'scaleOverLife');
+  // T20A-R2: optional scale fields validate by PRESENCE, not truthiness —
+  // raw JavaScript values such as null, false, or 0 must fail at the boundary
+  // instead of silently falling back to the default scale.
+  const hasLegacyScale = def.scaleOverLife !== undefined;
+  const hasExplicitScale = def.scale !== undefined;
+  if (hasLegacyScale && hasExplicitScale) {
+    throw new ParticleError('scaleOverLife and scale are mutually exclusive — specify only one');
+  }
+  if (hasLegacyScale) {
+    const legacy = def.scaleOverLife;
+    if (legacy === null || typeof legacy !== 'object' || Array.isArray(legacy)) {
+      throw new ParticleError('scaleOverLife must be {min,max}');
+    }
+    assertRange(legacy, 'scaleOverLife');
+  }
+  let scale: ParticleScaleEnvelope | undefined;
+  if (hasExplicitScale) {
+    const raw = def.scale;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new ParticleError('scale must be an object with start and end endpoints');
+    }
+    if (!('start' in raw) || !('end' in raw)) {
+      throw new ParticleError('scale must specify start and end endpoints');
+    }
+    scale = Object.freeze({
+      start: normalizeScaleEndpoint(raw.start, 'scale.start'),
+      end: normalizeScaleEndpoint(raw.end, 'scale.end'),
+    });
+  }
   assertPoint(def.gravity, 'gravity');
   if (typeof def.fadeOut !== 'boolean') throw new ParticleError('fadeOut must be boolean');
-  return Object.freeze({ ...def, particle: Object.freeze({ ...def.particle }), burst: Object.freeze({ ...def.burst }), lifetimeSeconds: Object.freeze({ ...def.lifetimeSeconds }), speed: Object.freeze({ ...def.speed }), gravity: Object.freeze({ ...def.gravity }) } as ParticleEffectDefinition);
+  return Object.freeze(
+    {
+      ...def,
+      particle: Object.freeze({ ...def.particle }),
+      burst: Object.freeze({ ...def.burst }),
+      lifetimeSeconds: Object.freeze({ ...def.lifetimeSeconds }),
+      speed: Object.freeze({ ...def.speed }),
+      gravity: Object.freeze({ ...def.gravity }),
+      // T20.1: every nested range in the normalized definition is frozen.
+      ...(def.direction ? { direction: Object.freeze({ ...def.direction }) } : {}),
+      ...(def.rotation ? { rotation: Object.freeze({ ...def.rotation }) } : {}),
+      // T20A-R2: normalized scale fields always overwrite the raw input
+      // values so an unchecked optional can never survive the input spread.
+      scaleOverLife: hasLegacyScale
+        ? Object.freeze({ ...def.scaleOverLife })
+        : undefined,
+      scale,
+    } as ParticleEffectDefinition,
+  );
 }

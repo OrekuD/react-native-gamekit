@@ -35,6 +35,30 @@ export interface RetirementRecord {
   readonly session: GameSession;
   /** The generation whose committed binding makes this session disposable. */
   readonly retiredByGeneration: number;
+  /**
+   * Session-scoped presentation binding release (T20.3), present when the
+   * retired session owned one. Called exactly once by the lifecycle owner
+   * when the record drains — before the session itself is disposed.
+   */
+  readonly presentationDispose?: () => void;
+}
+
+/**
+ * One game-provided, session-scoped presentation binding (T20.3): the shell
+ * calls `bindPresentation(session)` when a slot's session is created; the
+ * returned renderer renders with the binding's resources and `dispose`
+ * releases them exactly once through the session's retirement path.
+ */
+export interface SurfacePresentationBinding {
+  readonly renderer: ComponentType<GameRendererProps<never>>;
+  /** Idempotent release of the binding's session-scoped resources. */
+  readonly dispose: () => void;
+}
+
+/** One drained retirement: the session plus its presentation release. */
+export interface DisposableSession {
+  readonly session: GameSession;
+  readonly presentationDispose?: () => void;
 }
 
 /** A Performance Lab run attachment: session + the instrumentation bound to it. */
@@ -95,6 +119,22 @@ export interface SurfaceSlot {
   readonly run?: RunSurfaceAttachment;
   /** Instrumentation-only pair for the ready gameplay binding (T12-RF1). */
   readonly instrumentation?: SurfaceInstrumentation;
+  /**
+   * Session-scoped presentation binding release (T20.3): present when this
+   * binding's session owns presentation resources. Carried through run
+   * attachments, moved into retirement records on replacement, and invoked
+   * exactly once when the record drains.
+   */
+  readonly presentationDispose?: () => void;
+  /**
+   * T20G-R2: the validated durable projection this session hydrated from,
+   * derived by the entry's `startupSave` hook at publication time. Content
+   * initializes its durable baseline from it BEFORE registering event
+   * listeners, so an early gameplay save can never overwrite the just-
+   * hydrated record with default-derived data. Absent for entries without
+   * a startup projection and for loading/neutral slots.
+   */
+  readonly startupSave?: unknown;
   /** Sessions superseded by this or earlier bindings, awaiting the commit. */
   readonly retiring: readonly RetirementRecord[];
 }
@@ -112,6 +152,10 @@ export type SurfaceEvent =
       /** The declared pointer action the shell's GamePointerInput binds. */
       readonly pointerAction?: string;
       readonly camera2D?: GameCamera2DDefinition<never>;
+      /** Session-scoped presentation release (T20.3), when the entry binds one. */
+      readonly presentationDispose?: () => void;
+      /** The validated durable projection the session hydrated from (T20G-R2). */
+      readonly startupSave?: unknown;
     }
   | {
       readonly kind: 'open-loading';
@@ -123,12 +167,21 @@ export type SurfaceEvent =
       readonly content?: ComponentType<{ readonly game: GameSession }>;
     }
   | {
-      readonly kind: 'asset-ready';
-      readonly requestId: number;
-      readonly generation: number;
-      readonly session: GameSession;
+      kind: 'asset-ready';
+      requestId: number;
+      generation: number;
+      session: GameSession;
+      /** The resolved renderer: the binding's when present, else the entry's. */
+      readonly renderer: ComponentType<GameRendererProps<never>>;
+      /** The catalog pointer declaration (T20F-R1): never forced. */
+      readonly pointer: boolean;
+      readonly pointerAction?: string;
       readonly assets: SlotAssets;
       readonly camera2D?: GameCamera2DDefinition<never>;
+      /** Session-scoped presentation release (T20.3), when the entry binds one. */
+      readonly presentationDispose?: () => void;
+      /** The validated durable projection the session hydrated from (T20G-R2). */
+      readonly startupSave?: unknown;
     }
   | {
       readonly kind: 'close';
@@ -151,8 +204,9 @@ export type SurfaceEvent =
 /** The result of one transition: the next slot plus now-disposable sessions. */
 export interface SurfaceReduction {
   readonly slot: SurfaceSlot;
-  /** Sessions whose replacement binding has committed; dispose exactly once. */
-  readonly disposable: readonly GameSession[];
+  /** Sessions whose replacement binding has committed; dispose exactly once,
+   * presentation release first. */
+  readonly disposable: readonly DisposableSession[];
 }
 
 /** The Home binding: stable neutral session, no content, no pointer. */
@@ -215,7 +269,16 @@ function stampRetiring(
   const records = [...state.retiring];
   for (const session of replaced) {
     if (!records.some((record) => record.session === session)) {
-      records.push({ session, retiredByGeneration: generation });
+      records.push({
+        session,
+        retiredByGeneration: generation,
+        // Only the binding's own session carries the presentation release
+        // (the lab run session shares the base session, so the shared
+        // session's binding disposes exactly once with it).
+        ...(session === state.session && state.presentationDispose !== undefined
+          ? { presentationDispose: state.presentationDispose }
+          : {}),
+      });
     }
   }
   return records;
@@ -235,6 +298,8 @@ function reduceOpenReady(state: SurfaceSlot, event: Extract<SurfaceEvent, { kind
       pointer: event.pointer,
       pointerAction: event.pointerAction,
       camera2D: event.camera2D,
+      presentationDispose: event.presentationDispose,
+      ...(event.startupSave !== undefined ? { startupSave: event.startupSave } : {}),
       run: undefined,
       retiring: retireReplaced(state, event.generation),
     },
@@ -273,9 +338,14 @@ function reduceAssetReady(state: SurfaceSlot, event: Extract<SurfaceEvent, { kin
       generation: event.generation,
       status: 'ready',
       session: event.session,
+      renderer: event.renderer,
       assets: event.assets,
-      pointer: true,
+      // T20F-R1: publish the catalog pointer declaration, never forced input.
+      pointer: event.pointer,
+      pointerAction: event.pointerAction,
       camera2D: event.camera2D,
+      presentationDispose: event.presentationDispose,
+      ...(event.startupSave !== undefined ? { startupSave: event.startupSave } : {}),
       retiring: retireReplaced(state, event.generation),
     },
     disposable: [],
@@ -371,7 +441,12 @@ function reduceBindingCommitted(state: SurfaceSlot, event: Extract<SurfaceEvent,
   );
   return {
     slot: { ...state, retiring: remaining },
-    disposable: disposable.map((record) => record.session),
+    disposable: disposable.map((record) => ({
+      session: record.session,
+      ...(record.presentationDispose !== undefined
+        ? { presentationDispose: record.presentationDispose }
+        : {}),
+    })),
   };
 }
 

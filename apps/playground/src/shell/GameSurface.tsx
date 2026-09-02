@@ -105,7 +105,14 @@ export function GameSurface({
           />
         ) : null}
         {showAssetGate ? (
-          <AssetGateOverlay gameId={slot.gameId} assetState={assetState} onExit={onExit} />
+          <AssetGateOverlay
+            gameId={slot.gameId}
+            assetState={assetState}
+            onRetry={() => {
+              if (slot.gameId !== null) onOpenGame(slot.gameId as PlaygroundGameId);
+            }}
+            onExit={onExit}
+          />
         ) : Content !== undefined ? (
           <Content
             game={slot.session}
@@ -113,6 +120,7 @@ export function GameSurface({
             onOpenGame={onOpenGame}
             onRunSurfaceEvent={onRunSurfaceEvent}
             assetState={assetState}
+            startupSave={slot.startupSave}
           />
         ) : null}
       </GameView>
