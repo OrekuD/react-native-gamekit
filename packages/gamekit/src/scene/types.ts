@@ -95,7 +95,14 @@ export interface SceneDefinition<
   readonly update: (
     frame: SceneUpdate<TState, TActionName, TTransitionName, TEventDefs, TEmits>,
   ) => TState;
-  /** Extract a compact renderer-specific snapshot from current state. */
+  /**
+   * Extract a compact renderer-specific snapshot from current state.
+   *
+   * The snapshot domain is plain records, arrays, and scalars; anything
+   * else fails with a `SnapshotDomainError` carrying the key path before
+   * publication. Returning a state reference transfers it into immutable
+   * snapshot ownership — it is frozen in place.
+   */
   readonly snapshot: (context: SceneSnapshotContext<TState>) => TSnapshot;
   /** Release scene-owned resources exactly once. */
   readonly dispose?: (state: Readonly<TState>) => void;

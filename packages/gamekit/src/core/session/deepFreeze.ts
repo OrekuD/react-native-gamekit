@@ -22,6 +22,39 @@
 
 import type { DeepReadonly } from './types';
 
+/**
+ * Supported snapshot domain (GS-SCENE-03): plain records
+ * (`Object.prototype` or `null` prototype), arrays, and scalar values.
+ * Everything else — functions, symbols, bigints, and class instances
+ * (Map, Set, Date, typed arrays, custom classes, …) — is rejected at the
+ * publication boundary because freezing cannot secure it (`Object.freeze`
+ * on a Map does not freeze its entries; a frozen function stays callable).
+ */
+export class SnapshotDomainError extends Error {
+  /** Dot/bracket path from the snapshot root to the offending value. */
+  readonly path: string;
+  /** The scene whose snapshot was rejected, when the session supplied it. */
+  readonly scene?: string;
+  constructor(path: string, detail: string, scene?: string) {
+    super(
+      `Unsupported snapshot value at ${path}: ${detail}${
+        scene === undefined ? '' : ` (scene "${scene}")`
+      }. Snapshots must contain only plain records, arrays, and scalar values.`,
+    );
+    this.name = 'SnapshotDomainError';
+    this.path = path;
+    if (scene !== undefined) {
+      this.scene = scene;
+    }
+  }
+}
+
+/** Context the session attaches so rejections name the offending scene. */
+export interface SnapshotFreezeContext {
+  readonly scene?: string;
+  readonly tick?: number;
+}
+
 /** Whether a string is a canonical array index (`0 <= i < 2^32 - 1`). */
 /** Decimal digit count of a non-negative integer (0 <= value < 1e11). */
 function digitLength(value: number): number {
@@ -80,19 +113,77 @@ function isArrayIndexKey(key: string): boolean {
   return value <= 0xffffffff - 1;
 }
 
+/** Whether a value is a plain record (`Object.prototype` or `null` prototype). */
+function isPlainRecord(node: object): boolean {
+  const prototype = Object.getPrototypeOf(node);
+  return prototype === Object.prototype || prototype === null;
+}
+
+/** Name an unsupported value for an actionable rejection message. */
+function describeUnsupported(node: unknown): string {
+  if (typeof node === 'function') {
+    return 'functions are not part of the snapshot domain';
+  }
+  if (typeof node === 'symbol') {
+    return 'symbols are not part of the snapshot domain';
+  }
+  if (typeof node === 'bigint') {
+    return 'bigints are not part of the snapshot domain';
+  }
+  const name =
+    typeof node === 'object' && node !== null
+      ? (node as { constructor?: { name?: unknown } }).constructor?.name
+      : undefined;
+  const label = typeof name === 'string' && name !== '' ? `${name} instances` : 'class instances';
+  return `${label} are not part of the snapshot domain (only plain records and arrays are supported)`;
+}
+
+/** Format a key-path segment stack as `a.b[0]` (root renders `<root>`). */
+function formatPath(path: readonly (string | number | symbol)[]): string {
+  if (path.length === 0) {
+    return '<root>';
+  }
+  let out = '';
+  for (const segment of path) {
+    if (typeof segment === 'number') {
+      out += `[${segment}]`;
+    } else if (typeof segment === 'symbol') {
+      out += `[${String(segment)}]`;
+    } else if (out === '') {
+      out = segment;
+    } else {
+      out += `.${segment}`;
+    }
+  }
+  return out;
+}
+
 export interface DeepFreezer {
-  <T>(value: T): DeepReadonly<T>;
+  <T>(value: T, context?: SnapshotFreezeContext): DeepReadonly<T>;
 }
 
 export function createDeepFreeze(): DeepFreezer {  const trusted = new WeakSet<object>();
 
-  return function deepFreeze<T>(value: T): DeepReadonly<T> {
+  return function deepFreeze<T>(value: T, context?: SnapshotFreezeContext): DeepReadonly<T> {
+    // Key path from the snapshot root, maintained as a segment stack and
+    // formatted only when a rejection needs it. try/finally is unnecessary:
+    // a throw abandons the traversal, and the stack is per call.
+    const path: (string | number | symbol)[] = [];
+    const reject = (node: unknown): never => {
+      throw new SnapshotDomainError(formatPath(path), describeUnsupported(node), context?.scene);
+    };
     if (typeof value !== 'object' || value === null) {
+      if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') {
+        reject(value);
+      }
       return value as DeepReadonly<T>;
     }
     const visiting = new WeakSet<object>();
     const freeze = (node: unknown): void => {
       if (typeof node !== 'object' || node === null) {
+        if (typeof node === 'function' || typeof node === 'symbol' || typeof node === 'bigint') {
+          reject(node);
+        }
         return;
       }
       if (trusted.has(node) || visiting.has(node)) {
@@ -102,7 +193,9 @@ export function createDeepFreeze(): DeepFreezer {  const trusted = new WeakSet<o
       if (Array.isArray(node)) {
         // Index fast path: avoids materialising an index-key array per array.
         for (let index = 0; index < node.length; index += 1) {
+          path.push(index);
           freeze(node[index]);
+          path.pop();
         }
         // F5: legal JavaScript arrays may also carry values on non-index
         // string keys and symbol keys. Only own keys are reachable snapshot
@@ -134,20 +227,28 @@ export function createDeepFreeze(): DeepFreezer {  const trusted = new WeakSet<o
             continue;
           }
           if (!isArrayIndexKey(name)) {
+            path.push(name);
             freeze((node as unknown as Record<PropertyKey, unknown>)[name]);
+            path.pop();
           }
         }
         const symbols = Object.getOwnPropertySymbols(node);
         for (let index = 0; index < symbols.length; index += 1) {
           const symbol = symbols[index];
           if (symbol !== undefined) {
+            path.push(symbol);
             freeze((node as unknown as Record<PropertyKey, unknown>)[symbol]);
+            path.pop();
           }
         }
-      } else {
+      } else if (isPlainRecord(node)) {
         for (const key of Reflect.ownKeys(node)) {
+          path.push(key);
           freeze((node as Record<PropertyKey, unknown>)[key]);
+          path.pop();
         }
+      } else {
+        reject(node);
       }
       Object.freeze(node);
       trusted.add(node);

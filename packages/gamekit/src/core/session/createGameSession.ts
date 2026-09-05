@@ -100,6 +100,11 @@ interface ActiveScene {
   readonly definition: ErasedScene;
   state: unknown;
   sceneTick: number;
+  /**
+   * Set before user cleanup runs: a throwing disposer never runs again —
+   * not on retry, not on session disposal — for this scene instance.
+   */
+  disposalAttempted: boolean;
 }
 
 type TransitionIntent =
@@ -227,9 +232,16 @@ export function createGameSessionWithDriver<
   const initialState = freezeObject(initialDefinition.create());
   let initialSnapshot: DeepReadonly<unknown>;
   try {
-    initialSnapshot = deepFreeze(initialDefinition.snapshot({ state: initialState }));
+    initialSnapshot = deepFreeze(initialDefinition.snapshot({ state: initialState }), {
+      scene: initialSceneName,
+    });
   } catch (error) {
-    initialDefinition.dispose?.(initialState);
+    // GS-SCENE-02: the cleanup failure must not replace the snapshot
+    // failure — compose losslessly in a stable order instead.
+    const cleanupFailure = captureFailure(() => initialDefinition.dispose?.(initialState));
+    if (cleanupFailure.failed) {
+      throw composeFailures(error, cleanupFailure.value);
+    }
     throw error;
   }
 
@@ -238,6 +250,7 @@ export function createGameSessionWithDriver<
     definition: initialDefinition,
     state: initialState,
     sceneTick: 0,
+    disposalAttempted: false,
   };
   let sceneName: string = initialSceneName;
   let currentSnapshot: DeepReadonly<unknown> = initialSnapshot;
@@ -250,6 +263,12 @@ export function createGameSessionWithDriver<
   let accumulatorMs = 0;
   let tick = 0;
   let pendingTransition: TransitionIntent | undefined;
+  /**
+   * Set when an outgoing scene disposal throws: the retained scene is
+   * explicitly non-resumable — `start()` refuses to update it until a
+   * transition or restart replaces it. Cleared on every successful install.
+   */
+  let sceneFaulted = false;
   let hardCutPending = false;
   let publishedThisCallback = false;
   let updateInProgress = false;
@@ -454,6 +473,19 @@ export function createGameSessionWithDriver<
   };
 
   /**
+   * Dispose one scene instance exactly once. The attempt flag is set before
+   * user cleanup runs, so a throwing disposer is never retried for this
+   * instance — by transition retries or by session disposal.
+   */
+  const disposeSceneInstance = (scene: ActiveScene, state: unknown): void => {
+    if (scene.disposalAttempted) {
+      return;
+    }
+    scene.disposalAttempted = true;
+    scene.definition.dispose?.(state);
+  };
+
+  /**
    * Transition to `targetName` following the deterministic ordering:
    * prepare the target -> dispose the outgoing scene exactly once -> advance
    * session time when the request came from a successful update -> install
@@ -484,7 +516,9 @@ export function createGameSessionWithDriver<
     try {
       targetState = freezeObject(targetDefinition.create());
       targetCreated = true;
-      targetSnapshot = deepFreeze(targetDefinition.snapshot({ state: targetState }));
+      targetSnapshot = deepFreeze(targetDefinition.snapshot({ state: targetState }), {
+        scene: targetName,
+      });
     } catch (error) {
       if (targetCreated) {
         try {
@@ -497,15 +531,17 @@ export function createGameSessionWithDriver<
     }
 
     try {
-      activeScene.definition.dispose?.(outgoingFinalState);
+      disposeSceneInstance(activeScene, outgoingFinalState);
     } catch (error) {
-      // The outgoing scene's dispose already ran (possibly partially) and is
-      // not retried; the old scene remains active with that honest caveat.
+      // The outgoing scene's dispose already ran (possibly partially) and
+      // is never retried; the old scene remains active but explicitly
+      // faulted. The prepared target is still cleaned up, and a failing
+      // target cleanup composes losslessly with the outgoing failure.
+      sceneFaulted = true;
       if (targetCreated) {
-        try {
-          targetDefinition.dispose?.(targetState);
-        } catch {
-          // Best effort.
+        const targetFailure = captureFailure(() => targetDefinition.dispose?.(targetState));
+        if (targetFailure.failed) {
+          throw composeFailures(error, targetFailure.value);
         }
       }
       throw error;
@@ -519,7 +555,9 @@ export function createGameSessionWithDriver<
       definition: targetDefinition,
       state: targetState,
       sceneTick: 0,
+      disposalAttempted: false,
     };
+    sceneFaulted = false;
     sceneName = targetName;
     currentSnapshot = targetSnapshot;
     previousSnapshot = targetSnapshot;
@@ -789,7 +827,7 @@ export function createGameSessionWithDriver<
           const freezeStart = diagnostics === undefined ? 0 : now();
           let nextSnapshot: DeepReadonly<unknown>;
           try {
-            nextSnapshot = deepFreeze(rawSnapshot);
+            nextSnapshot = deepFreeze(rawSnapshot, { scene: sceneNameForTick, tick: nextTick });
           } catch (error) {
             stagedThisTick = [];
             throw error;
@@ -864,6 +902,12 @@ export function createGameSessionWithDriver<
       assertLive();
       if (status === 'running') {
         return;
+      }
+      if (sceneFaulted) {
+        throw new GameSessionLifecycleError(
+          'The active scene failed disposal and is explicitly non-resumable: ' +
+            'replace it with setScene() or restartScene() before start(), or dispose the session.',
+        );
       }
       const previous = status;
       previousTimestampMs = undefined;
@@ -957,7 +1001,7 @@ export function createGameSessionWithDriver<
       const notificationFailure = captureFailure(() => setStatus('disposed'));
       const cleanupFailure = captureFailure(() => {
         listeners.clear();
-        activeScene.definition.dispose?.(activeScene.state);
+        disposeSceneInstance(activeScene, activeScene.state);
       });
       if (notificationFailure.failed && cleanupFailure.failed) {
         throw composeFailures(notificationFailure.value, cleanupFailure.value);

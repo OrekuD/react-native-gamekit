@@ -12,7 +12,7 @@ import { createDeepFreeze } from '../src/core/session/deepFreeze';
  */
 
 interface AccessCounting {
-  readonly getCount: () => number;
+  readonly getCount: number;
 }
 
 function countAccesses<T extends object>(target: T): T & AccessCounting {
@@ -33,7 +33,9 @@ function countAccesses<T extends object>(target: T): T & AccessCounting {
     },
   }) as T & AccessCounting;
   Object.defineProperty(proxy, 'getCount', {
-    value: () => gets,
+    // A getter (not a function-valued property): the frozen graph only ever
+    // carries the numeric read, so domain enforcement never sees a function.
+    get: () => gets,
     enumerable: false,
     configurable: true,
   });
@@ -45,10 +47,10 @@ describe('trusted deep-freeze cache (T3)', () => {
     const freezer = createDeepFreeze();
     const shared = countAccesses({ x: 1, y: 2, alive: true });
     const first = freezer({ bricks: [shared, { x: 3, y: 4 }] });
-    const afterFirst = shared.getCount();
+    const afterFirst = shared.getCount;
     const second = freezer({ bricks: [shared, { x: 5, y: 6 }] });
     assert.ok(afterFirst >= 3, 'first traversal read the shared node and its children');
-    assert.equal(shared.getCount(), afterFirst, 'second traversal must not re-read the shared subtree');
+    assert.equal(shared.getCount, afterFirst, 'second traversal must not re-read the shared subtree');
     assert.equal(Object.isFrozen(first.bricks[0]), true);
     assert.equal(Object.isFrozen(second.bricks[0]), true);
   });
@@ -98,11 +100,11 @@ describe('trusted deep-freeze cache (T3)', () => {
     );
     const parent = countAccesses({ child: flaky, boom: 1 });
     assert.throws(() => freezer(parent), /boom/);
-    const countAfterThrow = parent.getCount();
+    const countAfterThrow = parent.getCount;
     throwNow = false;
     const frame = freezer(parent);
     assert.ok(
-      parent.getCount() > countAfterThrow,
+      parent.getCount > countAfterThrow,
       'failed traversal must not mark the parent trusted; it is re-walked',
     );
     assert.equal(Object.isFrozen(frame.child), true);
@@ -126,10 +128,10 @@ describe('trusted deep-freeze cache (T3)', () => {
     const freezerB = createDeepFreeze();
     const shared = countAccesses({ x: 1 });
     freezerA({ bricks: [shared] });
-    const afterA = shared.getCount();
+    const afterA = shared.getCount;
     freezerB({ bricks: [shared] });
     assert.ok(
-      shared.getCount() > afterA,
+      shared.getCount > afterA,
       'a second session must not trust subtrees cached by the first',
     );
   });

@@ -24,7 +24,20 @@ const playScene = defineScene({
 
 ## What state is allowed
 
-Anything that `create` returns and `update` returns. The runtime deep-freezes snapshots, so renderer data must be plain and serializable. Functions in state are a smell: behavior belongs in `update`, not in data.
+Anything that `create` returns and `update` returns. The supported snapshot
+domain is explicit: plain records, arrays, and scalar values. Returning
+anything else from `snapshot` — functions, symbols, bigints, class instances
+such as `Map`, `Set`, or `Date` — fails with a `SnapshotDomainError` naming
+the key path before anything publishes, so an unsupported value can never
+leave a half-published commit. The runtime deep-freezes snapshots, so
+renderer data must be plain and serializable. Functions in state are a smell:
+behavior belongs in `update`, not in data.
+
+Returning a state reference from `snapshot` transfers it into immutable
+snapshot ownership: the same object is frozen in place, so later updates
+must replace it rather than mutate it. Structural sharing and cycles keep
+working; the frozen snapshot and the next state may share unchanged
+subtrees by reference.
 
 ## Where entities come from
 
