@@ -6,8 +6,10 @@
  * overlap returns `time: 0` with the static manifold normal; zero
  * displacement returns `undefined` (never NaN). At equal times the
  * candidate evaluated FIRST wins — the X face before the Y face, faces
- * before corners, corners in index order (T11-TF1). Misses allocate
- * nothing.
+ * before corners, corners in index order (T11-TF1). Circle-sweep misses
+ * allocate nothing; AABB-AABB sweep misses still allocate the expanded
+ * box, segment endpoints, and axis array (GS-COLLISION-03: the old blanket
+ * claim overstated this path, which stays scalar-simple by design).
  *
  * Circle-AABB sweeps raycast against the exact Minkowski geometry: the
  * target expanded by the radius with ROUNDED corners. Face candidates come

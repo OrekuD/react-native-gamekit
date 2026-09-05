@@ -182,6 +182,10 @@ export function collideCircleAabb2D(circle: Circle2D, aabb: Aabb2D): CollisionHi
   return Object.freeze({
     normal,
     depth: circle.radius - distance,
-    point: closest,
+    // GS-COLLISION-01: copy-freeze the contact point at the public result
+    // boundary. `closest` is rebuilt per call, but copying keeps the hit
+    // independent of any future helper caching; sweeps reuse this object
+    // through hitFromManifold, so one fix covers every wrapper.
+    point: Object.freeze({ x: closest.x, y: closest.y }),
   });
 }

@@ -41,6 +41,18 @@ export interface BuildSpatialHash2DOptions {
 /** Maximum cells an item or query may OCCUPY per axis (bounded execution). */
 export const MAX_SPATIAL_HASH_SPAN_CELLS = 1024;
 
+/**
+ * Maximum cells visited by ONE item insert or ONE query (GS-COLLISION-02).
+ *
+ * The per-axis bound alone permits ~1M cell visits per operation (~38ms
+ * on desktop V8, multiples of that on mobile). The total budget fails
+ * clearly before such spans do any work. Ordinary game spans (a few
+ * hundred cells per axis at most) pass with wide headroom; aggregate build
+ * cost still scales with item count, so prefer an appropriate cell size
+ * and reuse static indexes instead of rebuilding per dynamic body per tick.
+ */
+export const MAX_SPATIAL_HASH_TOTAL_CELLS = 65_536;
+
 /** Opaque per-index internal buckets and order, never exposed publicly. */
 const internalState = new WeakMap<
   SpatialHashIndex2D,
@@ -96,7 +108,9 @@ export function buildSpatialHash2D(options: BuildSpatialHash2DOptions): SpatialH
   });
   internalState.set(index, {
     cells: new Map([...cells.entries()].map(([key, ids]) => [key, Object.freeze(ids)])),
-    order: new Map(order),
+    // The local `order` map never escapes this function, so it is stored
+    // directly (GS-COLLISION-02): the extra copy served no ownership purpose.
+    order,
   });
   return index;
 }
@@ -146,6 +160,7 @@ function* cellsOf(bounds: Aabb2D, cellSize: number): Generator<Cell> {
   const maxY = cellIndex(bounds.y + bounds.height, cellSize);
   assertSpan(maxX - minX, 'x');
   assertSpan(maxY - minY, 'y');
+  assertTotalCells(maxX - minX, maxY - minY);
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       yield { x, y };
@@ -174,6 +189,19 @@ function assertSpan(span: number, axis: 'x' | 'y'): void {
       'GEOMETRY_SPATIAL_INDEX_RANGE',
       `bounds.${axis}`,
       `bounds occupy ${cells} cells, exceeding the maximum of ${MAX_SPATIAL_HASH_SPAN_CELLS}`,
+    );
+  }
+}
+
+/** Reject total occupied cells beyond the work budget (GS-COLLISION-02). */
+function assertTotalCells(spanX: number, spanY: number): void {
+  // Both axes already passed assertSpan, so the product cannot overflow.
+  const total = (spanX + 1) * (spanY + 1);
+  if (total > MAX_SPATIAL_HASH_TOTAL_CELLS) {
+    throw new GeometryError(
+      'GEOMETRY_SPATIAL_INDEX_RANGE',
+      'bounds',
+      `bounds occupy ${total} cells, exceeding the total maximum of ${MAX_SPATIAL_HASH_TOTAL_CELLS}`,
     );
   }
 }

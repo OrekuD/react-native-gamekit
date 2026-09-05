@@ -117,3 +117,47 @@ describe('geometry values', () => {
     assert.equal(distancePoint2D({ x: 0, y: 0 }, { x: 3, y: 4 }), 5);
   });
 });
+
+describe('GS-GEOMETRY-01 structured shape policy', () => {
+  it('validators reject null/array/scalar inputs with GeometryError, never TypeError', async () => {
+    const validation = await import('../src/geometry/validation.ts');
+    const malformed: unknown[] = [null, undefined, 42, 'point', [1, 2], true];
+    const validators: Record<string, (value: unknown) => void> = {
+      point: (value) => validation.assertValidPoint2D(value as never),
+      vector: (value) => validation.assertValidVector2D(value as never),
+      aabb: (value) => validation.assertValidAabb2D(value as never),
+      circle: (value) => validation.assertValidCircle2D(value as never),
+      segment: (value) => validation.assertValidSegment2D(value as never),
+    };
+    for (const [name, validate] of Object.entries(validators)) {
+      for (const value of malformed) {
+        assert.throws(
+          () => validate(value),
+          (error: unknown) =>
+            error instanceof GeometryError && error.code === 'GEOMETRY_INVALID_SHAPE',
+          `${name} rejects ${String(value)} structurally`,
+        );
+      }
+    }
+    // Malformed nested records still fail on the field path, not the shape.
+    assert.throws(
+      () => validation.assertValidPoint2D({ x: 1 } as never),
+      (error: unknown) =>
+        error instanceof GeometryError &&
+        error.code === 'GEOMETRY_INVALID_NUMBER' &&
+        error.field === 'point.y',
+    );
+  });
+
+  it('ordinary magnitudes stay unchanged, including zero normalization', () => {
+    assert.deepEqual(addVector2D({ x: 1e6, y: -2e6 }, { x: 3, y: 4 }), { x: 1000003, y: -1999996 });
+    assert.deepEqual(scaleVector2D({ x: 3, y: 4 }, 2), { x: 6, y: 8 });
+    assert.deepEqual(normalizeVector2D({ x: 0, y: 0 }), { x: 0, y: 0 });
+    assert.deepEqual(translateAabb2D({ x: 1, y: 2, width: 3, height: 4 }, { x: 10, y: 20 }), {
+      x: 11,
+      y: 22,
+      width: 3,
+      height: 4,
+    });
+  });
+});
