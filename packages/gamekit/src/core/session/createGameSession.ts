@@ -590,6 +590,31 @@ export function createGameSessionWithDriver<
     });
   };
 
+  // One scheduler-failure policy for successor scheduling (GS-SESSION-02).
+  // The initial `start()` path keeps its own restore-previous-status policy
+  // because no running state was ever published there. On failure: clear the
+  // handle, invalidate the generation so late callbacks are no-ops,
+  // neutralize input via the pause path, and publish paused while preserving
+  // the scheduling error — a throwing status listener composes with it
+  // instead of masking it. Never retries automatically.
+  const failScheduling = (error: unknown): never => {
+    frameHandle = undefined;
+    try {
+      pauseInternal();
+    } catch (statusError) {
+      throw composeFailures(error, statusError);
+    }
+    throw error;
+  };
+
+  const scheduleSuccessor = (activeGeneration: number): void => {
+    try {
+      schedule(activeGeneration);
+    } catch (error) {
+      failScheduling(error);
+    }
+  };
+
   const schedule = (activeGeneration: number) => {
     frameHandle = options.frameDriver.requestFrame((timestampMs) => {
       if (status !== 'running' || generation !== activeGeneration) {
@@ -601,8 +626,10 @@ export function createGameSessionWithDriver<
         diagnostics.onDisplayCallback();
       }
 
-      // A pending external transition commits at the next fixed-step boundary
-      // without advancing simulation tick/time.
+      // A pending external transition commits at the next frame-driver
+      // callback — a zero-step callback may carry it — without advancing
+      // simulation tick/time. The target scene first updates at the next
+      // due fixed step; accumulated timing debt is preserved.
       if (pendingTransition !== undefined) {
         const pending = pendingTransition;
         pendingTransition = undefined;
@@ -623,7 +650,7 @@ export function createGameSessionWithDriver<
           commitOrPause();
         }
         if (status === 'running' && generation === activeGeneration) {
-          schedule(activeGeneration);
+          scheduleSuccessor(activeGeneration);
         }
         return;
       }
@@ -819,7 +846,7 @@ export function createGameSessionWithDriver<
         commitOrPause();
       }
       if (status === 'running' && generation === activeGeneration) {
-        schedule(activeGeneration);
+        scheduleSuccessor(activeGeneration);
       }
     });
   };

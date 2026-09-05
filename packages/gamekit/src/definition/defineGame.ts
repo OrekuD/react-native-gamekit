@@ -1,7 +1,6 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 import type { AssetGroupMap } from '../assets/types';
 import type { GameEventDescriptor } from '../events/types';
-import type { GameDefinition, InputMap, SceneDefinitionMarker, SceneMap } from './types';
+import type { GameDefinition, InputMap, SceneMap } from './types';
 
 type SceneActions<TScene> = TScene extends { readonly __actionType?: infer TAction }
   ? Exclude<TAction, undefined>
@@ -57,19 +56,6 @@ type ValidateEventsWhenScenesEmit<
   : TEventDefs extends Record<string, never>
     ? { readonly __eventsRequired: 'scenes declare emits but game has no events map' }
     : unknown;
-
-type SceneEventDefs<TScene> = TScene extends { readonly __eventDefsType?: infer T }
-  ? T
-  : never;
-
-// Runtime identity is checked via reference equality in the function body.
-// Type-level check is intentionally permissive to avoid false positives for
-// games without events and for separate test files that share the same
-// events shape but not the same branded instance.
-type ValidateSceneEventDefsIdentity<
-  TScenes extends SceneMap,
-  TEventDefs extends Record<string, GameEventDescriptor<unknown>>,
-> = unknown;
 
 /**
  * Declare a game.
@@ -129,8 +115,7 @@ export function defineGame<
     ValidateSceneActions<TScenes, TInput> &
     ValidateSceneTransitions<TScenes> &
     ValidateSceneEmits<TScenes, TEventDefs> &
-    ValidateEventsWhenScenesEmit<TScenes, TEventDefs> &
-    ValidateSceneEventDefsIdentity<TScenes, TEventDefs>,
+    ValidateEventsWhenScenesEmit<TScenes, TEventDefs>,
 ): GameDefinition<TScenes, TInput, TInitialScene, TAssets, TEventDefs> {
   // The viewport config is part of the public session surface; freeze it so a
   // caller cannot mutate a live game's coordinate authority.

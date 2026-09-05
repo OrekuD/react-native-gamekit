@@ -118,9 +118,11 @@ export interface GameSession<
   /**
    * Transition to a declared scene.
    *
-   * While running, the transition commits at the next fixed-step boundary.
-   * While idle or paused, it commits synchronously and publishes the new
-   * frame. Setting the current scene is an idempotent no-op.
+   * While running, the transition commits at the next frame-driver callback
+   * — even when no fixed step is due — without advancing simulation tick or
+   * time. The target scene first updates at the next due fixed step. While
+   * idle or paused, it commits synchronously and publishes the new frame.
+   * Setting the current scene is an idempotent no-op.
    */
   setScene(name: keyof TScenes): void;
   /** Recreate the active scene with fresh state. */

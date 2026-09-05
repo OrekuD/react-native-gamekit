@@ -55,7 +55,7 @@ game.setScene('play'); // accepts only declared scene names
 game.restartScene();
 ```
 
-While running, an external transition commits at the next fixed-step boundary.
+While running, an external transition commits at the next frame-driver callback.
 While idle or paused, it commits synchronously and publishes the new frame.
 At most one different pending external transition is allowed; a conflicting
 second request throws. `setScene(currentScene)` is a no-op, and an external

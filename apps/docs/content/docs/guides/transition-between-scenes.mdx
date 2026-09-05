@@ -42,7 +42,7 @@ session.setScene('play'); // only declared names
 session.restartScene();
 ```
 
-`setScene` commits at the next fixed-step boundary while running, and synchronously while idle or paused. Setting the current scene is an idempotent no-op.
+`setScene` commits at the next frame-driver callback while running — even when no fixed step is due, without advancing simulation time — and synchronously while idle or paused. Setting the current scene is an idempotent no-op.
 
 ## 4. What transitions commit
 
