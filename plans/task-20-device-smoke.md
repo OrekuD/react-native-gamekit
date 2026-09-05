@@ -107,6 +107,30 @@ risk instead.
 | Mid-range Android phone | _pending_ | _pending_ | dev build | _pending_ | _pending_ | _pending_ |
 | 120 Hz device (conditional) | _pending_ | 120 Hz | dev build | _pending_ | _pending_ | _pending_ |
 
+## GS-REACT-03 — Buffer Probe (slot publication)
+
+The Buffer Probe screen (`buffer-probe` in the catalog) is a deterministic
+native-integration reproduction: one lab timer advances a synthetic commit,
+pans the viewport 1px per frame, and emits a 6-particle puff every 30 ticks.
+Three Atlas systems change ONLY their buffer-slot contents per frame — a
+fixed-count (8) orbiting sprite batch, a scrolling 40x12 tile layer, and a
+looping sprite emitter. No session, no camera, no React state per frame, no
+alpha-driven visuals. Installed versions for any run: Skia 2.11.0,
+Reanimated 4.5.3, Worklets 0.10.3 — record the exact versions and build type
+with the result.
+
+1. Open Buffer Probe from the home list.
+2. Watch for 20 seconds without touching anything:
+   a. The 8 orbiters circle smoothly around the center.
+   b. Tiles scroll left with the pan (brick teeth every fourth column make
+      motion obvious); the wraparound jump every ~10 seconds must also draw.
+   c. Puffs rise from the emission point and fade continuously.
+3. Any layer sitting frozen while the others move means that layer's buffer
+   writes are not notifying the native renderer — record which layers move
+   and which freeze, per device, in the matrix notes.
+4. Exit with `buffer-probe-back`, reopen, and confirm the same behavior (no
+   stale slots from the previous mount).
+
 ## Coverage note
 
 The headless equivalents of this flow are already enforced: every reference

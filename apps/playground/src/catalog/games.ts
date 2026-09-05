@@ -74,6 +74,12 @@ export const PLAYGROUND_GAMES = [
     label: 'Play',
   },
   {
+    id: 'buffer-probe',
+    title: 'Buffer Probe',
+    description: 'GS-REACT-03 reproduction: fixed-count orbiting batch, scrolling tiles, looping emitter.',
+    label: 'Run',
+  },
+  {
     id: 'particle-lab',
     title: 'Particle Lab',
     description: 'Seeded bursts, fixed pools, overflow policies, pause freeze, diagnostics.',

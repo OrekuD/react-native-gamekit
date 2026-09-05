@@ -46,6 +46,7 @@ import { mossyCavern3Assets } from '../screens/mossy-cavern-3/mossyCavern3Assets
 import { createMossyCavern3Session } from '../screens/mossy-cavern-3/mossyCavern3Game';
 import { loadMossyCavern3Save } from '../screens/mossy-cavern-3/mossyCavern3Save';
 import AudioLabScreen from '../screens/audio-lab/AudioLabScreen';
+import BufferProbeScreen from '../screens/buffer-probe/BufferProbeScreen';
 import ParticleLabScreen from '../screens/particle-lab/ParticleLabScreen';
 import StorageLabScreen from '../screens/storage-lab/StorageLabScreen';
 import { CollisionLabRenderer } from '../screens/collision-lab/CollisionLabRenderer';
@@ -376,6 +377,12 @@ const GAME_CONTENTS: Record<PlaygroundGameId, SurfaceGameEntry> = {
     pointer: false,
     camera2D: mossyCavern3Camera as unknown as GameCamera2DDefinition<never>,
     assets: { manifest: mossyCavern3Assets as unknown, groups: ['world'] },
+  },
+  'buffer-probe': {
+    renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
+    content: BufferProbeScreen as unknown as ComponentType<PlaygroundGameContentProps>,
+    createSession: () => createIdleSession() as unknown as GameSession,
+    pointer: false,
   },
   'particle-lab': {
     renderer: NeutralRenderer as unknown as ComponentType<GameRendererProps<never>>,
