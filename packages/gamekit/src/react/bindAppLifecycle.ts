@@ -1,4 +1,5 @@
 import type { GameSessionStatus, GameSubscription } from '../core/session/types';
+import { createCleanupList } from './cleanupList';
 
 /** Minimal AppState-like source used to keep this seam platform-neutral. */
 export interface AppLifecycleSource {
@@ -42,6 +43,9 @@ export function bindAppLifecycle(
   source: AppLifecycleSource,
   session: AppLifecycleSession,
 ): () => void {
+  // GS-REACT-02: setup is transactional — every stage registers its release
+  // as it completes, so a later failure unwinds everything acquired so far.
+  const cleanups = createCleanupList();
   let pausedByLifecycle = false;
   let currentState = source.currentState ?? 'active';
 
@@ -60,37 +64,44 @@ export function bindAppLifecycle(
   // any running transition that happens while the app is not active, so a
   // frame loop cannot escape into the background.
   let statusSubscription: GameSubscription | undefined;
-  if (session.addStatusListener !== undefined) {
-    statusSubscription = session.addStatusListener((status) => {
-      if (status === 'running' && isInactive(currentState)) {
-        session.pause();
-        pausedByLifecycle = true;
-      }
-    });
-  }
-
-  // Synchronize the initial app state before any change event arrives.
-  if (isInactive(source.currentState)) {
-    pauseForBackground();
-  }
-
-  const subscription = source.addEventListener('change', (next) => {
-    currentState = next;
-    if (next === 'active') {
-      if (pausedByLifecycle) {
-        pausedByLifecycle = false;
-        // Resume only if the session is still paused; a different actor may
-        // have resumed or disposed it while the app was backgrounded.
-        if (session.getStatus() === 'paused') {
-          session.resume();
+  try {
+    if (session.addStatusListener !== undefined) {
+      statusSubscription = session.addStatusListener((status) => {
+        if (status === 'running' && isInactive(currentState)) {
+          session.pause();
+          pausedByLifecycle = true;
         }
-      }
-      return;
+      });
+      cleanups.add(() => statusSubscription?.remove());
     }
-    if (isInactive(next)) {
+
+    // Synchronize the initial app state before any change event arrives.
+    if (isInactive(source.currentState)) {
       pauseForBackground();
     }
-  });
+
+    const subscription = source.addEventListener('change', (next) => {
+      currentState = next;
+      if (next === 'active') {
+        if (pausedByLifecycle) {
+          pausedByLifecycle = false;
+          // Resume only if the session is still paused; a different actor may
+          // have resumed or disposed it while the app was backgrounded.
+          if (session.getStatus() === 'paused') {
+            session.resume();
+          }
+        }
+        return;
+      }
+      if (isInactive(next)) {
+        pauseForBackground();
+      }
+    });
+    cleanups.add(() => subscription.remove());
+  } catch (error) {
+    cleanups.releaseAll();
+    throw error;
+  }
 
   let cleanedUp = false;
   return () => {
@@ -98,8 +109,7 @@ export function bindAppLifecycle(
       return;
     }
     cleanedUp = true;
-    statusSubscription?.remove();
-    subscription.remove();
+    cleanups.releaseAll();
     pausedByLifecycle = false;
   };
 }

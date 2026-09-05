@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   type ComponentType,
+  type MutableRefObject,
   type ReactNode,
 } from 'react';
 import {
@@ -28,6 +29,7 @@ import type { GameCamera2DDefinition } from './camera2d/defineGameCamera2D';
 import { usePresentedCameraBinding } from './camera2d/usePresentedCameraBinding';
 import { bindAppLifecycle } from './bindAppLifecycle';
 import { bindGameSession } from './bindGameSession';
+import { createCleanupList } from './cleanupList';
 import { createGameLifecycleSource, GameLifecycleProvider } from './lifecycleSource';
 import type { GameViewInstrumentation } from './instrumentation';
 import { bindingForViewport, type ViewportBinding } from './viewportBinding';
@@ -150,6 +152,7 @@ function GamePresentation<
   renderer,
   viewportValue,
   instrumentationRef,
+  instrumentation,
   cameraDefinition,
   presentedCamera,
 }: {
@@ -157,7 +160,8 @@ function GamePresentation<
   readonly assets: LoadedAssets<TAssets> | undefined;
   readonly renderer: ComponentType<GameRendererProps<TScenes, TAssets>>;
   readonly viewportValue: SharedValue<ResolvedViewport2D | undefined>;
-  readonly instrumentationRef: { readonly current: GameViewInstrumentation | undefined };
+  readonly instrumentationRef: MutableRefObject<GameViewInstrumentation | undefined>;
+  readonly instrumentation: GameViewInstrumentation | undefined;
   readonly cameraDefinition: GameCamera2DDefinition<CommitFrame<TScenes>> | undefined;
   readonly presentedCamera: SharedValue<CameraCut2D | undefined>;
 }) {
@@ -178,43 +182,68 @@ function GamePresentation<
   // report the FIRST UI frame that saw a new commit.
   const observedRevision = useSharedValue(-1);
   const observedEpoch = useSharedValue(-1);
+  // GS-REACT-01: mirror whether the UI-observation diagnostic is enabled so
+  // the frame callback branches BEFORE timestamp reads and RN scheduling.
+  // Updated alongside the ref (same effect), never read during render.
+  const instrumentationEnabled = useSharedValue(
+    instrumentation?.onUiRevisionObserved !== undefined,
+  );
+
+  // GS-REACT-01: the ref and the UI-side enabled mirror update together so
+  // replacing instrumentation never restarts the session and the frame
+  // callback can branch before any timestamp read or RN scheduling.
+  useEffect(() => {
+    instrumentationRef.current = instrumentation;
+    instrumentationEnabled.value = instrumentation?.onUiRevisionObserved !== undefined;
+  }, [instrumentation, instrumentationEnabled, instrumentationRef]);
 
   useEffect(() => {
-    epoch.value += 1;
-    // RF6: the frame is seeded at mount from this session; the keyed remount
-    // guarantees the renderer below never reads the previous session's frame.
-    frame.value = game.getRenderFrame();
-    // T10.6: subscribe to core status BEFORE the mount-time start, so the
-    // idle -> running transition cannot be missed and every lifecycle change
-    // (manual pause, app background, error path) drives the same mirror.
-    running.value = game.status === 'running';
-    const statusSubscription = game.addStatusListener((status) => {
-      running.value = status === 'running';
-    });
-    const cleanupBinding = bindGameSession(game, (nextFrame) => {
-      frame.value = nextFrame;
-      cameraBinding.commit(nextFrame);
-      instrumentationRef.current?.onPresentCommit?.(nextFrame.revision, Date.now());
-    });
-    const cleanupLifecycle = bindAppLifecycle(AppState, {
-      getStatus: () => game.status,
-      pause: () => {
-        if (game.status !== 'disposed') {
-          game.pause();
-        }
-      },
-      resume: () => {
-        if (game.status !== 'disposed') {
-          game.start();
-        }
-      },
-      addStatusListener: (listener) => game.addStatusListener(listener),
-    });
+    // GS-REACT-02: the mount wiring is one transaction. Every acquired
+    // subscription registers its release as it completes, so a failing
+    // stage unwinds everything before it; unmount releases all stages in
+    // reverse order without stopping at the first failure.
+    const cleanups = createCleanupList();
+    try {
+      epoch.value += 1;
+      // RF6: the frame is seeded at mount from this session; the keyed remount
+      // guarantees the renderer below never reads the previous session's frame.
+      frame.value = game.getRenderFrame();
+      // T10.6: subscribe to core status BEFORE the mount-time start, so the
+      // idle -> running transition cannot be missed and every lifecycle change
+      // (manual pause, app background, error path) drives the same mirror.
+      running.value = game.status === 'running';
+      const statusSubscription = game.addStatusListener((status) => {
+        running.value = status === 'running';
+      });
+      cleanups.add(() => statusSubscription.remove());
+      const cleanupBinding = bindGameSession(game, (nextFrame) => {
+        frame.value = nextFrame;
+        cameraBinding.commit(nextFrame);
+        instrumentationRef.current?.onPresentCommit?.(nextFrame.revision, Date.now());
+      });
+      cleanups.add(cleanupBinding);
+      const cleanupLifecycle = bindAppLifecycle(AppState, {
+        getStatus: () => game.status,
+        pause: () => {
+          if (game.status !== 'disposed') {
+            game.pause();
+          }
+        },
+        resume: () => {
+          if (game.status !== 'disposed') {
+            game.start();
+          }
+        },
+        addStatusListener: (listener) => game.addStatusListener(listener),
+      });
+      cleanups.add(cleanupLifecycle);
+      cleanups.add(() => cameraBinding.dispose());
+    } catch (error) {
+      cleanups.releaseAll();
+      throw error;
+    }
     return () => {
-      cleanupLifecycle();
-      cleanupBinding();
-      statusSubscription.remove();
-      cameraBinding.dispose();
+      cleanups.releaseAll();
     };
   }, [cameraBinding, epoch, frame, game, running]);
 
@@ -237,7 +266,12 @@ function GamePresentation<
     if (observedEpoch.value !== epoch.value || observedRevision.value !== envelope.revision) {
       observedEpoch.value = epoch.value;
       observedRevision.value = envelope.revision;
-      scheduleOnRN(reportUiObserved, envelope.revision, Date.now());
+      // GS-REACT-01: without an enabled observer there is no timestamp
+      // read and no RN scheduling — the disabled path performs no timing
+      // reads, packet creation, or cross-runtime calls.
+      if (instrumentationEnabled.value) {
+        scheduleOnRN(reportUiObserved, envelope.revision, Date.now());
+      }
     }
     const previousState = {
       epoch: clockEpoch.value,
@@ -324,10 +358,6 @@ export function GameView<
   const lifecycle = useMemo(() => createGameLifecycleSource(game), [game]);
 
   useEffect(() => {
-    instrumentationRef.current = instrumentation;
-  }, [instrumentation]);
-
-  useEffect(() => {
     viewportValue.value = binding.resolved;
   }, [binding, viewportValue]);
 
@@ -362,6 +392,7 @@ export function GameView<
               renderer={Renderer}
               viewportValue={viewportValue}
               instrumentationRef={instrumentationRef}
+              instrumentation={instrumentation}
               cameraDefinition={camera2D}
               presentedCamera={presentedCamera}
             />
