@@ -9,6 +9,16 @@
  */
 import type { Camera2D } from '../../camera2d';
 
+/** Failure context for a camera selector/cut/validation failure (GS-CAMERA-02). */
+export interface GameCameraErrorInfo {
+  /** Which stage of the commit transaction failed. */
+  readonly phase: 'select' | 'cut' | 'validate';
+  /** The original thrown value, preserved verbatim. */
+  readonly error: unknown;
+  /** The scene whose commit failed. */
+  readonly scene: string;
+}
+
 /** The static camera definition supplied to `GameView`. */
 export interface GameCamera2DDefinition<TFrame> {
   /**
@@ -23,6 +33,13 @@ export interface GameCamera2DDefinition<TFrame> {
    * binding-generation changes.
    */
   readonly cut?: (frame: TFrame) => boolean;
+  /**
+   * Optional failure reporter (GS-CAMERA-02). Invoked at most once per
+   * failure episode with the failing phase and scene; a successful commit
+   * resets deduplication. Failures without a reporter keep the last valid
+   * presentation silently.
+   */
+  readonly onError?: (info: GameCameraErrorInfo) => void;
 }
 
 /** Validate and return a camera definition. */
@@ -34,6 +51,9 @@ export function defineGameCamera2D<TFrame>(
   }
   if (definition.cut !== undefined && typeof definition.cut !== 'function') {
     throw new Error('defineGameCamera2D requires cut to be a function when provided');
+  }
+  if (definition.onError !== undefined && typeof definition.onError !== 'function') {
+    throw new Error('defineGameCamera2D requires onError to be a function when provided');
   }
   return definition;
 }

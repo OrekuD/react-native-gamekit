@@ -75,9 +75,44 @@ export function usePresentedCameraBinding<TScenes extends SceneMap>(
   }, [authoredCurrent, authoredPrevious, cutId, definition, presented]);
 
   const binding = useMemo<PresentedCameraBinding<TScenes>>(
-    () => ({
+    () => {
+      // GS-CAMERA-02: one report per failure episode (phase + message),
+      // reset by the next successful commit so a later distinct failure
+      // stays visible.
+      let lastReportedFailureKey: string | null = null;
+      const reportCameraError = (
+        activeDefinition: GameCamera2DDefinition<CommitFrame<TScenes>>,
+        phase: 'select' | 'cut' | 'validate',
+        error: unknown,
+        frame: CommitFrame<TScenes>,
+      ): void => {
+        const onError = activeDefinition.onError;
+        if (onError === undefined) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        const key = `${phase}:${message}`;
+        if (key === lastReportedFailureKey) {
+          return;
+        }
+        lastReportedFailureKey = key;
+        try {
+          onError({ phase, error, scene: String(frame.scene) });
+        } catch {
+          // A throwing reporter must not break the last-valid fallback.
+        }
+      };
+      const markRecovered = (): void => {
+        lastReportedFailureKey = null;
+      };
+      return {
       commit: (frame) => {
-        if (definition === undefined) {
+        // GS-CAMERA-01: the binding identity is stable across definition
+        // replacements (the inner effect owns the pending cut), so a
+        // definition change never tears down presentation or restarts the
+        // session. Always read the current definition here.
+        const activeDefinition = definitionRef.current;
+        if (activeDefinition === undefined) {
           return;
         }
         // One exception-safe transaction: select + cut + validation. A
@@ -85,17 +120,23 @@ export function usePresentedCameraBinding<TScenes extends SceneMap>(
         // half-updated scene/cut state.
         let camera;
         let explicitCut = false;
+        let phase: 'select' | 'cut' | 'validate' = 'select';
         try {
           // T12-RF4 + T12-SF3: the selector output is validated AND copied
           // at the JS commit boundary with the STRICT full-camera clone — a
           // mutable selector result can never alias the authored values,
           // and a partial camera is rejected, never completed with
           // defaults.
-          camera = cloneValidCamera2D(definition.select(frame));
-          explicitCut = definition.cut?.(frame) === true;
-        } catch {
+          const selected = activeDefinition.select(frame);
+          phase = 'cut';
+          explicitCut = activeDefinition.cut?.(frame) === true;
+          phase = 'validate';
+          camera = cloneValidCamera2D(selected);
+        } catch (error) {
+          reportCameraError(activeDefinition, phase, error, frame);
           return;
         }
+        markRecovered();
         const pendingCut = pendingCutRef.current;
         pendingCutRef.current = false;
         const sceneChanged = !sameSceneName(sceneNameRef.current, String(frame.scene));
@@ -105,6 +146,11 @@ export function usePresentedCameraBinding<TScenes extends SceneMap>(
           authoredPrevious.value = undefined;
           cutId.value += 1;
           authoredCurrent.value = { camera, cutId: cutId.value };
+          // GS-CAMERA-01: a valid hard cut installs the presented camera
+          // immediately — paused time presents coherently without waiting
+          // for the next present(alpha). Ordinary commits leave
+          // presentation to the frame clock so pause freezes interpolation.
+          presented.value = { camera, cutId: cutId.value };
         } else {
           authoredPrevious.value = authoredCurrent.value;
           authoredCurrent.value = current;
@@ -126,8 +172,13 @@ export function usePresentedCameraBinding<TScenes extends SceneMap>(
         authoredCurrent.value = undefined;
         presented.value = undefined;
       },
-    }),
-    [definition, presented],
+      };
+    },
+    // GS-CAMERA-01: stable identity across definition replacements — the
+    // inner effect owns the pending cut, so definition changes never tear
+    // down presentation or restart the session. `presented` is GameView-owned
+    // and stable per mount.
+    [presented],
   );
 
   return binding;

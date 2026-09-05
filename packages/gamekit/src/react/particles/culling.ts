@@ -1,4 +1,5 @@
 /** Conservative world-space AABB used for presentation-only culling. */
+import { rotatedHalfExtents2D } from '../../camera2d/extents';
 export interface WorldAabb {
   readonly minX: number;
   readonly minY: number;
@@ -32,11 +33,9 @@ export function cameraVisibleWorldBounds(
   if (view === undefined || cam === undefined) return undefined;
   const hx = view.width / (2 * cam.zoom);
   const hy = view.height / (2 * cam.zoom);
-  const t = cam.rotationRadians;
-  const cos = Math.cos(t);
-  const sin = Math.sin(t);
-  const ex = Math.abs(hx * cos) + Math.abs(hy * sin) + pad;
-  const ey = Math.abs(hx * sin) + Math.abs(hy * cos) + pad;
+  const extent = rotatedHalfExtents2D(hx, hy, cam.rotationRadians);
+  const ex = extent.x + pad;
+  const ey = extent.y + pad;
   return {
     minX: cam.center.x - ex,
     minY: cam.center.y - ey,

@@ -1,4 +1,5 @@
 import type { TileMap2D, TileSet2D } from '../../tilemap/types';
+import { rotatedHalfExtents2D } from '../../camera2d/extents';
 
 /**
  * Tile presentation binding (T16-F3/F4).
@@ -186,11 +187,9 @@ export function writeLayerVisibleBounds(
   }
   const hx = view.width / (2 * cam.zoom);
   const hy = view.height / (2 * cam.zoom);
-  const t = cam.rotationRadians;
-  const cos = Math.cos(t);
-  const sin = Math.sin(t);
-  const ex = Math.abs(hx * cos) + Math.abs(hy * sin) + paddingWorld;
-  const ey = Math.abs(hx * sin) + Math.abs(hy * cos) + paddingWorld;
+  const extent = rotatedHalfExtents2D(hx, hy, cam.rotationRadians);
+  const ex = extent.x + paddingWorld;
+  const ey = extent.y + paddingWorld;
   // Parallax AFTER base bounds: shift the center contribution only.
   let centerX = cam.center.x;
   let centerY = cam.center.y;

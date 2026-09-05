@@ -12,6 +12,7 @@ export { createCamera2D, getCameraVisibleBounds2D, logicalToWorld2D, worldToLogi
 export { interpolateCamera2D, interpolateCameraScalar2D, shortestRotationDelta2D } from './interpolation';
 export { followCamera2D } from './follow';
 export { clampCameraBounds2D, cameraHalfExtents2D } from './bounds';
+export { rotatedHalfExtents2D } from './extents';
 export { sampleCameraShake2D } from './shake';
 export {
   filterCameraVisible2D,

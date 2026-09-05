@@ -804,3 +804,116 @@ describe('world and layer transforms (T12.5)', () => {
     }, /GameLayer2D must be rendered inside a GameWorld2D/);
   });
 });
+
+describe('GS-CAMERA-01 paused cuts publish coherently', () => {
+  it('a hard-cut commit installs the presented camera without advancing presentation', () => {
+    const definition = { select: (f: Frame) => f.current.camera };
+    const { presented, binding } = harness(definition);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 500, y: 300 }, zoom: 3 });
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0));
+    const before = presented() as { camera: { center: { x: number } }; cutId: number };
+
+    // A scene change is a cut: the presented camera must update at commit
+    // time even though present() never runs (paused time).
+    act(() => binding().commit(frame('boss', cameraB)));
+    const now = presented() as {
+      camera: { center: { x: number; y: number }; zoom: number };
+      cutId: number;
+    };
+    assert.equal(now.camera.center.x, 500, 'coherent presented camera without present()');
+    assert.equal(now.camera.center.y, 300);
+    assert.equal(now.camera.zoom, 3);
+    assert.ok(now.cutId !== before.cutId, 'the cut carries a new generation');
+  });
+
+  it('ordinary commits never touch the presented value without present()', () => {
+    const definition = { select: (f: Frame) => f.current.camera };
+    const { presented, binding } = harness(definition);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0));
+    const before = presented();
+    act(() => binding().commit(frame('play', cameraB)));
+    assert.deepEqual(presented(), before, 'paused interpolation stays frozen');
+  });
+});
+
+describe('GS-CAMERA-02 selector failure reporting', () => {
+  it('selector failures report once per episode and retain the last valid pair', () => {
+    const reports: { phase: string; scene: string }[] = [];
+    const definition = {
+      select: (f: Frame) => {
+        if (f.scene === 'boss') {
+          throw new Error('no camera here');
+        }
+        return f.current.camera;
+      },
+      onError: (info: { phase: string; scene: string }) => {
+        reports.push({ phase: info.phase, scene: info.scene });
+      },
+    };
+    const { presented, binding } = harness(definition);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().present(0));
+    const baseline = presented();
+
+    act(() => binding().commit(frame('boss', cameraB)));
+    assert.deepEqual(reports, [{ phase: 'select', scene: 'boss' }], 'one report with context');
+    assert.deepEqual(presented(), baseline, 'the last valid pair is retained');
+
+    act(() => binding().commit(frame('boss', cameraB)));
+    assert.equal(reports.length, 1, 'no repeat report within the episode');
+
+    act(() => binding().commit(frame('play', cameraA)));
+    act(() => binding().commit(frame('boss', cameraB)));
+    assert.equal(reports.length, 2, 'recovery resets deduplication');
+    assert.deepEqual(reports[1], { phase: 'select', scene: 'boss' });
+  });
+
+  it('cut predicate and validation failures report their own phase', () => {
+    const cutReports: string[] = [];
+    const cutDefinition = {
+      select: (f: Frame) => f.current.camera,
+      cut: () => {
+        throw new Error('cut exploded');
+      },
+      onError: (info: { phase: string }) => {
+        cutReports.push(info.phase);
+      },
+    };
+    const cutHarness = harness(cutDefinition);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    act(() => cutHarness.binding().commit(frame('play', cameraA)));
+    assert.deepEqual(cutReports, ['cut']);
+
+    const validateReports: string[] = [];
+    const validateDefinition = {
+      select: () => null,
+      onError: (info: { phase: string }) => {
+        validateReports.push(info.phase);
+      },
+    };
+    const validateHarness = harness(validateDefinition);
+    act(() => validateHarness.binding().commit(frame('play', cameraA)));
+    assert.deepEqual(validateReports, ['validate']);
+  });
+
+  it('failures stay silent without an onError reporter', () => {
+    const definition = {
+      select: () => {
+        throw new Error('no camera here');
+      },
+    };
+    const { presented, binding } = harness(definition);
+    const cameraA = createCamera2D({ center: { x: 0, y: 0 } });
+    assert.doesNotThrow(() => {
+      act(() => binding().commit(frame('play', cameraA)));
+    });
+    assert.equal(presented(), undefined, 'no half-installed camera');
+  });
+});

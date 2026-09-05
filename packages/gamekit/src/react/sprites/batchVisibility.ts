@@ -3,6 +3,7 @@
  * imports, so the benchmark and headless tests can import them directly.
  */
 import type { CameraCut2D } from '../../camera2d';
+import { rotatedHalfExtents2D } from '../../camera2d/extents';
 import type { Aabb2D } from '../../geometry/types';
 import type { ResolvedViewport2D } from '../../viewport2d/types';
 
@@ -23,12 +24,13 @@ export function batchVisibleBounds2D(
     return undefined;
   }
   const view = viewport.visibleLogicalBounds;
-  const halfWidth = view.width / 2 / camera.camera.zoom;
-  const halfHeight = view.height / 2 / camera.camera.zoom;
-  const cos = Math.abs(Math.cos(camera.camera.rotationRadians));
-  const sin = Math.abs(Math.sin(camera.camera.rotationRadians));
-  const extentX = halfWidth * cos + halfHeight * sin + padding;
-  const extentY = halfWidth * sin + halfHeight * cos + padding;
+  const extent = rotatedHalfExtents2D(
+    view.width / 2 / camera.camera.zoom,
+    view.height / 2 / camera.camera.zoom,
+    camera.camera.rotationRadians,
+  );
+  const extentX = extent.x + padding;
+  const extentY = extent.y + padding;
   return {
     x: camera.camera.center.x - extentX,
     y: camera.camera.center.y - extentY,

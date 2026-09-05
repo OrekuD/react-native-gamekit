@@ -10,17 +10,11 @@ import type { Aabb2D } from '../geometry/types';
 import { assertFiniteNumber, assertNonnegativeSize, GeometryError } from '../geometry/validation';
 import type { Camera2D } from './types';
 import { assertValidCamera2D, assertValidLogicalView } from './validation';
+import { rotatedHalfExtents2D } from './extents';
 
 /** Half-extents of the rotated visible rect, in world units. */
 export function cameraHalfExtents2D(camera: Camera2D, logicalView: Aabb2D): { x: number; y: number } {
-  const halfWidth = logicalView.width / 2 / camera.zoom;
-  const halfHeight = logicalView.height / 2 / camera.zoom;
-  const cos = Math.abs(Math.cos(camera.rotationRadians));
-  const sin = Math.abs(Math.sin(camera.rotationRadians));
-  return {
-    x: halfWidth * cos + halfHeight * sin,
-    y: halfWidth * sin + halfHeight * cos,
-  };
+  return { ...rotatedHalfExtents2D(logicalView.width / 2 / camera.zoom, logicalView.height / 2 / camera.zoom, camera.rotationRadians) };
 }
 
 function clampCenter(center: number, halfExtent: number, axisMin: number, axisMax: number): number {

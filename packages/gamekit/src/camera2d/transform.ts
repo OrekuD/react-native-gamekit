@@ -19,6 +19,7 @@ import { GeometryError } from '../geometry/validation';
 import type { ResolvedViewport2D } from '../viewport2d/types';
 import { surfaceToWorld, worldToSurface } from '../viewport2d/math';
 import type { Camera2D } from './types';
+import { rotatedHalfExtents2D } from './extents';
 import { assertFinitePoint2D, assertValidCamera2D, assertValidLogicalView } from './validation';
 
 /** Rotate a point by an angle (Skia y-down convention). */
@@ -106,10 +107,9 @@ export function getCameraVisibleBounds2D(camera: Camera2D, logicalView: Aabb2D):
   assertValidLogicalView(logicalView);
   const halfWidth = logicalView.width / 2 / camera.zoom;
   const halfHeight = logicalView.height / 2 / camera.zoom;
-  const cos = Math.abs(Math.cos(camera.rotationRadians));
-  const sin = Math.abs(Math.sin(camera.rotationRadians));
-  const extentX = halfWidth * cos + halfHeight * sin;
-  const extentY = halfWidth * sin + halfHeight * cos;
+  const extent = rotatedHalfExtents2D(halfWidth, halfHeight, camera.rotationRadians);
+  const extentX = extent.x;
+  const extentY = extent.y;
   return Object.freeze({
     x: camera.center.x - extentX,
     y: camera.center.y - extentY,
