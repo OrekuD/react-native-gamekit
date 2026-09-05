@@ -76,7 +76,11 @@ export class ViewportBinding {
     };
   }
 
-  /** Release subscribers. The binding becomes inert. */
+  /**
+   * Release current subscribers (GS-VIEWPORT-01). This is not a lifecycle
+   * gate: late subscriptions still register and setSurfaceSize still
+   * resolves. Discard the binding after disposal instead of reusing it.
+   */
   dispose(): void {
     this.#listeners.clear();
   }
