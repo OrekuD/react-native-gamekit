@@ -65,6 +65,7 @@ const writes = new Map<string, string>();
 const writeLog: { readonly key: string; readonly value: string }[] = [];
 const controllableAdapter = {
   read: async (key: string): Promise<string | undefined> => {
+    readCount += 1;
     if (readGate !== null) await readGate;
     return writes.get(key);
   },
@@ -77,7 +78,10 @@ const controllableAdapter = {
   },
 };
 
+let storeCreations = 0;
+let readCount = 0;
 let realStorage: typeof RealStorage;
+let MossyCavernContent: (typeof import('./mossy-cavern/MossyCavernContent'))['default'];
 let MossyCavern2Content: (typeof import('./mossy-cavern-2/MossyCavern2Content'))['default'];
 let MossyCavern3Content: (typeof import('./mossy-cavern-3/MossyCavern3Content'))['default'];
 let crystalId: string;
@@ -113,6 +117,7 @@ before(async () => {
       GameView: host('game-view'),
       GamePointerInput: host('pointer-input'),
       useGameAssets: () => ({ status: 'ready', assets: {} }),
+      useGameLifecycleSource: () => undefined,
     },
   });
   mock.module('rn-gamekit/audio', {
@@ -126,13 +131,16 @@ before(async () => {
   mock.module('rn-gamekit/storage', {
     namedExports: {
       ...realStorage,
-      createGameSaveStore: (options: Parameters<typeof realStorage.createGameSaveStore>[0]) =>
-        realStorage.createGameSaveStore({ ...options, adapter: controllableAdapter }),
+      createGameSaveStore: (options: Parameters<typeof realStorage.createGameSaveStore>[0]) => {
+        storeCreations += 1;
+        return realStorage.createGameSaveStore({ ...options, adapter: controllableAdapter });
+      },
       createGameStorageAdapter: () => controllableAdapter,
       createMemoryStorageAdapter: () => controllableAdapter,
     },
   });
 
+  MossyCavernContent = (await import('./mossy-cavern/MossyCavernContent.tsx')).default;
   MossyCavern2Content = (await import('./mossy-cavern-2/MossyCavern2Content.tsx')).default;
   MossyCavern3Content = (await import('./mossy-cavern-3/MossyCavern3Content.tsx')).default;
   // Saves carry AUTHORED crystal ids only (the schema normalizes unknown ids
@@ -147,6 +155,22 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 8; index += 1) {
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
+}
+
+/**
+ * Seed an existing stored record for one Mossy namespace by writing a real
+ * envelope through a real store (the same serialization the loaders see).
+ */
+async function seedStoredRecord(namespace: string, slot: string, payload: unknown): Promise<void> {
+  const schemaId = { 'mossy-cavern': 'com.oreku.mossy-cavern.save', 'playground': 'mossy-cavern-2-profile', 'mossy-cavern-3': 'mossy-cavern-3.progress' }[namespace]!;
+  const envelope = {
+    format: 'rn-gamekit.save',
+    schemaId,
+    schemaVersion: namespace === 'mossy-cavern-3' ? 2 : 1,
+    savedAtMs: 1_700_000_000_000,
+    payload,
+  };
+  writes.set(`rn-gamekit.storage.${namespace}.${slot}`, JSON.stringify(envelope));
 }
 
 function payloadsFor(fragment: string): Record<string, unknown>[] {
@@ -302,8 +326,104 @@ describe('T20G-R2 content-side saves keep the hydrated durable baseline', () => 
     await settle();
   });
 
-  it('Mossy Cavern 3 recovery path (no startup projection): the late load never regresses an early best time', async () => {
+  it('Mossy Cavern 1 recovery path: a pre-load checkpoint merges into the seeded record (T20G-RR2)', async () => {
     const releaseGate = armGate();
+    await seedStoredRecord('mossy-cavern', 'profile', {
+      checkpointIndex: 2,
+      score: 1_240,
+      crystals: 5,
+      falls: 3,
+      bestTimeSeconds: 412,
+    });
+    const { session, fire } = stubSession({
+      current: {
+        checkpointIndex: 0,
+        checkpoints: [],
+        crystals: 0,
+        elapsed: 0,
+        falls: 0,
+        health: 3,
+        score: 0,
+        bestTimeSeconds: 0,
+      },
+    });
+
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        createElement(MossyCavernContent as never, {
+          game: session,
+          onExit: () => {},
+          onOpenGame: () => {},
+          // no startupSave: recovery path
+        } as never),
+      );
+    });
+
+    // A checkpoint save pre-load: this-run projection (fresh session).
+    fire('checkpoint', {
+      save: { checkpointIndex: 0, score: 100, crystals: 1, falls: 0, bestTimeSeconds: 0 },
+    });
+    releaseGate();
+    await settle();
+
+    const saved = lastPayload('mossy-cavern');
+    assert.ok(saved !== undefined, 'the buffered save persisted');
+    assert.equal(saved.bestTimeSeconds, 412, 'the stored all-time best survives');
+    assert.equal(saved.checkpointIndex, 0, 'this-run checkpoint applies');
+    assert.equal(saved.score, 100, 'this-run score applies');
+    renderer!.unmount();
+    await settle();
+  });
+
+  it('Mossy Cavern 2 recovery path: a pre-load relic merges into the seeded profile (T20G-RR2)', async () => {
+    const releaseGate = armGate();
+    await seedStoredRecord('playground', 'profile', {
+      bestTimeMs: 82_400,
+      checkpointsReached: 2,
+      completedRuns: 3,
+      hapticsMuted: false,
+      muted: false,
+      relicsRecovered: 12,
+    });
+    const { session, fire } = stubSession({ current: { checkpointIndex: 0, relicCount: 0, status: 'exploring' } });
+
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        createElement(MossyCavern2Content as never, {
+          game: session,
+          onExit: () => {},
+          onOpenGame: () => {},
+          // no startupSave: recovery path
+        } as never),
+      );
+    });
+
+    fire('relic-collected', { collected: 1, id: 'dew-relic' });
+    releaseGate();
+    await settle();
+
+    const saved = lastPayload('playground');
+    assert.ok(saved !== undefined, 'the buffered save persisted');
+    assert.equal(saved.relicsRecovered, 13, 'the event delta applies to the loaded baseline');
+    assert.equal(saved.bestTimeMs, 82_400, 'stored best time survives');
+    assert.equal(saved.checkpointsReached, 2, 'stored counter survives');
+    assert.equal(saved.completedRuns, 3, 'stored counter survives');
+    renderer!.unmount();
+    await settle();
+  });
+
+  it('Mossy Cavern 3 recovery path: pre-load events merge into the seeded chronicle (T20G-RR2)', async () => {
+    const releaseGate = armGate();
+    const storedCrystal = (await import('./mossy-cavern-3/mossyCavern3Level.ts')).MOSSY_CAVERN_3_LEVEL.crystals[1]!.id;
+    await seedStoredRecord('mossy-cavern-3', 'progress', {
+      activeCheckpointId: checkpointId,
+      bestCompletionTicks: 900,
+      collectedCrystalIds: [storedCrystal],
+      deaths: 7,
+      musicEnabled: false,
+    });
     const { session, frame, fire } = stubSession({
       current: {
         activeCheckpointId: null,
@@ -326,36 +446,120 @@ describe('T20G-R2 content-side saves keep the hydrated durable baseline', () => 
       );
     });
 
-    // An early win establishes bestCompletionTicks=500 BEFORE the load
-    // resolves. (The save queues behind the gated load.)
     fire('crystal-collected', { id: crystalId });
     frame.current = { ...frame.current, elapsedTicks: 500, phase: 'won' };
     fire('level-completed', { ticks: 500 });
     releaseGate();
     await settle();
-    assert.ok(
-      payloadsFor('mossy-cavern-3').some((entry) => entry.bestCompletionTicks === 500),
-      'the early best time persisted',
-    );
 
-    // The late load delivered the default record (no best time). The next
-    // save must derive from the early projection — the load must never
-    // regress the in-memory baseline (T20G-R2).
-    frame.current = { ...frame.current, phase: 'playing' };
-    fire('checkpoint-activated', { deaths: 0, id: checkpointId });
-    await settle();
     const saved = lastPayload('mossy-cavern-3');
-    assert.ok(saved !== undefined);
-    assert.equal(
-      saved.bestCompletionTicks,
-      500,
-      'the early best time must survive the late load',
-    );
-
+    assert.ok(saved !== undefined, 'the buffered save persisted');
+    assert.equal(saved.bestCompletionTicks, 500, 'min-merge picks the faster completion');
+    assert.equal(saved.musicEnabled, false, 'stored music preference survives');
+    assert.equal(saved.deaths, 7, 'stored cumulative deaths survive the fresh session');
+    const collected = saved.collectedCrystalIds as string[];
+    assert.deepEqual([...collected].sort(), [...new Set([storedCrystal, crystalId])].sort(), 'collections union');
     renderer!.unmount();
     await settle();
   });
+
+  it('hydrated projection is a stable effect dependency: rerenders recreate no store and detach no listeners (T20G-RR3)', async () => {
+    const hydrated = {
+      bestTimeMs: 82_400,
+      checkpointsReached: 2,
+      completedRuns: 3,
+      hapticsMuted: true,
+      muted: true,
+      relicsRecovered: 12,
+    };
+    const { session, fire, detachCount } = stubSessionWithDetachCounting();
+    const hydratedStartup = { ...hydrated };
+
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(
+        createElement(MossyCavern2Content as never, {
+          game: session,
+          onExit: () => {},
+          onOpenGame: () => {},
+          startupSave: hydratedStartup,
+        } as never),
+      );
+    });
+    fire('relic-collected', { collected: 1, id: 'dew-relic' });
+    await settle();
+    const storesAfterMount = storeCreations;
+    const readsAfterMount = readCount;
+
+    // Unrelated rerenders: new prop identities for callbacks, same slot data.
+    for (let index = 0; index < 5; index += 1) {
+      await act(async () => {
+        renderer!.update(
+          createElement(MossyCavern2Content as never, {
+            game: session,
+            onExit: () => {},
+            onOpenGame: () => {},
+            startupSave: hydratedStartup,
+          } as never),
+        );
+      });
+    }
+    fire('checkpoint', { index: 1 });
+    await settle();
+
+    assert.equal(storeCreations, storesAfterMount, 'rerenders recreate no store');
+    assert.equal(readCount, readsAfterMount, 'rerenders re-read no journal');
+    assert.equal(detachCount(), 0, 'no listener detaches while mounted');
+    const finalPayload = lastPayload('playground');
+    assert.equal(finalPayload?.checkpointsReached, 2, 'post-load events still persist correctly');
+    renderer!.unmount();
+    await settle();
+    assert.ok(detachCount() > 0, 'unmount detaches the listeners exactly once per effect');
+  });
 });
+
+/** Stub session whose listener subscriptions record detach counts (RR3). */
+function stubSessionWithDetachCounting(): {
+  readonly session: never;
+  readonly fire: (name: string, payload: Record<string, unknown>) => void;
+  readonly detachCount: () => number;
+} {
+  let detaches = 0;
+  const listeners = new Map<string, ((event: { readonly payload: unknown }) => void)[]>();
+  const commitListeners: (() => void)[] = [];
+  const session = {
+    status: 'running',
+    getRenderFrame: () => ({ scene: 'play', current: { checkpointIndex: 1, relicCount: 0, status: 'exploring' }, tick: 0 }),
+    restartScene: () => {},
+    pause: () => {},
+    start: () => {},
+    addGameEventListener: (name: string, callback: (event: { readonly payload: unknown }) => void) => {
+      const existing = listeners.get(name) ?? [];
+      existing.push(callback);
+      listeners.set(name, existing);
+      return { remove: () => {
+        detaches += 1;
+      } };
+    },
+    addStatusListener: () => ({ remove: () => {
+      detaches += 1;
+    } }),
+    addCommitListener: (callback: () => void) => {
+      commitListeners.push(callback);
+      return { remove: () => {
+        detaches += 1;
+      } };
+    },
+  };
+  return {
+    session: session as never,
+    fire: (name, payload) => {
+      for (const callback of listeners.get(name) ?? []) callback({ payload });
+      for (const callback of commitListeners) callback();
+    },
+    detachCount: () => detaches,
+  };
+}
 
 /**
  * Arm the read gate: the next adapter read blocks until `releaseGate()`.

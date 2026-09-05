@@ -50,6 +50,7 @@ interface Harness {
   readonly controller: SurfaceController;
   readonly recorded: readonly SessionStub[];
   readonly disposeCalls: readonly SessionStub[];
+  readonly cleanupLog: readonly string[];
   readonly sfCreateCount: () => number;
   readonly bindCalls: readonly SessionStub[];
   readonly presentationDisposeCalls: readonly SessionStub[];
@@ -63,6 +64,9 @@ interface Harness {
 function makeHarness(): Harness {
   const recorded: SessionStub[] = [];
   const disposeCalls: SessionStub[] = [];
+  // T20G-RR1: ordered cleanup log — the presentation release must precede
+  // the session dispose when a startupSave hook throws after a bind.
+  const cleanupLog: string[] = [];
   const bindCalls: SessionStub[] = [];
   const presentationDisposeCalls: SessionStub[] = [];
   const pending: PendingPrepare[] = [];
@@ -252,6 +256,75 @@ function makeHarness(): Harness {
           };
         },
       },
+      'startup-save-sync': {
+        renderer: RENDERER,
+        content: CONTENT,
+        createSession: () => session('startup-sync') as never,
+        pointer: false,
+        startupSave: () => {
+          throw new Error('startup save exploded');
+        },
+        bindPresentation: (candidate) => {
+          bindCalls.push(candidate as unknown as SessionStub);
+          return {
+            renderer: WRAPPED_RENDERER,
+            dispose: () => {
+              presentationDisposeCalls.push(candidate as unknown as SessionStub);
+              cleanupLog.push('presentation');
+            },
+          };
+        },
+      },
+      'startup-save-assets': {
+        renderer: RENDERER,
+        content: CONTENT,
+        createSession: () => session('startup-assets') as never,
+        pointer: false,
+        assets: { manifest: { kind: 'startup-save-manifest' }, groups: ['gameplay'] },
+        startupSave: () => {
+          throw new Error('asset startup save exploded');
+        },
+        bindPresentation: (candidate) => {
+          bindCalls.push(candidate as unknown as SessionStub);
+          return {
+            renderer: WRAPPED_RENDERER,
+            dispose: () => {
+              presentationDisposeCalls.push(candidate as unknown as SessionStub);
+              cleanupLog.push('presentation');
+            },
+          };
+        },
+      },
+      'async-startup-save': {
+        renderer: RENDERER,
+        content: CONTENT,
+        createSession: (context) =>
+          new Promise<SessionStub>((resolve) => {
+            pending.push({
+              requestId: context.requestId,
+              context,
+              resolve: (made) => {
+                (pending[pending.length - 1] as PendingPrepare).resolved = made;
+                resolve(made);
+              },
+              reject: () => {},
+            });
+          }) as never,
+        pointer: false,
+        startupSave: () => {
+          throw new Error('async startup save exploded');
+        },
+        bindPresentation: (candidate) => {
+          bindCalls.push(candidate as unknown as SessionStub);
+          return {
+            renderer: WRAPPED_RENDERER,
+            dispose: () => {
+              presentationDisposeCalls.push(candidate as unknown as SessionStub);
+              cleanupLog.push('presentation');
+            },
+          };
+        },
+      },
       mossv2: {
         renderer: RENDERER,
         content: CONTENT,
@@ -313,6 +386,7 @@ function makeHarness(): Harness {
     createPlaceholder: () => session('sf-placeholder') as never,
     disposeSession: (candidate) => {
       disposeCalls.push(candidate as unknown as SessionStub);
+      cleanupLog.push('session');
     },
     onPrepareError: (info) => {
       prepareErrors.push(info);
@@ -326,10 +400,25 @@ function makeHarness(): Harness {
     initialGeneration: 1,
   };
   const controller = new SurfaceController(options);
+  harness = {
+    controller,
+    recorded,
+    disposeCalls,
+    cleanupLog,
+    sfCreateCount: () => sfSessions,
+    bindCalls,
+    presentationDisposeCalls,
+    pending,
+    prepareErrors,
+    binderSessions,
+    binderCalls,
+    latest: controller.current,
+  };
   return {
     controller,
     recorded,
     disposeCalls,
+    cleanupLog,
     sfCreateCount: () => sfSessions,
     bindCalls,
     presentationDisposeCalls,
@@ -616,6 +705,58 @@ describe('surface controller (T8.4 single lifecycle owner)', () => {
     assert.match(String(harness.prepareErrors[0]!.error), /async asset binder exploded/);
     assert.equal(countDisposed(harness, harness.pending[0]!.resolved!), 1, 'no leaked session');
     assert.equal(harness.bindCalls.length, 0);
+  });
+
+  it('a thrown startupSave after a successful sync bind releases the presentation first, then the session, and surfaces retry (T20G-RR1)', () => {
+    const harness = makeHarness();
+    harness.controller.open('startup-save-sync');
+
+    assert.equal(harness.presentationDisposeCalls.length, 1, 'the just-created binding is released');
+    assert.deepEqual(
+      harness.cleanupLog,
+      ['presentation', 'session'],
+      'presentation release precedes session dispose',
+    );
+    assert.equal(harness.prepareErrors.length, 1, 'the failure surfaces through the retry path');
+    assert.equal(harness.controller.current.status, 'loading', 'the retry overlay stays mounted');
+    assert.notEqual(
+      harness.controller.current.session,
+      undefined,
+      'the loading placeholder owns the surface, no leaked ready slot',
+    );
+  });
+
+  it('a thrown startupSave after a successful asset-backed bind surfaces retry without publication (T20G-RR1)', () => {
+    const harness = makeHarness();
+    harness.controller.open('startup-save-assets');
+    const requestId = harness.controller.current.requestId;
+    harness.controller.assetReady(requestId, { descriptor: 'lease' } as never);
+
+    assert.equal(harness.presentationDisposeCalls.length, 1, 'the just-created binding is released');
+    assert.deepEqual(
+      harness.cleanupLog,
+      ['presentation', 'session'],
+      'presentation release precedes session dispose',
+    );
+    assert.equal(harness.prepareErrors.length, 1);
+    assert.equal(harness.controller.current.status, 'loading', 'no ready slot is published');
+  });
+
+  it('a thrown startupSave after an async bind releases the binding and surfaces retry (T20G-RR1)', async () => {
+    const harness = makeHarness();
+    harness.controller.open('async-startup-save');
+    const pendingEntry = harness.pending[0]!;
+    pendingEntry.resolve(session('async-startup-real'));
+    await flushPrepareQueue();
+
+    assert.equal(harness.presentationDisposeCalls.length, 1, 'the just-created binding is released');
+    assert.deepEqual(
+      harness.cleanupLog,
+      ['presentation', 'session'],
+      'presentation release precedes session dispose',
+    );
+    assert.equal(harness.prepareErrors.length, 1);
+    assert.equal(harness.controller.current.status, 'loading', 'no ready slot is published');
   });
 
   it('a stale resolution disposes its session without invoking the binder (T20F-R4)', async () => {

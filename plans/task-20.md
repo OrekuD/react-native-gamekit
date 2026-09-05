@@ -1801,3 +1801,189 @@ committed or otherwise snapshotted before more broad edits.
   clean; `git diff --check` clean.
 - Remaining: the physical iOS and Android rows in
   `plans/task-20-device-smoke.md` are the only native-runtime completion gate.
+
+## T20G re-review feedback (2026-09-02)
+
+This focused re-review inspected the committed T20G report in
+`/Users/david/.codex/attachments/818beb4b-9720-4f5e-9116-c113b9518e2b/pasted-text.txt`
+against the shell controller, mounted async preparation test, Mossy startup
+save tests, loader tests, and hydration helpers. Broad gates were not rerun.
+
+### T20G-RR1 - `startupSave` throws leak an already-created presentation
+
+Priority: high. `SurfaceController` documents `startupSave` as following the
+same rules as the presentation binder: dispose the created session, abort, and
+surface a retryable error. The current implementation catches binder and
+`startupSave` failures in one block, but if `bindPresentation(session)`
+succeeds and `startupSave(session)` throws, the code disposes the session
+without invoking the just-created `presentation.dispose`.
+
+Evidence:
+
+- `apps/playground/src/shell/surfaceController.ts:63` documents
+  `startupSave` throws as binder-rule failures.
+- `apps/playground/src/shell/surfaceController.ts:220` binds the
+  presentation before reading `startupSave`; the catch at line 223 disposes
+  only the session.
+- `apps/playground/src/shell/surfaceController.ts:296` repeats the same
+  pattern for asset-backed synchronous readiness; the catch at line 298
+  disposes only the session.
+- `apps/playground/src/shell/surfaceController.ts:453` repeats the same
+  pattern for async preparation resolution; the catch at line 455 disposes only
+  the session.
+
+Why it matters: Mossy presentation bindings own particle systems and event
+subscriptions. A malformed or future `startupSave` hook can leave that
+presentation bridge subscribed even though the session was discarded and the
+surface stayed in the retry path.
+
+Fix approach: in all three controller paths, track whether the presentation
+binding was created before the throw and call `presentation?.dispose()` before
+disposing the session. Prefer a small helper that performs guarded
+presentation-plus-session cleanup so the sync non-asset, sync asset-backed, and
+async prepared paths stay identical. Add focused controller regressions for all
+three paths:
+
+- binder succeeds and `startupSave` throws;
+- `presentation.dispose` is called exactly once;
+- `disposeSession(session)` is called exactly once;
+- no ready slot is published;
+- the loading/retry contract remains intact.
+
+### T20G-RR2 - recovery loads can still lose existing saves
+
+Priority: high. The normal shell startup path is now covered: the async factory
+loads the durable projection, registers it in the WeakMap, the ready slot
+publishes `startupSave`, and content initializes its baseline from that value
+before listeners register. The remaining issue is the documented fallback path
+when no `startupSave` is available and the content-side load later recovers an
+existing record.
+
+The content guards prevent a late load from overwriting the in-memory baseline,
+but the early save payload is already snapshotted from defaults before the
+load resolves. `createGameSaveStore().save()` snapshots synchronously before
+queueing, so the queued save writes the default-derived record after the load
+finishes.
+
+Evidence:
+
+- `packages/gamekit/src/storage/store.ts:324` snapshots save payloads before
+  queueing. A queued save carries the baseline that existed at call time, not
+  the later loaded baseline.
+- `apps/playground/src/screens/mossy-cavern/MossyCavernContent.tsx:292` and
+  `apps/playground/src/screens/mossy-cavern/MossyCavernContent.tsx:293`
+  register checkpoint and finish saves immediately. With no `startupSave`, the
+  later load at line 294 updates display state only.
+- `apps/playground/src/screens/mossy-cavern-2/MossyCavern2Content.tsx:83`
+  initializes `profileRef` from defaults when `startupSave` is absent, then
+  early save-worthy events persist by spreading that ref at lines 257, 266,
+  and 283. The guard at line 171 prevents a late in-memory regression, but it
+  doesn't rewrite the already-snapshotted save payload.
+- `apps/playground/src/screens/mossy-cavern-3/MossyCavern3Content.tsx:84`
+  initializes `durableRef` from defaults when `startupSave` is absent, then
+  `persist()` snapshots from that ref at lines 123 to 127. The current
+  recovery test starts from an empty/default durable store, so it doesn't prove
+  older deaths, best ticks, music preference, or collected ids survive when a
+  real record arrives late.
+
+Why it matters: this is not the common path, but the code and comments promise
+recovery when the shell has no projection. That can happen after a fail-open
+shell loader, an invalid `startupSave` payload, or a non-shell mount. If the
+content load succeeds with an existing record and the player triggers a
+save-worthy event before it resolves, stored preferences and best counters can
+be overwritten by default-derived values.
+
+Fix approach: add recovery-path regressions that seed an existing stored record,
+mount without `startupSave`, gate the content-side read, fire an early
+save-worthy event, release the read, and assert the persisted payload merges the
+loaded durable fields with the event delta. Cover MC1, MC2, and MC3, not only
+the MC3 default-load case. Then change the implementation so pre-load events
+buffer a mutation or pending snapshot intent and replay it against the loaded
+baseline before saving. If the load returns a default record or fails, apply the
+same pending mutation to the default baseline and save once. This keeps the
+normal startup path fast while making the documented recovery path true.
+
+### T20G-RR3 - validated startup projections are unstable effect dependencies
+
+Priority: high. Mossy Cavern 1 and 2 validate `startupSave` directly in the
+component body. Both validation helpers return a new object for every render,
+and each new object is a dependency of the save-store effect.
+
+Evidence:
+
+- `apps/playground/src/screens/mossy-cavern/MossyCavernContent.tsx:107`
+- `apps/playground/src/screens/mossy-cavern/MossyCavernContent.tsx:274`
+- `apps/playground/src/screens/mossy-cavern/MossyCavernContent.tsx:313`
+- `apps/playground/src/screens/mossy-cavern-2/MossyCavern2Content.tsx:80`
+- `apps/playground/src/screens/mossy-cavern-2/MossyCavern2Content.tsx:148`
+- `apps/playground/src/screens/mossy-cavern-2/MossyCavern2Content.tsx:191`
+
+Why it matters: for a returning player with a hydrated projection, every
+unrelated render tears down and recreates the save store and its subscriptions.
+MC1 publishes its quantized HUD up to eight times per second, so normal play can
+turn one content-side refresh into repeated storage reads and checkpoint/finish
+listener churn. MC2 repeats the same work on profile, HUD, notice, and save-state
+renders. This violates the intended coarse React boundary and can race store
+cleanup with queued saves.
+
+Fix approach: validate the raw slot value once per stable `startupSave`
+identity, for example with `useMemo`, and use that stable projection in effect
+dependencies. If content can remain mounted across a new session generation,
+either key the content by generation or explicitly reset all projection state
+for the new session; do not solve the churn by pinning the first mount's value
+forever. Add mounted tests with a hydrated projection that trigger unrelated
+rerenders and assert one store creation, one load, and no listener detach or
+reattach until the session binding changes or the component unmounts.
+
+### T20G re-review disposition
+
+Do not close the T20G follow-up yet. T20G-R1, R3, R4, R5, and R6 look
+substantively addressed under focused inspection. T20G-R2 is closed only for
+the normal startup projection path; it still needs the recovery-path fix above.
+After T20G-RR1, T20G-RR2, and T20G-RR3 are fixed and focused tests are green,
+the remaining completion gate returns to the physical-device matrix in
+`plans/task-20-device-smoke.md`.
+
+## T20G-RR fix disposition (2026-09-02)
+
+- T20G-RR1 (closed) — `SurfaceController` gained `disposeFailedPrepare`, the
+  one guarded cleanup used by all three failure paths (sync non-asset, sync
+  asset-backed, async prepared): the presentation release always precedes the
+  session dispose, a throwing disposer cannot block the retry path, and a
+  `startupSave` throw after a successful bind no longer leaks the binding.
+  Regression (`surfaceController.test.ts`): three fixtures bind successfully
+  then throw from `startupSave`; each asserts the release count of one, the
+  ordered cleanup log `['presentation', 'session']`, exactly one retry-surface
+  error, no ready publication (the loading overlay stays mounted).
+- T20G-RR2 (closed) — recovery mode (no `startupSave`) now buffers
+  mutation/snapshot INTENTS instead of pre-snapshotted payloads, and replays
+  them against the LOADED record before the single write:
+  - MC1 buffers the latest this-run save payload and merges with
+    `min()` best-time preservation (`mergeRecovery`), writing once on load.
+  - MC2 converts profile persistence to pure mutators (`mutateProfile`);
+    hydrated mode applies and persists immediately, recovery mode buffers the
+    mutators and folds them onto the loaded profile.
+  - MC3 buffers the pending snapshot intent; on load it unions collected ids,
+    ADDS the fresh session's deaths to the stored cumulative total (a recovery
+    session started at zero), and min-merges best ticks through
+    `saveFromSnapshot`, writing exactly once. The obsolete
+    `persistedBeforeLoad` guard is removed (superseded by the intent buffer).
+  Regression (`mossyStartupSaves.test.tsx`): MC1/MC2/MC3 recovery tests seed a
+  real stored envelope, mount without a projection, gate the content-side read,
+  fire pre-load events, then assert the persisted payload merges stored
+  durable fields with the event delta. The pre-load-failure path writes the
+  buffered payload unchanged.
+- T20G-RR3 (closed) — MC1 and MC2 validate the raw slot value once per stable
+  `startupSave` identity via `useMemo`; the save-store effects key on the
+  stable projection, so unrelated rerenders revalidate nothing and recreate no
+  store. Regression: the mounted stability test rerenders five times with new
+  callback identities while hydrated and asserts zero store creations, zero
+  adapter reads, zero listener detaches while mounted, correct post-load
+  persistence, and detach-on-unmount only.
+- Gates: playground 254 + 53 tests pass with typecheck and lint clean; gamekit
+  769 tests pass with typecheck clean (one GC-noise-sensitive
+  `collision2d.sweepAllocation` heap-delta assertion failed once and passed on
+  two consecutive full reruns; the file is untouched by this work);
+  `git diff --check` clean.
+- Remaining: the physical iOS and Android rows in
+  `plans/task-20-device-smoke.md` are the only native-runtime completion gate.

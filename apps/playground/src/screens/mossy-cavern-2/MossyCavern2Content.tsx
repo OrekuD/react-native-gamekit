@@ -5,7 +5,7 @@
  * on coarse commits, user settings, asynchronous device capability setup,
  * and committed gameplay events.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Image,
   Pressable,
@@ -77,7 +77,12 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
   // persist — so an early gameplay save derives from the hydrated record and
   // never clobbers stored best times, mute settings, or counters with
   // default-derived data.
-  const startupProfile = readStartupMossyCavern2Profile(startupSave);
+  // T20G-RR3: validated once per stable startupSave identity — unrelated
+  // rerenders never revalidate nor retrigger effects keyed on this baseline.
+  const startupProfile = useMemo(
+    () => readStartupMossyCavern2Profile(startupSave),
+    [startupSave],
+  );
   const [hud, setHud] = useState<HudState>(() => readHud(session));
   const hudRef = useRef(hud);
   const [profile, setProfile] = useState<MossyCavern2Profile>(
@@ -92,6 +97,7 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
   const saveStoreRef = useRef<ReturnType<typeof createGameSaveStore<MossyCavern2Profile>> | null>(null);
   const mountedRef = useRef(true);
   const profileChangedBeforeLoadRef = useRef(false);
+  const pendingMutationsRef = useRef<((profile: MossyCavern2Profile) => MossyCavern2Profile)[]>([]);
 
   useEffect(
     () => {
@@ -103,21 +109,35 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
     [],
   );
 
-  const persistProfile = useCallback((next: MossyCavern2Profile): void => {
-    profileChangedBeforeLoadRef.current = true;
-    profileRef.current = next;
-    setProfile(next);
-    const store = saveStoreRef.current;
-    if (store === null) return;
-    void store.save('profile', next).then(
-      () => {
-        if (mountedRef.current) setSaveState('Journal saved');
-      },
-      () => {
-        if (mountedRef.current) setSaveState('Journal unavailable on this build');
-      },
-    );
-  }, []);
+  // T20G-RR2: profile mutations are pure folds. Hydrated mode applies and
+  // persists immediately (the simulation already projects the hydrated
+  // baseline); recovery mode (no startup projection) applies locally for
+  // display and buffers the mutation until the content-side load resolves,
+  // then replays it against the loaded record and writes exactly once — a
+  // default-derived record is never queued over an existing one.
+  const mutateProfile = useCallback(
+    (mutate: (profile: MossyCavern2Profile) => MossyCavern2Profile): void => {
+      const next = mutate(profileRef.current);
+      profileRef.current = next;
+      setProfile(next);
+      profileChangedBeforeLoadRef.current = true;
+      if (startupProfile === null) {
+        pendingMutationsRef.current = [...pendingMutationsRef.current, mutate];
+        return;
+      }
+      const store = saveStoreRef.current;
+      if (store === null) return;
+      void store.save('profile', next).then(
+        () => {
+          if (mountedRef.current) setSaveState('Journal saved');
+        },
+        () => {
+          if (mountedRef.current) setSaveState('Journal unavailable on this build');
+        },
+      );
+    },
+    [startupProfile],
+  );
 
   // Coarse UI observer: React receives only values that visibly changed,
   // never the session's per-frame state.
@@ -164,12 +184,32 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
           setSaveState('Journal restored');
           return;
         }
-        // Recovery path (no startup projection): the player can collect a
-        // relic before the asynchronous journal read finishes. The store
-        // queue already preserves its later save; keep that newer in-memory
-        // projection rather than overwriting it with the older loaded value.
-        if (profileChangedBeforeLoadRef.current) {
+        // T20G-RR2 recovery path (no startup projection): replay every
+        // buffered mutation against the LOADED record and write exactly
+        // once — a default-derived payload is never persisted over an
+        // existing journal. An empty buffer adopts the loaded record for
+        // display (and applies the audio/haptics mutes).
+        const buffered = pendingMutationsRef.current;
+        pendingMutationsRef.current = [];
+        const merged = buffered.reduce<MossyCavern2Profile>(
+          (profile, mutate) => mutate(profile),
+          data,
+        );
+        if (buffered.length > 0) {
+          profileRef.current = merged;
+          setProfile(merged);
           setSaveState('Journal saving current expedition');
+          const store = saveStoreRef.current;
+          if (store !== null) {
+            void store.save('profile', merged).then(
+              () => {
+                if (mounted) setSaveState('Journal saved');
+              },
+              () => {
+                if (mounted) setSaveState('Journal unavailable on this build');
+              },
+            );
+          }
           return;
         }
         profileRef.current = data;
@@ -254,19 +294,16 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
       session.addGameEventListener('relic-collected', (event) => {
         audioRef.current?.play('relic', { category: 'sfx', volume: 0.76 });
         hapticsRef.current?.play('success');
-        persistProfile({
-          ...profileRef.current,
-          relicsRecovered: profileRef.current.relicsRecovered + 1,
-        });
+        mutateProfile((profile) => ({ ...profile, relicsRecovered: profile.relicsRecovered + 1 }));
         setNotice(`${event.payload.collected}/3 dew relics are glowing in the shrine.`);
       }),
       session.addGameEventListener('checkpoint', (event) => {
         audioRef.current?.play('checkpoint', { category: 'sfx', volume: 0.68 });
         hapticsRef.current?.play('selection');
-        persistProfile({
-          ...profileRef.current,
-          checkpointsReached: Math.max(profileRef.current.checkpointsReached, event.payload.index),
-        });
+        mutateProfile((profile) => ({
+          ...profile,
+          checkpointsReached: Math.max(profile.checkpointsReached, event.payload.index),
+        }));
         setNotice('Moss remembers this path. Your journal has been marked.');
       }),
       session.addGameEventListener('damage', (event) => {
@@ -279,17 +316,16 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
         audioRef.current?.play('fanfare', { category: 'music', volume: 0.8 });
         hapticsRef.current?.play('success');
         const timeMs = Math.round(event.payload.elapsedSeconds * 1_000);
-        const oldBest = profileRef.current.bestTimeMs;
-        persistProfile({
-          ...profileRef.current,
-          completedRuns: profileRef.current.completedRuns + 1,
-          bestTimeMs: oldBest === null ? timeMs : Math.min(oldBest, timeMs),
-        });
+        mutateProfile((profile) => ({
+          ...profile,
+          completedRuns: profile.completedRuns + 1,
+          bestTimeMs: profile.bestTimeMs === null ? timeMs : Math.min(profile.bestTimeMs, timeMs),
+        }));
         setNotice('The Root Shrine wakes. Mossy Cavern 2 is complete.');
       }),
     ];
     return () => subscriptions.forEach((subscription) => subscription.remove());
-  }, [persistProfile, session]);
+  }, [mutateProfile, session]);
 
   const togglePause = useCallback(() => {
     if (session.status === 'running') session.pause();
@@ -297,16 +333,18 @@ export default function MossyCavern2Content({ game, onExit, startupSave }: Playg
   }, [session]);
 
   const toggleMuted = useCallback(() => {
-    const next = { ...profileRef.current, muted: !profileRef.current.muted };
-    audioRef.current?.setMuted(next.muted);
-    persistProfile(next);
-  }, [persistProfile]);
+    mutateProfile((profile) => {
+      audioRef.current?.setMuted(!profile.muted);
+      return { ...profile, muted: !profile.muted };
+    });
+  }, [mutateProfile]);
 
   const toggleHaptics = useCallback(() => {
-    const next = { ...profileRef.current, hapticsMuted: !profileRef.current.hapticsMuted };
-    hapticsRef.current?.setMuted(next.hapticsMuted);
-    persistProfile(next);
-  }, [persistProfile]);
+    mutateProfile((profile) => {
+      hapticsRef.current?.setMuted(!profile.hapticsMuted);
+      return { ...profile, hapticsMuted: !profile.hapticsMuted };
+    });
+  }, [mutateProfile]);
 
   const restart = useCallback(() => {
     session.restartScene();

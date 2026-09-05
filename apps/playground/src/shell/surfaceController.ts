@@ -221,8 +221,9 @@ export class SurfaceController {
       presentation = entry.bindPresentation?.(session);
       startupSave = entry.startupSave?.(session);
     } catch (error) {
-      // The session exists but binding failed: dispose it, never leak (T20F-R4).
-      this.options.disposeSession(session);
+      // Binding or startupSave failed after session creation: release the
+      // piece that succeeded, never leak (T20F-R4/T20G-RR1).
+      this.disposeFailedPrepare(session, presentation);
       this.failPrepare(gameId, requestId, error, abortController, publishLoading);
       return;
     }
@@ -296,7 +297,7 @@ export class SurfaceController {
       presentation = entry.bindPresentation?.(session);
       startupSave = entry.startupSave?.(session);
     } catch (error) {
-      this.options.disposeSession(session);
+      this.disposeFailedPrepare(session, presentation);
       this.failPrepare(gameId, requestId, error, abortController);
       return;
     }
@@ -427,6 +428,24 @@ export class SurfaceController {
   }
 
   /**
+   * T20G-RR1: a failed bind or `startupSave` call must not leak the piece
+   * that succeeded. The presentation release (if the bind created one)
+   * always precedes the session dispose — the same order the retirement
+   * path uses — and a throwing disposer never blocks the retry path.
+   */
+  private disposeFailedPrepare(
+    session: GameSession,
+    presentation: SurfacePresentationBinding | undefined,
+  ): void {
+    try {
+      presentation?.dispose();
+    } catch {
+      // A throwing disposer must not block session disposal or the retry path.
+    }
+    this.options.disposeSession(session);
+  }
+
+  /**
    * Track one in-flight preparation (T20.2): a resolution publishes only
    * while its request is still current; a stale or aborted resolution is
    * disposed without publication; a rejection for a current request surfaces
@@ -453,11 +472,11 @@ export class SurfaceController {
           presentation = entry.bindPresentation?.(session);
           startupSave = entry.startupSave?.(session);
         } catch (error) {
-          // T20F-R4: a binder or startupSave throw must not leak the
-          // resolved session or reject an ignored promise — surface through
-          // the retry path.
+          // T20F-R4/T20G-RR1: a binder or startupSave throw must not leak
+          // the resolved session, the just-created binding, or reject an
+          // ignored promise — surface through the retry path.
           this.pendingPrepare = null;
-          this.options.disposeSession(session);
+          this.disposeFailedPrepare(session, presentation);
           abortController.abort();
           this.options.onPrepareError?.({ gameId, requestId, error });
           return;

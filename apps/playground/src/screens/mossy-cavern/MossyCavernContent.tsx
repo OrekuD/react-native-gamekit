@@ -5,7 +5,7 @@
  * haptics, storage, and pause/restart are lifecycle/event effects; none of
  * them become a per-frame React store.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GameSession } from 'rn-gamekit';
@@ -103,8 +103,13 @@ export default function MossyCavernContent(props: MossyCavernContentProps) {
   const [audioStatus, setAudioStatus] = useState('audio warming up');
   const [muted, setMuted] = useState(false);
   // T20G-R2: the hydrated projection seeds the journal display synchronously;
-  // the content-side load below is a display refresh only.
-  const startupSave = readStartupMossyCavernSave(props.startupSave);
+  // the content-side load below is a display refresh only. T20G-RR3: the raw
+  // slot value is validated once per stable identity, so unrelated rerenders
+  // never revalidate (and never retrigger effects keyed on this projection).
+  const startupSave = useMemo(
+    () => readStartupMossyCavernSave(props.startupSave),
+    [props.startupSave],
+  );
   const [saveStatus, setSaveStatus] = useState(
     startupSave === null ? 'save pending' : 'save profile loaded',
   );
@@ -280,7 +285,26 @@ export default function MossyCavernContent(props: MossyCavernContentProps) {
     });
     saveStoreRef.current = store;
 
-    const queueSave = (data: MossyCavernSave): void => {
+    // T20G-RR2: recovery mode (no startup projection) buffers this-run save
+    // payloads until the content-side load resolves, then replays the latest
+    // payload against the loaded baseline — preserving the all-time best —
+    // and writes once. Hydrated mode (startupSave present) persists directly:
+    // the simulation already projected the hydrated baseline.
+    let loadSettled = false;
+    let pendingRunSave: MossyCavernSave | null = null;
+    const mergeRecovery = (run: MossyCavernSave, loaded: MossyCavernSave): MossyCavernSave => ({
+      checkpointIndex: run.checkpointIndex,
+      score: run.score,
+      crystals: run.crystals,
+      falls: run.falls,
+      bestTimeSeconds:
+        run.bestTimeSeconds === 0
+          ? loaded.bestTimeSeconds
+          : loaded.bestTimeSeconds === 0
+            ? run.bestTimeSeconds
+            : Math.min(run.bestTimeSeconds, loaded.bestTimeSeconds),
+    });
+    const writeSave = (data: MossyCavernSave): void => {
       void store.save('profile', data)
         .then(() => {
           if (!cancelled) setSaveStatus(`checkpoint saved · ${data.score} pts`);
@@ -289,17 +313,42 @@ export default function MossyCavernContent(props: MossyCavernContentProps) {
           if (!cancelled) setSaveStatus('save failed · run continues');
         });
     };
+    const queueSave = (data: MossyCavernSave): void => {
+      if (!loadSettled) {
+        pendingRunSave = data;
+        return;
+      }
+      writeSave(data);
+    };
     const checkpointSubscription = session.addGameEventListener('checkpoint', (event) => queueSave(event.payload.save));
     const finishSubscription = session.addGameEventListener('finish', (event) => queueSave(event.payload.save));
     void store.load('profile')
       .then((result) => {
         if (cancelled) return;
+        loadSettled = true;
+        if (startupSave === null && pendingRunSave !== null) {
+          // T20G-RR2: replay the buffered this-run payload against the loaded
+          // baseline and write exactly once.
+          const merged = mergeRecovery(pendingRunSave, result.data);
+          pendingRunSave = null;
+          setStoredSave(merged);
+          writeSave(merged);
+          return;
+        }
         // T20G-R2: a hydrated projection owns the durable baseline; only a
         // fresh run (no projection) adopts the loaded record for display.
         if (startupSave === null) setStoredSave(result.data);
         setSaveStatus(result.status === 'default' ? 'new save profile' : 'save profile loaded');
       })
       .catch(() => {
+        loadSettled = true;
+        if (pendingRunSave !== null) {
+          const payload = pendingRunSave;
+          pendingRunSave = null;
+          setStoredSave(payload);
+          writeSave(payload);
+          return;
+        }
         if (!cancelled) setSaveStatus('storage unavailable · run is local');
       });
 

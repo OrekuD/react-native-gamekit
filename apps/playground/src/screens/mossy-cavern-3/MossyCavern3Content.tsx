@@ -104,9 +104,6 @@ function useMossyCavern3Feedback(session: MossyCavern3Session, startupSave?: unk
       schema: mossyCavern3SaveSchema,
     });
     saveRef.current = store;
-    // T20G-R2: any save-worthy event before the load resolves pins the
-    // durable baseline; the loaded record must never regress it.
-    let persistedBeforeLoad = false;
 
     const publishSnapshot = (message: string): MossyCavern3Snapshot | undefined => {
       const snapshot = playSnapshot(session);
@@ -120,8 +117,19 @@ function useMossyCavern3Feedback(session: MossyCavern3Session, startupSave?: unk
       }
       return snapshot;
     };
+    // T20G-RR2: recovery mode (no startup projection) buffers the pending
+    // snapshot INTENT while the load is in flight, then replays it against
+    // the LOADED record and writes exactly once — cumulative deaths and the
+    // stored best are never clobbered by a fresh-session projection.
+    // Hydrated mode persists directly from the hydrated baseline.
+    let pendingRecoverySnapshot: MossyCavern3Snapshot | null = null;
     const persist = (snapshot: MossyCavern3Snapshot): void => {
-      persistedBeforeLoad = true;
+      if (startupSave === undefined) {
+        pendingRecoverySnapshot = snapshot;
+        if (cancelled) return;
+        setHud((previous) => ({ ...previous, bestTicks: durableRef.current.bestCompletionTicks }));
+        return;
+      }
       const next = saveFromSnapshot(snapshot, durableRef.current);
       durableRef.current = next;
       void store.save('progress', next).catch((error: unknown) => {
@@ -176,11 +184,31 @@ function useMossyCavern3Feedback(session: MossyCavern3Session, startupSave?: unk
     void loadProgress
       .then((result) => {
         if (cancelled) return;
-        // T20G-R2: with a hydrated startup projection the loaded record is
-        // the same persisted source the shell already applied — never let it
-        // regress an early gameplay save. The recovery path (no projection)
-        // adopts the loaded record only when nothing persisted yet.
-        if (startupSave === undefined && !persistedBeforeLoad) {
+        // T20G-RR2 recovery path (no startup projection): replay a buffered
+        // snapshot intent against the LOADED record — cumulative deaths and
+        // best ticks merge instead of resetting; with no buffer the loaded
+        // record becomes the baseline. Hydrated mode keeps its baseline.
+        if (startupSave === undefined && pendingRecoverySnapshot !== null) {
+          // T20G-RR2: replay the buffered snapshot against the LOADED record
+          // and write exactly once. A recovery session started fresh, so its
+          // death counter and collections are deltas: cumulative deaths ADD
+          // to the stored total and collections UNION with the stored ids
+          // (best ticks already min-merge through saveFromSnapshot).
+          const snapshot = pendingRecoverySnapshot;
+          const replayed = saveFromSnapshot(snapshot, result.data);
+          pendingRecoverySnapshot = null;
+          const merged: MossyCavern3SaveData = {
+            ...replayed,
+            deaths: result.data.deaths + snapshot.deaths,
+            collectedCrystalIds: [
+              ...new Set([...result.data.collectedCrystalIds, ...replayed.collectedCrystalIds]),
+            ],
+          };
+          durableRef.current = merged;
+          void store.save('progress', merged).catch((error: unknown) => {
+            console.warn('[MossyCavern3] recovery save failed', error);
+          });
+        } else if (startupSave === undefined) {
           durableRef.current = result.data;
         }
         setHud((previous) => ({
