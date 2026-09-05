@@ -199,3 +199,47 @@ describe('GS-INPUT-02 pointer/action ownership', () => {
     assert.deepEqual(pad.removeZone('missing'), [], 'unknown zones are safe');
   });
 });
+
+describe('GS-INPUT-04 pad invalidation', () => {
+  it('invalidateOwnership snapshots stale pointers; moves wait for a fresh down', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 80, height: 60 });
+    assert.deepEqual(pad.touchesDown(touches({ id: 1, x: 40, y: 30 })).pressed, ['jump']);
+
+    pad.invalidateOwnership();
+    assert.deepEqual(pad.held(), [], 'ownership cleared');
+    assert.deepEqual(
+      pad.touchesMove(touches({ id: 1, x: 40, y: 30 })),
+      { pressed: [], released: [] },
+      'a lingering move cannot reacquire without a fresh down',
+    );
+    assert.deepEqual(
+      pad.touchesUp(touches({ id: 1, x: 40, y: 30 })),
+      { pressed: [], released: [] },
+      'a lingering lift emits nothing',
+    );
+
+    assert.deepEqual(
+      pad.touchesDown(touches({ id: 1, x: 40, y: 30 })).pressed,
+      ['jump'],
+      'a fresh down rehabilitates the pointer',
+    );
+    assert.deepEqual(pad.touchesUp(touches({ id: 1, x: 40, y: 30 })).released, ['jump']);
+  });
+
+  it('a second pointer is unaffected by the first pointer staleness', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 80, height: 60 });
+    pad.touchesDown(touches({ id: 1, x: 40, y: 30 }));
+    pad.invalidateOwnership();
+    assert.deepEqual(
+      pad.touchesDown(touches({ id: 2, x: 41, y: 31 })).pressed,
+      ['jump'],
+      'an unrelated fresh down works immediately',
+    );
+  });
+});

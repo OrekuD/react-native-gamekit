@@ -71,12 +71,17 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
   touchesUp(changed: readonly ButtonPadTouch[]): ButtonPadDiff;
   touchesCancel(changed: readonly ButtonPadTouch[]): ButtonPadDiff;
   releaseAll(): readonly string[];
+  invalidateOwnership(): void;
   held(): readonly string[];
 } {
   const hitSlop = options?.hitSlop ?? 0;
   const zones = new Map<string, ButtonPadRect>();
   const pointerAction = new Map<number, string>();
   const holdCounts = new Map<string, number>();
+  // GS-INPUT-04: pointers that were active across an invalidation (pause,
+  // session replacement) must produce a fresh down before their moves can
+  // acquire again. A fresh down rehabilitates; lift clears the mark.
+  const stalePointerIds = new Set<number>();
 
   const apply = (action: string, direction: 1 | -1): 'pressed' | 'released' | undefined => {
     // GS-INPUT-02: edges fire only on ownership transitions. A second owner
@@ -128,6 +133,7 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
   const dropPointers = (changed: readonly ButtonPadTouch[]): ButtonPadDiff => {
     const released: string[] = [];
     for (const touch of changed) {
+      stalePointerIds.delete(touch.id);
       const previous = pointerAction.get(touch.id);
       if (previous === undefined) {
         continue;
@@ -166,6 +172,7 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
     touchesDown(touches: readonly ButtonPadTouch[]): ButtonPadDiff {
       const merged: { pressed: string[]; released: string[] } = { pressed: [], released: [] };
       for (const touch of touches) {
+        stalePointerIds.delete(touch.id);
         const diff = retarget(touch.id, hitTest(touch.x, touch.y));
         merged.pressed.push(...diff.pressed);
         merged.released.push(...diff.released);
@@ -176,8 +183,13 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
       // GS-INPUT-02: every touch in the move list is hit-tested, mapped or
       // not — a pointer that left its zone releases, and one that entered
       // a zone (including from empty space) presses it.
+      // GS-INPUT-04: pointers marked stale by an invalidation wait for a
+      // fresh down first.
       const merged: { pressed: string[]; released: string[] } = { pressed: [], released: [] };
       for (const touch of touches) {
+        if (stalePointerIds.has(touch.id)) {
+          continue;
+        }
         const diff = retarget(touch.id, hitTest(touch.x, touch.y));
         merged.pressed.push(...diff.pressed);
         merged.released.push(...diff.released);
@@ -200,7 +212,21 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
         released.add(action);
       }
       holdCounts.clear();
+      stalePointerIds.clear();
       return [...released];
+    },
+    /**
+     * GS-INPUT-04: invalidate ownership without touching zones — pause,
+     * session replacement, or layout teardown snapshot the active pointers
+     * as stale and drop all holds. Stale pointers must produce a fresh down
+     * before their moves can acquire again; a fresh down rehabilitates.
+     */
+    invalidateOwnership(): void {
+      for (const pointerId of pointerAction.keys()) {
+        stalePointerIds.add(pointerId);
+      }
+      pointerAction.clear();
+      holdCounts.clear();
     },
     held(): readonly string[] {
       return [...holdCounts.keys()];

@@ -13,6 +13,14 @@
  *   (a jump pulse) re-arm for the next press.
  * - A finger sliding between zones reassigns: release + press.
  * - Unmount releases every held action; no input outlives the pad.
+ *
+ * GS-INPUT-03: zones measure into pad coordinates (never parent-relative),
+ * every mounted zone has an owner identity with idempotent cleanup, and
+ * terminal cleanup never touches a disposed session.
+ * GS-INPUT-04: one invalidation policy — pause, session replacement, and
+ * unmount bump an ownership generation stamped onto every scheduled RN
+ * callback; stale callbacks die at ingress, pad ownership clears, and a
+ * fresh down is required before moves can acquire again.
  */
 import {
   createContext,
@@ -23,8 +31,9 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { findNodeHandle, StyleSheet, View } from 'react-native';
 import { GestureDetector, useManualGesture, type ManualGestureConfig } from 'react-native-gesture-handler';
+import { useSharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import type { StyleProp, ViewStyle } from 'react-native';
 
@@ -41,10 +50,25 @@ export type ButtonActionName<TInput extends InputMap> = {
 }[Extract<keyof TInput, string>];
 
 interface ButtonPadContextValue {
-  /** Register/refresh a zone rect measured by a mounted GameButton. */
-  readonly setZone: (action: string, x: number, y: number, width: number, height: number) => void;
-  /** Remove a zone (button unmounted). */
-  readonly removeZone: (action: string) => void;
+  /**
+   * Register/refresh a zone rect with its owner node. Provisional rects
+   * come from layout events; pad-space measurement overwrites them.
+   */
+  readonly setZone: (
+    action: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    node: unknown,
+  ) => void;
+  /**
+   * Authoritatively measure a zone into pad coordinates. No-op when native
+   * nodes are unavailable (the provisional layout registration stands).
+   */
+  readonly measureZone: (action: string, node: unknown) => void;
+  /** Remove a zone (button unmounted or action replaced). */
+  readonly removeZone: (action: string, node: unknown) => void;
 }
 
 const ButtonPadContext = createContext<ButtonPadContextValue | null>(null);
@@ -73,6 +97,15 @@ export interface GameButtonPadProps<TScenes extends SceneMap, TInput extends Inp
   readonly testID?: string;
 }
 
+/** A host node measurable against the pad container. */
+interface MeasurableNode {
+  measureLayout(
+    relativeTo: unknown,
+    onSuccess: (x: number, y: number, width: number, height: number) => void,
+    onFail: () => void,
+  ): void;
+}
+
 /**
  * Map simultaneous multitouch zones onto declared button actions.
  *
@@ -95,6 +128,13 @@ export function GameButtonPad<TScenes extends SceneMap, TInput extends InputMap>
     press: (action: string) => void;
     release: (action: string) => void;
   };
+  const padRef = useRef<View | null>(null);
+  // The zone context must stay identical across session replacements:
+  // zones belong to mounted buttons, not to sessions, so a game change
+  // must never tear down and re-register them (no layout event would
+  // restore them). Session/input reads below always use the live values.
+  const sessionRef = useRef({ game, input });
+  sessionRef.current = { game, input };
 
   // Stable across renders: RNGH 3 re-registers gesture callbacks when the
   // config identity changes (same discipline as GamePointerInput).
@@ -102,92 +142,219 @@ export function GameButtonPad<TScenes extends SceneMap, TInput extends InputMap>
   if (controllerRef.current === null) {
     controllerRef.current = createButtonPadController({ hitSlop });
   }
+  // GS-INPUT-03: owner identity per mounted zone. A second mounted button
+  // claiming the same action is a contract violation; re-registration by
+  // the owning node (re-layout, re-measure) is idempotent.
+  const ownersRef = useRef(new Map<string, unknown>());
+  // GS-INPUT-04: ownership generation — bumped on pause, session
+  // replacement, and unmount; stamped onto every scheduled RN callback and
+  // checked at ingress so stale callbacks die instead of pressing a dead
+  // session or a replaced binding.
+  const generationRef = useRef(1);
+  const generationSV = useSharedValue(1);
+
+  const liveInput = useCallback((): {
+    press: (action: string) => void;
+    release: (action: string) => void;
+  } | null => {
+    // GS-INPUT-03: terminal cleanup never touches a disposed session.
+    if (game.status === 'disposed') {
+      return null;
+    }
+    return input;
+  }, [game, input]);
+
+  const registerZone = useCallback(
+    (action: string, rect: { x: number; y: number; width: number; height: number }, node: unknown) => {
+      const owners = ownersRef.current;
+      const owner = owners.get(action);
+      if (owner !== undefined && owner !== node) {
+        throw new Error(
+          `GameButton action "${action}" is already registered by another mounted button. Use one button per action.`,
+        );
+      }
+      owners.set(action, node);
+      controllerRef.current?.setZone(action, rect);
+    },
+    [],
+  );
+
+  const context = useMemo<ButtonPadContextValue>(
+    () => ({
+      setZone: (action, x, y, width, height, node) => {
+        registerZone(action, { x, y, width, height }, node);
+      },
+      measureZone: (action, node) => {
+        const owners = ownersRef.current;
+        if (owners.has(action) && owners.get(action) !== node) {
+          throw new Error(
+            `GameButton action "${action}" is already registered by another mounted button. Use one button per action.`,
+          );
+        }
+        const measurable = node as MeasurableNode | null;
+        const padNode = padRef.current === null ? null : findNodeHandle(padRef.current);
+        if (measurable === null || typeof measurable.measureLayout !== 'function' || padNode === null) {
+          return;
+        }
+        measurable.measureLayout(
+          padNode,
+          (x, y, width, height) => {
+            // The button may have unmounted or been replaced while the
+            // native measurement was in flight: never resurrect a zone.
+            if (ownersRef.current.get(action) !== node) {
+              return;
+            }
+            registerZone(action, { x, y, width, height }, node);
+          },
+          () => {},
+        );
+      },
+      removeZone: (action, node) => {
+        if (ownersRef.current.get(action) !== node) {
+          return;
+        }
+        ownersRef.current.delete(action);
+        const released = controllerRef.current?.removeZone(action) ?? [];
+        const live = sessionRef.current;
+        if (live.game.status === 'disposed') {
+          return;
+        }
+        for (const actionReleased of released) {
+          live.input.release(actionReleased);
+        }
+      },
+    }),
+    [registerZone],
+  );
+
+  // GS-INPUT-04: one invalidation policy — pause, session replacement, and
+  // unmount bump the generation and clear pad ownership, so stale scheduled
+  // callbacks die at ingress and a fresh down is required after resume.
+  const invalidateOwnership = useCallback(() => {
+    generationRef.current += 1;
+    generationSV.value = generationRef.current;
+    controllerRef.current?.invalidateOwnership();
+  }, [generationSV]);
+
+  useEffect(() => {
+    invalidateOwnership();
+    if (game.status === 'disposed') {
+      return;
+    }
+    const subscription = game.addStatusListener((status) => {
+      if (status === 'paused') {
+        invalidateOwnership();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [game, invalidateOwnership]);
 
   useEffect(() => {
     const controller = controllerRef.current;
     return () => {
-      // No held input outlives the pad.
-      for (const action of controller?.releaseAll() ?? []) {
-        input.release(action);
-      }
-    };
-  }, [input]);
-
-  const context = useMemo<ButtonPadContextValue>(
-    () => ({
-      setZone: (action, x, y, width, height) => {
-        controllerRef.current?.setZone(action, { x, y, width, height });
-      },
-      removeZone: (action) => {
-        const released = controllerRef.current?.removeZone(action) ?? [];
-        for (const actionReleased of released) {
-          input.release(actionReleased);
+      // Release held actions on the owning session first (unless it is
+      // already disposed), then invalidate so late callbacks die.
+      if (game.status !== 'disposed') {
+        for (const action of controller?.releaseAll() ?? []) {
+          input.release(action);
         }
-      },
-    }),
-    [input],
-  );
+      }
+      invalidateOwnership();
+    };
+  }, [game, input, invalidateOwnership]);
 
-  // JS-side handlers — called from the UI worklet via scheduleOnRN
+  // JS-side handlers — called from the UI worklet via scheduleOnRN with the
+  // scheduling generation first. Stale generations die here, before the
+  // controller sees them.
   const onDownJS = useCallback(
-    (event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
+    (generation: number, event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
+      if (generation !== generationRef.current) {
+        return;
+      }
+      const live = liveInput();
+      if (live === null) {
+        return;
+      }
       const diff = controllerRef.current?.touchesDown(event.allTouches) ?? { pressed: [], released: [] };
-      for (const action of diff.released) input.release(action);
-      for (const action of diff.pressed) input.press(action);
+      for (const action of diff.released) live.release(action);
+      for (const action of diff.pressed) live.press(action);
     },
-    [input],
+    [liveInput],
   );
   const onMoveJS = useCallback(
-    (event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
+    (generation: number, event: { allTouches: readonly { id: number; x: number; y: number }[] }) => {
+      if (generation !== generationRef.current) {
+        return;
+      }
+      const live = liveInput();
+      if (live === null) {
+        return;
+      }
       const diff = controllerRef.current?.touchesMove(event.allTouches) ?? { pressed: [], released: [] };
-      for (const action of diff.released) input.release(action);
-      for (const action of diff.pressed) input.press(action);
+      for (const action of diff.released) live.release(action);
+      for (const action of diff.pressed) live.press(action);
     },
-    [input],
+    [liveInput],
   );
   const onUpJS = useCallback(
-    (event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
+    (generation: number, event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
+      if (generation !== generationRef.current) {
+        return;
+      }
+      const live = liveInput();
+      if (live === null) {
+        return;
+      }
       const diff = controllerRef.current?.touchesUp(event.changedTouches) ?? { pressed: [], released: [] };
-      for (const action of diff.released) input.release(action);
+      for (const action of diff.released) live.release(action);
     },
-    [input],
+    [liveInput],
   );
   const onCancelJS = useCallback(
-    (event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
+    (generation: number, event: { changedTouches: readonly { id: number; x: number; y: number }[] }) => {
+      if (generation !== generationRef.current) {
+        return;
+      }
+      const live = liveInput();
+      if (live === null) {
+        return;
+      }
       const diff = controllerRef.current?.touchesCancel(event.changedTouches) ?? { pressed: [], released: [] };
-      for (const action of diff.released) input.release(action);
+      for (const action of diff.released) live.release(action);
     },
-    [input],
+    [liveInput],
   );
 
   type ManualTouchHandler = NonNullable<ManualGestureConfig['onTouchesDown']>;
   const handleTouchesDown = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
-      scheduleOnRN(onDownJS, event as never);
+      scheduleOnRN(onDownJS, generationSV.value, event as never);
     },
-    [onDownJS],
+    [onDownJS, generationSV],
   );
   const handleTouchesMove = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
-      scheduleOnRN(onMoveJS, event as never);
+      scheduleOnRN(onMoveJS, generationSV.value, event as never);
     },
-    [onMoveJS],
+    [onMoveJS, generationSV],
   );
   const handleTouchesUp = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
-      scheduleOnRN(onUpJS, event as never);
+      scheduleOnRN(onUpJS, generationSV.value, event as never);
     },
-    [onUpJS],
+    [onUpJS, generationSV],
   );
   const handleTouchesCancel = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
-      scheduleOnRN(onCancelJS, event as never);
+      scheduleOnRN(onCancelJS, generationSV.value, event as never);
     },
-    [onCancelJS],
+    [onCancelJS, generationSV],
   );
 
   const gestureConfig = useMemo<ManualGestureConfig>(
@@ -212,6 +379,7 @@ export function GameButtonPad<TScenes extends SceneMap, TInput extends InputMap>
   return (
     <GestureDetector gesture={gesture}>
       <View
+        ref={padRef as never}
         pointerEvents="box-none"
         style={style ?? StyleSheet.absoluteFill}
         testID={testID}
@@ -236,19 +404,30 @@ export interface GameButtonProps {
 }
 
 /**
- * One touch zone of the pad. Layout it however you like; its measured bounds
- * become the multitouch hit area for `action`.
+ * One touch zone of the pad. Layout it however you like; its measured
+ * bounds become the multitouch hit area for `action`, in pad coordinates.
+ *
+ * GS-INPUT-03: the zone registers on layout (provisional, parent-relative)
+ * and re-resolves into pad space through native measurement whenever
+ * available; unmount and action replacement release the zone exactly once.
  */
 export function GameButton({ action, children, style, testID, accessibilityRole }: GameButtonProps) {
   const context = useButtonPadContext();
+  const nodeRef = useRef<View | null>(null);
+  useEffect(() => {
+    context.measureZone(action, nodeRef.current);
+    return () => context.removeZone(action, nodeRef.current);
+  }, [context, action]);
   return (
     <View
+      ref={nodeRef as never}
       style={style}
       testID={testID}
       accessibilityRole={accessibilityRole}
       onLayout={(event) => {
         const layout = event.nativeEvent.layout;
-        context.setZone(action, layout.x, layout.y, layout.width, layout.height);
+        context.setZone(action, layout.x, layout.y, layout.width, layout.height, nodeRef.current);
+        context.measureZone(action, nodeRef.current);
       }}
     >
       {children}

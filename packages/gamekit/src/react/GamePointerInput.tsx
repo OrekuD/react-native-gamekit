@@ -169,23 +169,6 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   const coalescerState = useSharedValue<PointerCoalescerState>(() =>
     createPointerCoalescerState(maxMoveIntervalMs),
   );
-  // T10.4: the pause transition clears the UI-side coalescer queue for the
-  // active stream (the core input buffer already cancelled ownership), so a
-  // pre-pause pointer can never flush stale moves after resume. The gesture
-  // itself is not remounted and its key does not change.
-  useEffect(() => {
-    if (game.status === 'disposed') {
-      return;
-    }
-    const subscription = game.addStatusListener((status) => {
-      if (status === 'paused') {
-        coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
-      }
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, [coalescerState, game, maxMoveIntervalMs]);
   const viewportBinding = viewportContext.binding;
   // F3 follow-up: the binding identity includes the declared action, the
   // session input controller, and the viewport owner; changing any of them
@@ -238,7 +221,33 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     [generation],
   );
 
-  // F2 review: `autostart` is only consulted at creation (changing it later
+  // T10.4: the pause transition clears the UI-side coalescer queue for the
+  // active stream (the core input buffer already cancelled ownership), so a
+  // pre-pause pointer can never flush stale moves after resume. The gesture
+  // itself is not remounted and its key does not change.
+  // GS-INPUT-04: pause also advances the packet epoch (queued pre-pause
+  // packets die at RN ingress) and clears the React sampler mirror, so the
+  // trailing sampler unmounts even when no coalescer event ever arrives to
+  // finalize it. A fresh down is required after resume.
+  useEffect(() => {
+    if (game.status === 'disposed') {
+      return;
+    }
+    const subscription = game.addStatusListener((status) => {
+      if (status === 'paused') {
+        coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
+        bumpLayoutEpoch();
+        setSamplerState((previous) =>
+          reduceSamplerMirrorState(generation, previous, { generation, active: false }),
+        );
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [bumpLayoutEpoch, coalescerState, game, generation, maxMoveIntervalMs]);
+
+    // F2 review: `autostart` is only consulted at creation (changing it later
   // re-registers but never activates) and `setActive` from an effect proved
   // unreliable in this stack, so the sampler is a conditionally mounted
   // component (see TrailingFlushSampler): it mounts with autostart active
@@ -492,8 +501,12 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       // flight become harmless no-ops, neutralize old input ownership exactly
       // once, reset the coalescer, remove the old sampler (generation
       // mismatch makes it inactive by construction), and dispose the binding.
+      // The mirror reset bails out when already inactive so cleanup never
+      // schedules redundant renders (GS-INPUT-04).
       bumpLayoutEpoch();
-      setSamplerState({ generation: -1, active: false });
+      setSamplerState((previous) =>
+        previous.active ? { generation: -1, active: false } : previous,
+      );
       if (game.status !== 'disposed') {
         binding.cancel();
       }

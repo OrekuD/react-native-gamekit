@@ -31,6 +31,21 @@ mock.module('react-native', {
       return (props as { children?: unknown }).children ?? null;
     },
     StyleSheet: { create: (s: Record<string, unknown>) => s, absoluteFill: {} },
+    findNodeHandle: () => null,
+  },
+});
+mock.module('react-native-reanimated', {
+  namedExports: {
+    useSharedValue: (initial: unknown) => ({
+      value: typeof initial === 'function' ? (initial as () => unknown)() : initial,
+    }),
+  },
+});
+mock.module('react-native-worklets', {
+  namedExports: {
+    scheduleOnRN: (fn: (...args: never[]) => void, ...args: never[]) => {
+      fn(...args);
+    },
   },
 });
 mock.module('react-native-gesture-handler', {
@@ -52,10 +67,14 @@ const hostModule = { host: host('unused') };
 const pressed: string[] = [];
 const released: string[] = [];
 const fakeSession = {
+  status: 'running',
   input: {
     press: (action: string) => pressed.push(action),
     release: (action: string) => released.push(action),
   },
+  addStatusListener: () => ({
+    remove: () => {},
+  }),
 };
 
 describe('GameButtonPad surface contract', () => {
