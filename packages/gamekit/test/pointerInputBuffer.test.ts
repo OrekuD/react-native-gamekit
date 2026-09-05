@@ -342,3 +342,80 @@ describe('pointer runtime input validation (feedback)', () => {
     assert.throws(() => buffer.controller.move('primary', 1, { x: Number.NaN, y: 0 }), /finite/);
   });
 });
+
+describe('GS-INPUT-01 pending pointer lifecycle', () => {
+  it('begin/end/begin/end within one tick eventually produces neutral input', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 10, y: 20 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 30, y: 40 });
+    buffer.controller.end('primary', 2);
+
+    const released = buffer.sample().pointer('primary');
+    assert.equal(released.released, true, 'the old owner terminal sample is preserved');
+    assert.equal(released.pointerId, 1);
+
+    const neutral = buffer.sample().pointer('primary');
+    assert.deepEqual(neutral, {
+      active: false,
+      pressed: false,
+      released: false,
+      cancelled: false,
+      delta: { x: 0, y: 0 },
+    }, 'the lifted pending pointer never goes live');
+  });
+
+  it('pending moves preserve the newest position at transfer', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 10, y: 20 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 30, y: 40 });
+    buffer.controller.move('primary', 2, { x: 50, y: 60 });
+
+    buffer.sample();
+    const transferred = buffer.sample().pointer('primary');
+    assert.equal(transferred.active, true);
+    assert.equal(transferred.pointerId, 2);
+    assert.deepEqual(transferred.position, { x: 50, y: 60 });
+  });
+
+  it('cancel before transfer leaves no active pointer', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 10, y: 20 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 30, y: 40 });
+    buffer.controller.cancel('primary');
+
+    const cancelled = buffer.sample().pointer('primary');
+    assert.equal(cancelled.cancelled, true);
+    const neutral = buffer.sample().pointer('primary');
+    assert.equal(neutral.active, false, 'no pointer survives cancellation');
+    assert.equal(neutral.pointerId, undefined);
+  });
+
+  it('unrelated pointer ids cannot steal ownership', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 10, y: 20 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 30, y: 40 });
+    buffer.controller.begin('primary', 3, { x: 70, y: 80 });
+    buffer.controller.move('primary', 3, { x: 71, y: 81 });
+    buffer.controller.end('primary', 3);
+
+    buffer.sample();
+    const transferred = buffer.sample().pointer('primary');
+    assert.equal(transferred.pointerId, 2, 'the first queued pointer wins');
+    assert.deepEqual(transferred.position, { x: 30, y: 40 });
+  });
+
+  it('pause and transition resets clear pending acquisition', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 10, y: 20 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 30, y: 40 });
+    buffer.reset();
+    const neutral = buffer.sample().pointer('primary');
+    assert.equal(neutral.active, false);
+    assert.equal(neutral.pointerId, undefined);
+  });
+});

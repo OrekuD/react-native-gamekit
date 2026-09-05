@@ -116,3 +116,86 @@ describe('button pad controller', () => {
     assert.deepEqual(pad.held(), ['b'], 'the untouched pointer stays held');
   });
 });
+
+describe('GS-INPUT-02 pointer/action ownership', () => {
+  it('two fingers in one zone yield one press and one final release', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 80, height: 60 });
+
+    const down = pad.touchesDown(touches({ id: 1, x: 40, y: 30 }, { id: 2, x: 41, y: 31 }));
+    assert.deepEqual(down.pressed, ['jump'], 'second owner does not re-press');
+
+    const firstLift = pad.touchesUp(touches({ id: 1, x: 40, y: 30 }));
+    assert.deepEqual(firstLift, { pressed: [], released: [] }, 'first lift keeps the hold');
+    assert.deepEqual(pad.held(), ['jump']);
+
+    const secondLift = pad.touchesUp(touches({ id: 2, x: 41, y: 31 }));
+    assert.deepEqual(secondLift.released, ['jump'], 'last lift releases exactly once');
+    assert.deepEqual(pad.held(), []);
+  });
+
+  it('zone removal under two fingers fully releases with one release', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 80, height: 60 });
+    pad.touchesDown(touches({ id: 1, x: 40, y: 30 }, { id: 2, x: 41, y: 31 }));
+
+    const released = pad.removeZone('jump');
+    assert.deepEqual(released, ['jump'], 'one release for the whole action count');
+    assert.deepEqual(pad.held(), [], 'no phantom hold remains');
+
+    const lifts = pad.touchesUp(touches({ id: 1, x: 40, y: 30 }, { id: 2, x: 41, y: 31 }));
+    assert.deepEqual(lifts, { pressed: [], released: [] }, 'lifts after removal emit nothing');
+  });
+
+  it('sliding across empty space reacquires the entered zone', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('left', { x: 0, y: 0, width: 60, height: 60 });
+    pad.setZone('right', { x: 70, y: 0, width: 60, height: 60 });
+
+    pad.touchesDown(touches({ id: 7, x: 30, y: 30 }));
+    const gap = pad.touchesMove(touches({ id: 7, x: 65, y: 30 }));
+    assert.deepEqual(gap, { pressed: [], released: ['left'] }, 'leaving releases');
+    const enter = pad.touchesMove(touches({ id: 7, x: 100, y: 30 }));
+    assert.deepEqual(enter, { pressed: ['right'], released: [] }, 'entering presses');
+  });
+
+  it('beginning in empty space and sliding into a zone presses (documented move-acquire policy)', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('right', { x: 70, y: 0, width: 60, height: 60 });
+
+    const down = pad.touchesDown(touches({ id: 9, x: 10, y: 30 }));
+    assert.deepEqual(down, { pressed: [], released: [] }, 'empty down maps nothing');
+    const slide = pad.touchesMove(touches({ id: 9, x: 100, y: 30 }));
+    assert.deepEqual(slide, { pressed: ['right'], released: [] });
+  });
+
+  it('caller mutation of a registered rect cannot alter hit areas', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    const rect = { x: 0, y: 0, width: 60, height: 60 };
+    pad.setZone('left', rect);
+    rect.x = 500;
+    rect.width = 1;
+
+    const down = pad.touchesDown(touches({ id: 1, x: 30, y: 30 }));
+    assert.deepEqual(down.pressed, ['left'], 'the registered copy is used, not the mutated object');
+  });
+
+  it('zone removal on an empty action emits nothing', async () => {
+    const { createButtonPadController } = await import('../src/core/input/buttonPad.ts');
+
+    const pad = createButtonPadController();
+    pad.setZone('left', { x: 0, y: 0, width: 60, height: 60 });
+    assert.deepEqual(pad.removeZone('left'), [], 'no spurious release');
+    assert.deepEqual(pad.removeZone('missing'), [], 'unknown zones are safe');
+  });
+});

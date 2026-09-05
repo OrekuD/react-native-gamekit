@@ -11,8 +11,15 @@
  * - A zone is a rectangle; an optional global hit slop expands it.
  * - Each pointer maps to AT MOST one action (first registered zone wins).
  * - An action is pressed while ANY pointer covers its zone (refcounted);
- *   it releases when the last pointer leaves or lifts.
+ *   it releases when the last pointer leaves or lifts. Edges fire only on
+ *   0-to-1 (press) and 1-to-0 (release) owner transitions — a second owner
+ *   never re-presses and an unbalanced release never emits.
  * - Sliding between zones reassigns the pointer: release + press diff.
+ * - Moves acquire: a pointer that begins in empty space and slides into a
+ *   zone presses it; leaving a zone releases. Every touch in a move list
+ *   is hit-tested, mapped or not.
+ * - Zone rects are cloned at registration: later caller mutation of the
+ *   passed object cannot alter hit areas invisibly.
  */
 
 /** A rectangular hit area, in the pad's local coordinate space. */
@@ -72,13 +79,17 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
   const holdCounts = new Map<string, number>();
 
   const apply = (action: string, direction: 1 | -1): 'pressed' | 'released' | undefined => {
-    const next = (holdCounts.get(action) ?? 0) + direction;
-    if (next > 0) {
-      holdCounts.set(action, next);
-      return direction === 1 ? 'pressed' : undefined;
+    // GS-INPUT-02: edges fire only on ownership transitions. A second owner
+    // (0 stays > 0) never re-presses; an unbalanced release from zero
+    // count never emits.
+    const previous = holdCounts.get(action) ?? 0;
+    const next = previous + direction;
+    if (next <= 0) {
+      holdCounts.delete(action);
+      return previous > 0 && direction === -1 ? 'released' : undefined;
     }
-    holdCounts.delete(action);
-    return direction === -1 ? 'released' : undefined;
+    holdCounts.set(action, next);
+    return previous === 0 && direction === 1 ? 'pressed' : undefined;
   };
 
   const hitTest = (x: number, y: number): string | undefined => {
@@ -131,21 +142,26 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
 
   return {
     setZone(action: string, rect: ButtonPadRect): void {
-      zones.set(action, rect);
+      // GS-INPUT-02: clone the rect so later caller mutation of the passed
+      // object cannot alter hit areas invisibly.
+      zones.set(action, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
     },
     removeZone(action: string): readonly string[] {
       zones.delete(action);
-      // Any pointer still mapped to the removed zone releases immediately.
-      const released: string[] = [];
+      // GS-INPUT-02: drop every pointer mapped to the removed zone, then
+      // release and delete the ENTIRE action count — a single decrement
+      // would strand a phantom hold. Pointers stay physically tracked only
+      // through future touch events, which re-acquire via hit test.
       for (const [pointerId, mapped] of [...pointerAction]) {
         if (mapped === action) {
           pointerAction.delete(pointerId);
         }
       }
-      if (apply(action, -1) === 'released') {
-        released.push(action);
+      if ((holdCounts.get(action) ?? 0) > 0) {
+        holdCounts.delete(action);
+        return [action];
       }
-      return released;
+      return [];
     },
     touchesDown(touches: readonly ButtonPadTouch[]): ButtonPadDiff {
       const merged: { pressed: string[]; released: string[] } = { pressed: [], released: [] };
@@ -157,12 +173,11 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
       return merged;
     },
     touchesMove(touches: readonly ButtonPadTouch[]): ButtonPadDiff {
+      // GS-INPUT-02: every touch in the move list is hit-tested, mapped or
+      // not — a pointer that left its zone releases, and one that entered
+      // a zone (including from empty space) presses it.
       const merged: { pressed: string[]; released: string[] } = { pressed: [], released: [] };
       for (const touch of touches) {
-        const held = pointerAction.get(touch.id);
-        if (held === undefined) {
-          continue;
-        }
         const diff = retarget(touch.id, hitTest(touch.x, touch.y));
         merged.pressed.push(...diff.pressed);
         merged.released.push(...diff.released);

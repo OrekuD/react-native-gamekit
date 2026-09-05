@@ -24,8 +24,20 @@ interface MutablePointerState {
   pointerId: number | undefined;
   position: Point2D | undefined;
   delta: { x: number; y: number };
-  /** A new pointer that arrived before the terminal edge was sampled. */
-  pendingBegin: { readonly pointerId: number; readonly position: Point2D } | undefined;
+  /**
+   * A pointer that arrived before the terminal edge was sampled (GS-INPUT-01).
+   * It carries its own edge/position lifecycle: moves update its position,
+   * a terminal edge marks it released/cancelled instead of transferring, so
+   * an already-lifted pointer can never go live.
+   */
+  pending:
+    | {
+        readonly pointerId: number;
+        position: Point2D;
+        released: boolean;
+        cancelled: boolean;
+      }
+    | undefined;
 }
 
 type MutableInputState = MutableButtonState | MutablePointerState;
@@ -78,7 +90,7 @@ export function createInputBuffer<TInput extends InputMap>(
         pointerId: undefined,
         position: undefined,
         delta: { x: 0, y: 0 },
-        pendingBegin: undefined,
+        pending: undefined,
       });
     } else {
       states.set(action, {
@@ -156,9 +168,14 @@ export function createInputBuffer<TInput extends InputMap>(
       if (state.ownsSlot && !state.active) {
         // The current owner released but the terminal edge has not been
         // sampled yet. Queue the first new pointer and transfer after the
-        // release/cancel frame.
-        if (state.pendingBegin === undefined) {
-          state.pendingBegin = { pointerId, position: freezePoint(position.x, position.y) };
+        // release/cancel frame — unless it lifts first (GS-INPUT-01).
+        if (state.pending === undefined) {
+          state.pending = {
+            pointerId,
+            position: freezePoint(position.x, position.y),
+            released: false,
+            cancelled: false,
+          };
         }
         acceptedCount += 1;
         return;
@@ -180,7 +197,25 @@ export function createInputBuffer<TInput extends InputMap>(
       assertFinitePointerId(pointerId);
       assertFinitePosition(position);
       const state = getPointer(action);
-      if (!state.ownsSlot || !state.active || state.pointerId !== pointerId) {
+      if (!state.ownsSlot || !state.active) {
+        // A move for the queued pending pointer updates its position so the
+        // transfer carries the newest coordinates (GS-INPUT-01). Unrelated
+        // ids are still ignored.
+        const pending = state.pending;
+        if (
+          state.ownsSlot &&
+          !state.active &&
+          pending !== undefined &&
+          pending.pointerId === pointerId &&
+          !pending.released &&
+          !pending.cancelled
+        ) {
+          acceptedCount += 1;
+          pending.position = freezePoint(position.x, position.y);
+        }
+        return;
+      }
+      if (state.pointerId !== pointerId) {
         return;
       }
       acceptedCount += 1;
@@ -197,7 +232,25 @@ export function createInputBuffer<TInput extends InputMap>(
       }
       assertFinitePointerId(pointerId);
       const state = getPointer(action);
-      if (!state.ownsSlot || state.pointerId !== pointerId) {
+      if (!state.ownsSlot) {
+        return;
+      }
+      // A terminal edge for the queued pending pointer marks it instead of
+      // transferring it: an already-lifted pointer never goes live
+      // (GS-INPUT-01). Unrelated ids are still ignored.
+      const pending = state.pending;
+      if (
+        !state.active &&
+        pending !== undefined &&
+        pending.pointerId === pointerId &&
+        !pending.released &&
+        !pending.cancelled
+      ) {
+        acceptedCount += 1;
+        pending.released = true;
+        return;
+      }
+      if (state.pointerId !== pointerId) {
         return;
       }
       acceptedCount += 1;
@@ -223,6 +276,9 @@ export function createInputBuffer<TInput extends InputMap>(
         return;
       }
       acceptedCount += 1;
+      // A whole-action cancellation clears a pending acquisition: nothing
+      // queued may go live afterwards (GS-INPUT-01).
+      state.pending = undefined;
       // Same slot semantics as `end`.
       state.active = false;
       state.cancelled = true;
@@ -245,15 +301,16 @@ export function createInputBuffer<TInput extends InputMap>(
     state.delta.x = 0;
     state.delta.y = 0;
     if (sampled.released || sampled.cancelled) {
-      if (state.pendingBegin !== undefined) {
+      const pending = state.pending;
+      state.pending = undefined;
+      if (pending !== undefined && !pending.released && !pending.cancelled) {
         // Transfer to the queued pointer after the terminal frame.
         state.active = true;
         state.pressed = true;
-        state.pointerId = state.pendingBegin.pointerId;
-        state.position = state.pendingBegin.position;
+        state.pointerId = pending.pointerId;
+        state.position = pending.position;
         state.delta.x = 0;
         state.delta.y = 0;
-        state.pendingBegin = undefined;
       } else {
         state.ownsSlot = false;
         state.pointerId = undefined;
@@ -326,7 +383,7 @@ export function createInputBuffer<TInput extends InputMap>(
             state.pointerId = undefined;
             state.position = undefined;
           }
-          state.pendingBegin = undefined;
+          state.pending = undefined;
           state.delta.x = 0;
           state.delta.y = 0;
         } else {
@@ -346,7 +403,7 @@ export function createInputBuffer<TInput extends InputMap>(
           state.active = false;
           state.pointerId = undefined;
           state.position = undefined;
-          state.pendingBegin = undefined;
+          state.pending = undefined;
           state.delta.x = 0;
           state.delta.y = 0;
         } else {
