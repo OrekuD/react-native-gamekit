@@ -1506,3 +1506,223 @@ describe('GS-AUDIO-03 required setup honesty and explicit capabilities', () => {
     __setAudioApiLoader(null);
   });
 });
+
+
+describe('GS-AUDIO-04 public lifecycle binding and serialized intents', () => {
+  interface VirtualBackend {
+    api: never;
+    state: () => string;
+    settle: () => Promise<void>;
+    maxInflight: () => number;
+  }
+  /** Backend with gated suspend/resume and an observable virtual state. */
+  function virtualBackend(): VirtualBackend {
+    let state = 'running';
+    let inflight = 0;
+    let maxInflight = 0;
+    const gates: Array<() => void> = [];
+    const gate = (apply: () => void): Promise<void> => {
+      inflight += 1;
+      if (inflight > maxInflight) maxInflight = inflight;
+      return new Promise<void>((resolve) => {
+        gates.push(() => {
+          apply();
+          inflight -= 1;
+          resolve();
+        });
+      });
+    };
+    const api = {
+      AudioContext: class {
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        get state() {
+          return state;
+        }
+        async decodeAudioData() {
+          return { length: 1, duration: 0.01 } as never;
+        }
+        createBufferSource() {
+          return { buffer: null, loop: false, connect() {}, start() {}, stop() {} } as never;
+        }
+        createGain() {
+          return { gain: { value: 1 }, connect() {} } as never;
+        }
+        suspend = () => gate(() => {
+          state = 'suspended';
+        });
+        resume = () => gate(() => {
+          state = 'running';
+        });
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    };
+    return {
+      api: api as never,
+      state: () => state,
+      maxInflight: () => maxInflight,
+      settle: async () => {
+        // Yield first so queued chain links run, then drain each gated
+        // native call; repeat until two consecutive ticks stay quiet.
+        for (let i = 0; i < 40; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          if (gates.length === 0) {
+            await new Promise((resolve) => setTimeout(resolve, 2));
+            if (gates.length === 0) return;
+          }
+          gates.splice(0).forEach((release) => release());
+        }
+      },
+    };
+  }
+
+  type AudioSeam = {
+    pause(): void;
+    resume(): void;
+    setPaused(paused: boolean): void;
+    bindLifecycle(source: {
+      getStatus(): string;
+      subscribe(listener: (status: string) => void): () => void;
+    }): () => void;
+    dispose(): void;
+  };
+
+  async function makeAudioWithApi(api: never): Promise<AudioSeam> {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    __setAudioApiLoader(async () => api as never);
+    const audio = (await createGameAudio({ sounds: { a: 1 } })) as unknown as AudioSeam;
+    __setAudioApiLoader(null);
+    return audio;
+  }
+
+  function staticSource(status: string) {
+    let listener: ((status: string) => void) | null = null;
+    return {
+      source: {
+        getStatus: () => status,
+        subscribe: (fn: (status: string) => void) => {
+          listener = fn;
+          return () => {
+            listener = null;
+          };
+        },
+      },
+      emit: (next: string) => listener?.(next),
+      isAttached: () => listener !== null,
+    };
+  }
+
+  it('bindLifecycle applies the session status and detaches on replacement', async () => {
+    const backend = virtualBackend();
+    const audio = await makeAudioWithApi(backend.api);
+    const first = staticSource('running');
+    audio.bindLifecycle(first.source as never);
+    assert.equal(first.isAttached(), true, 'the source is subscribed');
+    const second = staticSource('paused');
+    audio.bindLifecycle(second.source as never);
+    assert.equal(first.isAttached(), false, 'replacement detaches the previous source');
+    await backend.settle();
+    assert.equal(backend.state(), 'suspended', 'the bound paused session suspends');
+    second.emit('running');
+    await backend.settle();
+    assert.equal(backend.state(), 'running', 'the live source resumes');
+    first.emit('paused');
+    await backend.settle();
+    assert.equal(backend.state(), 'running', 'the detached source no longer applies');
+    audio.dispose();
+  });
+
+  it('manual pause survives session resume; session pause is independent', async () => {
+    const backend = virtualBackend();
+    const audio = await makeAudioWithApi(backend.api);
+    const running = staticSource('running');
+    audio.bindLifecycle(running.source as never);
+    audio.pause();
+    await backend.settle();
+    assert.equal(backend.state(), 'suspended', 'manual pause suspends');
+    audio.setPaused(true);
+    audio.setPaused(false);
+    await backend.settle();
+    assert.equal(backend.state(), 'suspended', 'manual pause survives the session round-trip');
+    audio.resume();
+    await backend.settle();
+    assert.equal(backend.state(), 'running', 'explicit resume releases the manual hold');
+    audio.dispose();
+  });
+
+  it('rapid pause/resume settles to the latest requested state', async () => {
+    const backend = virtualBackend();
+    const audio = await makeAudioWithApi(backend.api);
+    audio.pause();
+    audio.resume();
+    audio.pause();
+    await backend.settle();
+    assert.equal(backend.state(), 'suspended', 'the last intent (pause) wins');
+    assert.equal(backend.maxInflight(), 1, 'native intents serialize one at a time');
+    audio.resume();
+    audio.pause();
+    audio.resume();
+    await backend.settle();
+    assert.equal(backend.state(), 'running', 'the last intent (resume) wins');
+    assert.equal(backend.maxInflight(), 1, 'still serialized after more intents');
+    audio.dispose();
+  });
+});
+
+describe('GS-AUDIO-04 shared interruption observation', () => {
+  it('two instances share observation until the last disposes', async () => {
+    const observeCalls: unknown[] = [];
+    const listeners: Array<(event: unknown) => void> = [];
+    const api = {
+      AudioContext: class {
+        state = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData() {
+          return { length: 1, duration: 0.01 } as never;
+        }
+        createBufferSource() {
+          return { buffer: null, loop: false, connect() {}, start() {}, stop() {} } as never;
+        }
+        createGain() {
+          return { gain: { value: 1 }, connect() {} } as never;
+        }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: (_name: string, cb: (event: unknown) => void) => {
+          listeners.push(cb);
+          return { remove: () => {} };
+        },
+        observeAudioInterruptions: (param: unknown) => {
+          observeCalls.push(param);
+        },
+      },
+    };
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    __setAudioApiLoader(async () => api as never);
+    const first = await createGameAudio({ sounds: { a: 1 } });
+    const second = await createGameAudio({ sounds: { a: 1 } });
+    assert.deepEqual(observeCalls, [true], 'observation enabled once for both instances');
+    assert.equal(listeners.length, 2, 'each instance keeps its own listener');
+    first.dispose();
+    assert.deepEqual(observeCalls, [true], 'the first dispose does not disable observation');
+    // The surviving instance still observes interruptions.
+    (second as unknown as { _handleInterruption(e: unknown): void })._handleInterruption({ type: 'began' });
+    second.dispose();
+    assert.deepEqual(observeCalls, [true, false], 'the last dispose disables observation');
+    __setAudioApiLoader(null);
+  });
+});

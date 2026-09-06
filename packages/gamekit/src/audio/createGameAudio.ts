@@ -1,12 +1,7 @@
 import { createAudioInstallationError, GameAudioError } from './errors';
 import { loadAudioApi } from './resolver';
-import type {
-  AudioCategory,
-  AudioSoundRecord,
-  CreateGameAudioOptions,
-  GameAudio,
-  GameAudioPlayOptions,
-} from './types';
+import type { AudioCategory, AudioSoundRecord, CreateGameAudioOptions, GameAudio, GameAudioPlayOptions } from './types';
+import type { GameLifecycleSource } from '../core/session/types';
 
 const CATEGORIES: readonly AudioCategory[] = ['master', 'music', 'sfx', 'ui'] as const;
 
@@ -25,6 +20,11 @@ function assertVolume(volume: number): void {
     throw new GameAudioError(`Volume must be a finite number in [0, 1], got ${String(volume)}`);
   }
 }
+
+// GS-AUDIO-04: backend-global interruption observation is reference
+// counted — the first live instance enables it, the last dispose disables
+// it, so two instances can never disable each other's observation.
+let interruptionObserverCount = 0;
 
 let assetInputLoader: ((assetId: number) => Promise<number | string | ArrayBuffer>) | null = null;
 
@@ -219,25 +219,45 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     return userPaused || sessionPaused || appPaused || interruptionPaused || muted;
   }
 
-  function updateSuspendState(): void {
+  // GS-AUDIO-04: serialized suspend/resume intents. Every pause-affecting
+  // call enqueues one link; each link re-reads the CURRENT effective pause
+  // state and converges the context to it, so rapid intent changes settle
+  // to the latest request instead of racing delayed native promises.
+  // Native calls never overlap: at most one suspend/resume is in flight.
+  let suspendChain: Promise<void> = Promise.resolve();
+  async function runSuspendLink(): Promise<void> {
     if (disposed || !context) return;
     if (isEffectivelyPaused()) {
-      if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer = null; }
-      void (context as InstanceType<typeof AudioContext>).suspend().catch(() => {});
-    } else {
-      try {
-        const state = (context as unknown as { state: string }).state;
-        if (state === 'suspended') void (context as InstanceType<typeof AudioContext>).resume().catch(()=>{});
-        applyAllGains();
-      } catch {}
-      // If we have deferred music intent and now unpaused, start it (F4)
-      if (pendingMusic && !isEffectivelyPaused()) {
-        const { id, generation } = pendingMusic;
-        pendingMusic = null;
-        void startMusicInternal(id, generation);
+      if (idleSuspendTimer) {
+        clearTimeout(idleSuspendTimer);
+        idleSuspendTimer = null;
       }
-      scheduleIdleSuspend();
+      try {
+        await (context as InstanceType<typeof AudioContext>).suspend();
+      } catch {}
+      return;
     }
+    try {
+      const state = (context as unknown as { state: string }).state;
+      if (state === 'suspended') {
+        await (context as InstanceType<typeof AudioContext>).resume();
+      }
+    } catch {}
+    applyAllGains();
+    // If we have deferred music intent and now unpaused, start it (F4)
+    if (pendingMusic && !isEffectivelyPaused()) {
+      const { id, generation } = pendingMusic;
+      pendingMusic = null;
+      void startMusicInternal(id, generation);
+    }
+    scheduleIdleSuspend();
+  }
+  function requestSuspendUpdate(): void {
+    suspendChain = suspendChain.then(runSuspendLink, runSuspendLink);
+  }
+
+  function updateSuspendState(): void {
+    requestSuspendUpdate();
   }
 
   function scheduleIdleSuspend(): void {
@@ -286,12 +306,12 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     if (e.type === 'began') {
       interruptionPaused = true;
       interruptionRequiresExplicitResume = false;
-      void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+      requestSuspendUpdate();
     } else if (e.type === 'ended') {
       if (e.shouldResume) {
         if (interruptionRequiresExplicitResume) {
           // Denied auto-resume persists until explicit user action (F2)
-          void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+          requestSuspendUpdate();
           return;
         }
         interruptionPaused = false;
@@ -301,7 +321,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         // Platform says don't auto-resume: keep paused until explicit user action (F2)
         interruptionPaused = true;
         interruptionRequiresExplicitResume = true;
-        void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+        requestSuspendUpdate();
       }
     }
   }
@@ -310,7 +330,10 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     // an AudioManager the service still plays, but warns once so the gap
     // is visible instead of silently disappearing behind a no-op fallback.
     if (AudioManager) {
-      AudioManager.observeAudioInterruptions(true);
+      if (interruptionObserverCount === 0) {
+        AudioManager.observeAudioInterruptions(true);
+      }
+      interruptionObserverCount++;
       interruptionEnabled = true;
       interruptionSub = AudioManager.addSystemEventListener('interruption', handleInterruption as never);
     } else {
@@ -326,12 +349,12 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       const isInactive = (s: string | null | undefined) => s === 'inactive' || s === 'background';
       if (isInactive(AppState.currentState)) {
         appPaused = true;
-        void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+        requestSuspendUpdate();
       }
       appStateSub = AppState.addEventListener('change', (next: string) => {
         if (isInactive(next)) {
           appPaused = true;
-          void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
+          requestSuspendUpdate();
         } else if (next === 'active') {
           appPaused = false;
           updateSuspendState();
@@ -399,6 +422,11 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   }
 
+  let lifecycleDetach: (() => void) | null = null;
+  const setSessionPaused = (paused: boolean): void => {
+    sessionPaused = paused;
+    requestSuspendUpdate();
+  };
   const audio: GameAudio<T> & {
     _setSessionPaused?: (p:boolean)=>void;
     _isIdleSuspended?: ()=>boolean;
@@ -587,8 +615,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       ensureNotDisposed();
       if (userPaused) return;
       userPaused = true;
-      void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
-      if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
+      requestSuspendUpdate();
       // FF1: keep denied-interruption flag intact; only explicit resume() clears it
     },
 
@@ -631,6 +658,21 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       return muted;
     },
 
+    setPaused(next: boolean): void {
+      ensureNotDisposed();
+      setSessionPaused(Boolean(next));
+    },
+
+    bindLifecycle(source: GameLifecycleSource): () => void {
+      return bindAudioLifecycle(source);
+    },
+
+    /** Compat alias for the pre-T20.7 session channel; use setPaused. */
+    _setSessionPaused(p: boolean): void {
+      ensureNotDisposed();
+      setSessionPaused(Boolean(p));
+    },
+
     dispose(): void {
       if (disposed) return;
       disposed = true;
@@ -644,17 +686,41 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       pendingDecodes.clear();
       bufferCache.clear();
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
+      lifecycleDetach?.();
+      lifecycleDetach = null;
       if (interruptionSub) { try { interruptionSub.remove(); } catch {} interruptionSub=null; }
-      if (interruptionEnabled) { try { AudioManager?.observeAudioInterruptions(false); } catch {} interruptionEnabled=false; }
+      if (interruptionEnabled) {
+        interruptionObserverCount = Math.max(0, interruptionObserverCount - 1);
+        if (interruptionObserverCount === 0) {
+          try { AudioManager?.observeAudioInterruptions(false); } catch {}
+        }
+        interruptionEnabled=false;
+      }
       if (appStateSub) { try { appStateSub.remove(); } catch {} appStateSub=null; }
       if (context) void (context as InstanceType<typeof AudioContext>).close().catch(()=>{});
     },
   };
 
-  (audio as unknown as { _setSessionPaused: (p:boolean)=>void })._setSessionPaused = (p: boolean) => {
-    sessionPaused = p;
-    if (p) void (context as InstanceType<typeof AudioContext>).suspend().catch(()=>{});
-    else updateSuspendState();
+  const bindAudioLifecycle = (source: GameLifecycleSource): (() => void) => {
+    ensureNotDisposed();
+    // One active source: a replacement detaches the previous one first.
+    lifecycleDetach?.();
+    lifecycleDetach = null;
+    // Apply the current status immediately, then follow transitions.
+    // AppState backgrounding stays independent (separate flag).
+    setSessionPaused(source.getStatus() !== 'running');
+    const sourceDetach = source.subscribe((status) => {
+      setSessionPaused(status !== 'running');
+    });
+    let detached = false;
+    const detach = (): void => {
+      if (detached) return;
+      detached = true;
+      sourceDetach();
+      if (lifecycleDetach === detach) lifecycleDetach = null;
+    };
+    lifecycleDetach = detach;
+    return detach;
   };
   (audio as unknown as { _isIdleSuspended: ()=>boolean })._isIdleSuspended = () => {
     try { return (context as unknown as { state: string }).state === 'suspended'; } catch { return false; }
