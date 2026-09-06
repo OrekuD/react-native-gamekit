@@ -52,12 +52,19 @@ export function resolveSpriteFrameRect(
  * `[0, 0, frameWidth, frameHeight]` in local space and the documented pivot
  * order is:
  *
- *   M = T(x, y) · R(rotation) · T(anchor) · S(scaleX, scaleY) · T(-anchor)
+ *   M = T(x, y) · R(rotation) · S(scaleX, scaleY) · T(-anchor)
  *
- * i.e. scale and explicit flips happen around the anchor, then the frame
- * rotates around the anchor at the world position. The RSXform carries the
- * rotation + position (its 2x2 cannot express flips or non-uniform scale);
- * the wrapping Group applies the scale/flip part around the anchor.
+ * i.e. uniform scale and explicit flips happen around the anchor in the
+ * local frame, then the frame rotates around the anchor at the world
+ * position. The invariant: the anchor maps to `(x, y)` under every scale,
+ * rotation, and flip (GS-SPRITE-01).
+ *
+ * Split across Skia's retained primitives (the Atlas RSXform is innermost,
+ * the wrapping Group is outermost): the RSXform carries `T·R·S` with the
+ * pivot pre-compensated, so no-flip sprites need no Group transform at
+ * all; reflection — which an RSXform cannot express — is isolated in the
+ * Group as a mirror that fixes the world anchor
+ * (`T(x,y)·R·F·R⁻¹·T(−x,−y)`).
  */
 import type { SharedValue } from 'react-native-reanimated';
 
@@ -89,12 +96,13 @@ export interface SpriteRsxform {
   readonly ty: number;
 }
 
-/** A Skia-compatible 3x3 transform element list. */
+/** A Skia-compatible 3x3 transform element list (rotation in radians). */
 export type SkiaTransformElement =
   | { readonly translateX: number }
   | { readonly translateY: number }
   | { readonly scaleX: number }
-  | { readonly scaleY: number };
+  | { readonly scaleY: number }
+  | { readonly rotate: number };
 
 function readNumber(value: number | SharedValue<number>): number {
   'worklet';
@@ -107,46 +115,58 @@ function readBoolean(value: boolean | SharedValue<boolean>): boolean {
 }
 
 /**
- * The RSXform for the atlas path: rotation + position with the pivot
- * compensated (`tx = x - pivotX·cos + pivotY·sin`). Scale and flips are
- * applied by the wrapping Group (`spriteGroupCorrection`).
+ * The RSXform for the atlas path: `T(x,y)·R·S` with the pivot
+ * pre-compensated (`t = p − s·R·pivot`), so the anchor lands exactly on
+ * `(x, y)` (GS-SPRITE-01/02). Uniform scale is encoded in the
+ * coefficients; the batch path shares this helper and needs no Group.
  */
 export function computeSpriteRsxform(input: SpriteTransformInput): SpriteRsxform {
   'worklet';
   const x = readNumber(input.x);
   const y = readNumber(input.y);
   const rotation = readNumber(input.rotation);
+  const scale = readNumber(input.scale);
   const pivotX = input.anchorX * input.frameWidth;
   const pivotY = input.anchorY * input.frameHeight;
   const cos = Math.cos(rotation);
   const sin = Math.sin(rotation);
   return {
-    scos: cos,
-    ssin: sin,
-    tx: x - pivotX * cos + pivotY * sin,
-    ty: y - pivotX * sin - pivotY * cos,
+    scos: scale * cos,
+    ssin: scale * sin,
+    tx: x - scale * (pivotX * cos - pivotY * sin),
+    ty: y - scale * (pivotX * sin + pivotY * cos),
   };
 }
 
 /**
- * The scale/flip part around the anchor as a Skia transform element list:
- * `T(anchor) · S(scaleX, scaleY) · T(-anchor)` (the first element is the
- * outermost).
+ * The reflection part as a Skia transform element list, outermost first.
+ *
+ * Without flips the RSXform alone carries the transform, so the correction
+ * is empty (identity). With flips it is the anchor-fixing mirror
+ * `T(x,y)·R·F·R⁻¹·T(−x,−y)`: mirroring about the rotated anchor axes while
+ * the world anchor stays fixed. Depends on position and rotation (not just
+ * the pivot), so callers must derive it on the UI runtime from live values
+ * — never memoize it from stale React-render reads (GS-SPRITE-01).
  */
 export function spriteGroupCorrection(input: SpriteTransformInput): readonly SkiaTransformElement[] {
   'worklet';
-  const scale = readNumber(input.scale);
   const flipX = readBoolean(input.flipX);
   const flipY = readBoolean(input.flipY);
-  const pivotX = input.anchorX * input.frameWidth;
-  const pivotY = input.anchorY * input.frameHeight;
+  if (!flipX && !flipY) {
+    return [];
+  }
+  const x = readNumber(input.x);
+  const y = readNumber(input.y);
+  const rotation = readNumber(input.rotation);
   return [
-    { translateX: pivotX },
-    { translateY: pivotY },
-    { scaleX: flipX ? -scale : scale },
-    { scaleY: flipY ? -scale : scale },
-    { translateX: -pivotX },
-    { translateY: -pivotY },
+    { translateX: x },
+    { translateY: y },
+    { rotate: rotation },
+    { scaleX: flipX ? -1 : 1 },
+    { scaleY: flipY ? -1 : 1 },
+    { rotate: -rotation },
+    { translateX: -x },
+    { translateY: -y },
   ];
 }
 
