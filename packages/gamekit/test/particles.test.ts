@@ -385,3 +385,51 @@ describe('T15.5 event integration', () => {
     ps.dispose();
   });
 });
+
+describe('GS-PARTICLE-01 exclusive clock ownership and terminal registry', () => {
+  function ownedSystem() {
+    const ps = createParticleSystem({ effects: { a: shapeDef } });
+    ps.emit('a', { position: { x: 0, y: 0 }, seed: 1 });
+    const binding = ps.bindPresentation();
+    const driver = binding.acquireDriver();
+    return { ps, binding, driver };
+  }
+
+  it('public update cannot double-step an acquired driver', () => {
+    const { ps, binding, driver } = ownedSystem();
+    driver.step(0.1);
+    assert.equal(binding.activeClock, 0.1, 'one driver step advances once');
+    assert.throws(() => ps.update(0.1), /owned by an acquired driver/, 'headless update is rejected while owned');
+    assert.equal(binding.activeClock, 0.1, 'the rejected update advances nothing');
+    driver.release();
+    ps.update(0.1);
+    assert.equal(binding.activeClock, 0.2, 'release restores headless updates');
+    ps.dispose();
+  });
+
+  it('disposal publishes an empty terminal registry without throwing', () => {
+    const { ps, binding, driver } = ownedSystem();
+    driver.step(0.05);
+    const revisionBefore = binding.registryRevision;
+    ps.dispose();
+    assert.ok(binding.registryRevision > revisionBefore, 'disposal bumps the revision (terminal clear)');
+    const registry = binding.buildUiRegistry();
+    assert.deepEqual(registry.effects.a!.particles, [], 'no particles survive disposal');
+    assert.equal(binding.activeCount, 0, 'terminal active count is zero');
+    ps.dispose();
+  });
+
+  it('a scheduled step delivered after dispose is a harmless no-op', () => {
+    const { ps, binding, driver } = ownedSystem();
+    driver.step(0.05);
+    ps.dispose();
+    // The disposed driver was auto-released; late steps and registry reads
+    // from an in-flight scheduled callback must not throw or revive work.
+    driver.step(0.1);
+    binding.tick(0.1);
+    const registry = binding.buildUiRegistry();
+    assert.deepEqual(registry.effects.a!.particles, [], 'late work revives nothing');
+    assert.equal(binding.activeCount, 0);
+    assert.equal(ps.getActiveParticles('a').length, 0);
+  });
+});

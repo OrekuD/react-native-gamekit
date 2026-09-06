@@ -254,7 +254,7 @@ export function createParticleSystem<
     }
   }
 
-  function update(deltaSeconds: number): void {
+  function stepClock(deltaSeconds: number): void {
     if (status === 'disposed') throw new ParticleError('particle system is disposed');
     if (status === 'paused') return;
     if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) {
@@ -297,13 +297,30 @@ export function createParticleSystem<
   }
 
   function advance(deltaSeconds: number): void {
-    update(deltaSeconds);
+    stepClock(deltaSeconds);
+  }
+
+  /**
+   * Public headless step (GS-PARTICLE-01): rejected while a presentation
+   * driver owns the clock — stepping here as well would double-step every
+   * driver step. Release the driver to resume headless updates.
+   */
+  function update(deltaSeconds: number): void {
+    if (driverOwned) {
+      throw new ParticleError(
+        'presentation clock is owned by an acquired driver — use the driver handle to step',
+      );
+    }
+    stepClock(deltaSeconds);
   }
 
   function buildRegistry(): ParticleUiRegistry {
     const effects: Record<string, { capacity: number; particles: ParticleEmissionRecord[] }> = {};
     for (const [name, def] of definitions) {
-      const log = emissionsLog.get(name)!;
+      // GS-PARTICLE-01: the terminal registry after disposal is empty, not
+      // an error — the emissions log is cleared on dispose, and scheduled
+      // presentation callbacks may still read once before they detach.
+      const log = emissionsLog.get(name) ?? [];
       const pool = pools.get(name)!;
       // Only ACTIVE emissions are shipped; expired entries are pruned here so
       // the registry stays bounded by live particles.
@@ -429,14 +446,6 @@ export function createParticleSystem<
       }
       emissionsLog.clear();
       registryRevision++;
-      for (const pool of pools.values()) {
-        for (const slot of pool) {
-          slot.active = false;
-          slot.age = 0;
-          slot.opacity = 0;
-          slot.spawnSequence = -1;
-        }
-      }
       for (const [name, d] of diagnostics) {
         diagnostics.set(name, { ...d, active: 0 });
       }
