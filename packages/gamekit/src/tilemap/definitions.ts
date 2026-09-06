@@ -14,6 +14,14 @@ import { recordChunkRead } from './chunkStats';
 export const TILE_CHUNK_SIZE = 16;
 
 /**
+ * Maximum cells per layer (GS-TILE-04). The per-axis bound alone permits
+ * 8192x8192 = 67M cells per layer (~0.5GB dense data plus index copies),
+ * so total authored cells are capped at 2048x2048 worth — far above real
+ * levels, far below the footgun.
+ */
+export const MAX_TILE_LAYER_CELLS = 4_194_304;
+
+/**
  * Floor division truncating toward negative infinity — REQUIRED for
  * negative cell coordinates (T16.0 contract).
  */
@@ -29,6 +37,15 @@ export function floorDiv(a: number, b: number): number {
 // Every runtime tile read flows through `tileAt`, which consults this index.
 // Visit instrumentation lives in ./chunkStats and is re-exported only via
 // rn-gamekit/testing (T16-RF4).
+//
+// Kept-read decision (GS-TILE-04, measured on desktop V8, Node 24):
+// dense spans traverse identically with or without the index (~23us for a
+// 40x24 window, ~2.1ms for a full 256x256 scan); sparse spans skip empty
+// chunks 1.5-3.9x faster (platformer-shaped window 0.8us vs 3.1us direct).
+// Absolute costs are microseconds per query, but the sparse win covers the
+// representative game shape (mostly-empty finite maps), so the index stays
+// with the total-cell cap above bounding its retained cost. See
+// bench/tileQueries.bench.ts (`pnpm bench:tilequeries`).
 // ---------------------------------------------------------------------------
 
 type ChunkIndex = Map<string, Int32Array>;
@@ -119,6 +136,12 @@ export function defineTileLayer2D(
   assertSafeInt(input.height, `${p}.height`);
   if (input.width <= 0 || input.width > 8192) throw tileError(`${p}.width`, `must be in 1..8192; got ${input.width}`);
   if (input.height <= 0 || input.height > 8192) throw tileError(`${p}.height`, `must be in 1..8192; got ${input.height}`);
+  if (input.width * input.height > MAX_TILE_LAYER_CELLS) {
+    throw tileError(
+      `${p}`,
+      `width*height ${input.width * input.height} exceeds the maximum of ${MAX_TILE_LAYER_CELLS} cells per layer`,
+    );
+  }
   if (!Array.isArray(input.data)) throw tileError(`${p}.data`, 'must be a row-major array of tile ids');
   // T16-F1: collidable is validated at runtime, never trusted from types.
   if (

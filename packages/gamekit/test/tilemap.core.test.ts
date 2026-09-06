@@ -737,3 +737,35 @@ describe('GS-TILE-03 movement input validation and contact ownership', () => {
     assert.ok(dropped.body.y > 0, 'the body keeps its falling motion');
   });
 });
+
+describe('GS-TILE-04 total authored-cell cap', () => {
+  it('rejects layers whose total cells exceed the budget', () => {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    // Just over the cap with both axes individually legal.
+    assert.throws(
+      () =>
+        defineTileMap2D({
+          cellSize: { width: 16, height: 16 },
+          tileset,
+          layers: [{ id: 't', width: 8192, height: 1024, data: [] }],
+        }),
+      /exceeds the maximum/,
+    );
+  });
+
+  it('a large-but-legal sparse layer still queries exactly', () => {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    const width = 2048;
+    const height = 1024;
+    const data = new Array(width * height).fill(0);
+    data[100 * width + 500] = 1;
+    const map = defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [{ id: 't', width, height, data }],
+    });
+    const found = cellsInAabb(map, { x: 500 * 16, y: 100 * 16, width: 16, height: 16 }, ['t']);
+    assert.equal(found.length, 1, 'one distant tile resolves through the index');
+    assert.deepEqual(found[0]!.cell, { x: 500, y: 100 });
+  });
+});
