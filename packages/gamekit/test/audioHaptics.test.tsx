@@ -1726,3 +1726,81 @@ describe('GS-AUDIO-04 shared interruption observation', () => {
     __setAudioApiLoader(null);
   });
 });
+
+describe('GS-HAPTICS-01 independent manual and lifecycle pause gates', () => {
+  function staticSource(status: string) {
+    let listener: ((status: string) => void) | null = null;
+    return {
+      source: {
+        getStatus: () => status,
+        subscribe: (fn: (status: string) => void) => {
+          listener = fn;
+          return () => {
+            listener = null;
+          };
+        },
+      },
+      emit: (next: string) => listener?.(next),
+    };
+  }
+
+  async function makeHaptics() {
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    return createGameHaptics();
+  }
+
+  it('manual pause survives lifecycle running transitions', async () => {
+    const haptics = await makeHaptics();
+    const running = staticSource('running');
+    haptics.bindLifecycle(running.source as never);
+    haptics.setPaused(true);
+    running.emit('running');
+    assert.equal(haptics.play('impact').reason, 'paused', 'manual hold survives lifecycle running');
+    haptics.setPaused(false);
+    // Throttle would mask the gate: the reason distinguishes them.
+    const second = haptics.play('selection');
+    assert.ok(second.played || second.reason !== 'paused', 'manual release reopens the gate');
+    haptics.dispose();
+  });
+
+  it('lifecycle pause survives manual unpause', async () => {
+    const haptics = await makeHaptics();
+    const paused = staticSource('paused');
+    haptics.bindLifecycle(paused.source as never);
+    haptics.setPaused(false);
+    assert.equal(haptics.play('impact').reason, 'paused', 'lifecycle hold survives manual release');
+    paused.emit('running');
+    haptics.setPaused(true);
+    haptics.setPaused(false);
+    haptics.dispose();
+  });
+
+  it('detach removes the source ownership without touching manual pause', async () => {
+    const haptics = await makeHaptics();
+    const paused = staticSource('paused');
+    const detach = haptics.bindLifecycle(paused.source as never);
+    assert.equal(haptics.play('impact').reason, 'paused');
+    detach();
+    const after = haptics.play('selection');
+    assert.ok(after.played || after.reason !== 'paused', 'detach clears the lifecycle gate');
+    // Manual pause set while bound persists through detach.
+    haptics.setPaused(true);
+    const rebound = staticSource('paused');
+    haptics.bindLifecycle(rebound.source as never);
+    haptics.dispose();
+  });
+
+  it('replacement swaps sources and disposed instances stay inert', async () => {
+    const haptics = await makeHaptics();
+    const first = staticSource('paused');
+    haptics.bindLifecycle(first.source as never);
+    const second = staticSource('running');
+    haptics.bindLifecycle(second.source as never);
+    first.emit('running');
+    const result = haptics.play('selection');
+    assert.ok(result.played || result.reason !== 'paused', 'the replaced source no longer gates');
+    haptics.dispose();
+    assert.throws(() => haptics.bindLifecycle(second.source as never), /disposed/i);
+    assert.equal(haptics.play('impact').reason, 'disposed');
+  });
+});

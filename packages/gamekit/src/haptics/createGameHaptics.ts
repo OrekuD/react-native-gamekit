@@ -88,7 +88,11 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
 
   let muted = Boolean(options?.muted);
   let disposed = false;
-  let paused = false;
+  // GS-HAPTICS-01: manual and lifecycle pauses are independent gates —
+  // either alone suppresses, and neither overwrites the other. Detaching
+  // a lifecycle source clears only its own gate.
+  let manualPaused = false;
+  let lifecyclePaused = false;
   let backgrounded = false;
   let lastPlayAt = 0;
   // T20L-R3: exactly one active lifecycle source per haptics instance. The
@@ -119,7 +123,7 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   } = {
     play(preset: HapticPreset): HapticsResult {
       if (disposed) return { played: false, reason: 'disposed' };
-      if (paused) return { played: false, reason: 'paused' };
+      if (manualPaused || lifecyclePaused) return { played: false, reason: 'paused' };
       if (backgrounded) return { played: false, reason: 'paused' };
       if (!isValidPreset(preset)) throw new GameHapticsError(`Unknown haptic preset "${String(preset)}"`);
       if (muted) return { played: false, reason: 'muted' };
@@ -164,7 +168,7 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
 
     setPaused(next: boolean): void {
       if (disposed) throw new GameHapticsError('GameHaptics is disposed');
-      paused = Boolean(next);
+      manualPaused = Boolean(next);
     },
 
     bindLifecycle(source: GameLifecycleSource): () => void {
@@ -174,16 +178,20 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
       lifecycleDetach = null;
       // Apply the current status immediately, then follow transitions.
       // AppState backgrounding stays independent (separate flag).
-      paused = source.getStatus() !== 'running';
+      lifecyclePaused = source.getStatus() !== 'running';
       // GameLifecycleSource.subscribe returns a bare detach function (T20.3).
       const sourceDetach = source.subscribe((status) => {
-        paused = status !== 'running';
+        lifecyclePaused = status !== 'running';
       });
       let detached = false;
       const detach = (): void => {
         if (detached) return;
         detached = true;
         sourceDetach();
+        // GS-HAPTICS-01: detach removes this source's ownership — its last
+        // status must not linger as a permanent gate. Manual pause is
+        // untouched.
+        lifecyclePaused = false;
         if (lifecycleDetach === detach) lifecycleDetach = null;
       };
       lifecycleDetach = detach;

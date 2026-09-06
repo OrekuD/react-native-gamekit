@@ -21,16 +21,18 @@ export interface GameHaptics {
   setMuted(muted: boolean): void;
   isMuted(): boolean;
   /**
-   * Public pause gate (T20.7): while paused, `play` drops transient requests
-   * with reason `'paused'`. Independent from the AppState background gate —
-   * either source alone suppresses feedback.
+   * Public pause gate (T20.7, GS-HAPTICS-01): while paused, `play` drops
+   * transient requests with reason `'paused'`. Independent from the
+   * lifecycle gate, AppState backgrounding, and mute — any one alone
+   * suppresses feedback, and clearing one never clears another.
    */
   setPaused(paused: boolean): void;
   /**
-   * Follow a session lifecycle source (T20.3/T20.7): applies the source's
-   * current status immediately, then pauses on every non-running transition
-   * and resumes on `'running'`. Returns a detach function. AppState
-   * backgrounding stays independent from the session source.
+   * Follow a session lifecycle source (T20.3/T20.7, GS-HAPTICS-01): applies
+   * the source's current status immediately, then pauses on every
+   * non-running transition and resumes on `'running'`. Returns a detach
+   * function. Detaching removes only this source's gate (manual pause is
+   * untouched). AppState backgrounding stays independent.
    */
   bindLifecycle(source: GameLifecycleSource): () => void;
   dispose(): void;
