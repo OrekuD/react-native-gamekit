@@ -8,6 +8,7 @@ import type {
 import { cellsInAabb, cellsInSweptBounds } from './queries';
 import { tileError } from './errors';
 import type { Aabb2D, Vector2D } from '../geometry/types';
+import { assertValidAabb2D, assertValidVector2D } from '../geometry/validation';
 
 /** Frozen v1 movement semantics (T16.0). */
 export const PLATFORMER_MAX_ITERATIONS = 4;
@@ -60,6 +61,12 @@ function overlaps(a: Aabb2D, b: Aabb2D): boolean {
  *   `floorSnapDistance`.
  * - Candidate order is layer order then row-major cell order; equal physical
  *   candidates preserve that deterministic order.
+ *
+ * Displacement contract (GS-TILE-03): `displacement` reports requested-motion
+ * resolution only — starting-overlap recovery moves the body and reports its
+ * contact, but never contributes to displacement. The caller's body object is
+ * never mutated or frozen; every returned body/contact/normal is an owned
+ * frozen value.
  */
 export function movePlatformerBody2D(options: {
   readonly body: Aabb2D;
@@ -70,11 +77,23 @@ export function movePlatformerBody2D(options: {
   readonly collisionLayers: readonly string[];
 } & PlatformerMoveOptions2D): PlatformerMoveResult2D {
   const { map, deltaSeconds, collisionLayers } = options;
-  let body: Aabb2D = options.body;
+  // GS-TILE-03: validate author inputs once at the public boundary, and
+  // copy the body — the caller's object is never mutated or frozen.
+  assertValidAabb2D(options.body, 'body');
+  assertValidVector2D(options.velocity, 'velocity');
+  let body: Aabb2D = { ...options.body };
   let vx = options.velocity.x;
   let vy = options.velocity.y;
   if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) {
     throw tileError('deltaSeconds', `must be a finite number >= 0; got ${String(deltaSeconds)}`);
+  }
+  const dropThrough = options.dropThroughOneWay ?? false;
+  if (typeof dropThrough !== 'boolean') {
+    throw tileError('dropThroughOneWay', `must be a boolean or omitted; got ${String(options.dropThroughOneWay)}`);
+  }
+  const snapDistance = options.floorSnapDistance ?? 0;
+  if (typeof snapDistance !== 'number' || !Number.isFinite(snapDistance) || snapDistance < 0) {
+    throw tileError('floorSnapDistance', `must be a finite number >= 0 or omitted; got ${String(options.floorSnapDistance)}`);
   }
   // GS-TILE-02: layer selection is explicit and exact — unknown ids fail
   // here instead of silently colliding with nothing (a typo would otherwise
@@ -90,12 +109,17 @@ export function movePlatformerBody2D(options: {
   }
   const intendedX = vx * deltaSeconds;
   const intendedY = vy * deltaSeconds;
-  const dropThrough = options.dropThroughOneWay ?? false;
-  const snapDistance = options.floorSnapDistance ?? 0;
 
   const contacts: PlatformerContact2D[] = [];
   let appliedX = 0;
   let appliedY = 0;
+
+  /** Report one owned frozen contact (GS-TILE-03: nested values immutable). */
+  const report = (cell: TileCell2D, normal: { x: number; y: number }): void => {
+    contacts.push(
+      Object.freeze({ cell, normal: Object.freeze({ ...normal }) }),
+    );
+  };
 
   // --- Starting-overlap recovery ---
   // Track the winning tile TOGETHER with its face so the reported contact
@@ -143,16 +167,10 @@ export function movePlatformerBody2D(options: {
     // Negative-y push lands the body ON a tile top (floor); positive-y hits
     // a ceiling. The contact names the winning tile.
     if (axis === 'y') {
-      contacts.push({
-        cell: bestCell,
-        normal: { x: 0, y: bestSign },
-      });
+      report(bestCell, { x: 0, y: bestSign });
       vy = 0;
     } else {
-      contacts.push({
-        cell: bestCell,
-        normal: { x: bestSign, y: 0 },
-      });
+      report(bestCell, { x: bestSign, y: 0 });
       vx = 0;
     }
   }
@@ -189,7 +207,7 @@ export function movePlatformerBody2D(options: {
           for (const c of solids) {
             if (!yOverlap(c.aabb)) continue;
             if (Math.abs(c.aabb.x - planeX) > PLATFORMER_SKIN) continue;
-            contacts.push({ cell: c, normal: { x: -1, y: 0 } });
+            report(c, { x: -1, y: 0 });
           }
         }
       } else {
@@ -204,7 +222,7 @@ export function movePlatformerBody2D(options: {
           for (const c of solids) {
             if (!yOverlap(c.aabb)) continue;
             if (Math.abs(c.aabb.x + c.aabb.width - planeX) > PLATFORMER_SKIN) continue;
-            contacts.push({ cell: c, normal: { x: 1, y: 0 } });
+            report(c, { x: 1, y: 0 });
           }
         }
       }
@@ -259,7 +277,7 @@ export function movePlatformerBody2D(options: {
         clamped = Math.min(clamped, planeY - body.height);
         for (const f of floors) {
           if (f.cell.aabb.y !== planeY) continue;
-          contacts.push({ cell: f.cell, normal: { x: 0, y: -1 } });
+          report(f.cell, { x: 0, y: -1 });
         }
       } else if (dy < 0 && ceilings.length > 0) {
         let planeBottom = Number.NEGATIVE_INFINITY;
@@ -269,7 +287,7 @@ export function movePlatformerBody2D(options: {
         clamped = Math.max(clamped, planeBottom);
         for (const c of ceilings) {
           if (Math.abs(c.aabb.y + c.aabb.height - planeBottom) > PLATFORMER_SKIN) continue;
-          contacts.push({ cell: c, normal: { x: 0, y: 1 } });
+          report(c, { x: 0, y: 1 });
         }
       }
       if (clamped !== newY) vy = 0;
@@ -279,7 +297,9 @@ export function movePlatformerBody2D(options: {
   }
 
   // --- Floor snap ---
-  if (!dropThrough) {
+  // GS-TILE-03: drop-through suppresses one-way floors without disabling
+  // snap onto solid floors.
+  {
     const hasFloor = contacts.some((c) => c.normal.y === -1);
     if (!hasFloor && vy >= 0 && snapDistance > 0) {
       const probeBottom = body.y + body.height + snapDistance;
@@ -292,7 +312,7 @@ export function movePlatformerBody2D(options: {
         if (top < body.y + body.height - PLATFORMER_SKIN) continue;
         if (top > probeBottom) continue;
         const ok = isSolid(c.collision) ||
-          (isOneWay(c.collision) && prevBottom <= top + ONE_WAY_TOLERANCE);
+          (!dropThrough && isOneWay(c.collision) && prevBottom <= top + ONE_WAY_TOLERANCE);
         if (!ok) continue;
         if (top < bestTop) {
           bestTop = top;
@@ -302,7 +322,7 @@ export function movePlatformerBody2D(options: {
       if (bestCell !== undefined && bestTop < Number.POSITIVE_INFINITY) {
         const snapDelta = bestTop - body.height - body.y;
         body = { ...body, y: bestTop - body.height };
-        contacts.push({ cell: bestCell, normal: { x: 0, y: -1 } });
+        report(bestCell, { x: 0, y: -1 });
         vy = 0;
         appliedY += snapDelta;
       }

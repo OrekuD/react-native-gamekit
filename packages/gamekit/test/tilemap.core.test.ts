@@ -622,3 +622,118 @@ describe('GS-TILE-02 single collision eligibility policy', () => {
     assert.equal(r.contacts.all.length, 1, 'one wall reports one contact');
   });
 });
+
+describe('GS-TILE-03 movement input validation and contact ownership', () => {
+  function wallMap(): TileMap2D {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    return defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [{ id: 't', width: 3, height: 3, data: [0, 0, 0, 0, 1, 0, 0, 1, 0] }],
+    });
+  }
+
+  function move(body: { x: number; y: number; width: number; height: number }, extra?: Record<string, unknown>) {
+    return movePlatformerBody2D({
+      body: body as never,
+      velocity: { x: 0, y: 0 },
+      deltaSeconds: 0.016,
+      map: wallMap(),
+      collisionLayers: ['t'],
+      ...(extra as object),
+    });
+  }
+
+  it('rejects malformed geometry and options before iteration', () => {
+    assert.throws(() => move({ x: Number.NaN, y: 0, width: 8, height: 8 }), /body\.x/);
+    assert.throws(() => move({ x: 0, y: 0, width: -8, height: 8 }), /body\.width/);
+    assert.throws(
+      () =>
+        movePlatformerBody2D({
+          body: { x: 0, y: 0, width: 8, height: 8 },
+          velocity: { x: Number.NaN, y: 0 },
+          deltaSeconds: 0.016,
+          map: wallMap(),
+          collisionLayers: ['t'],
+        }),
+      /velocity\.x/,
+    );
+    assert.throws(() => move({ x: 0, y: 0, width: 8, height: 8 }, { floorSnapDistance: -1 }), /floorSnapDistance/);
+    assert.throws(
+      () => move({ x: 0, y: 0, width: 8, height: 8 }, { floorSnapDistance: Number.NaN }),
+      /floorSnapDistance/,
+    );
+    assert.throws(
+      () => move({ x: 0, y: 0, width: 8, height: 8 }, { dropThroughOneWay: 'yes' }),
+      /dropThroughOneWay/,
+    );
+  });
+
+  it('never freezes the caller body and returns owned frozen contacts', () => {
+    const input = { x: 0, y: 8, width: 16, height: 16 };
+    const r = movePlatformerBody2D({
+      body: input,
+      velocity: { x: 500, y: 0 },
+      deltaSeconds: 0.016,
+      map: wallMap(),
+      collisionLayers: ['t'],
+    });
+    assert.equal(Object.isFrozen(input), false, 'the caller object stays mutable');
+    assert.deepEqual(input, { x: 0, y: 8, width: 16, height: 16 }, 'the caller object is untouched');
+    assert.ok(Object.isFrozen(r.body), 'the returned body is frozen');
+    assert.ok(r.contacts.all.length > 0, 'the wall reports a contact');
+    for (const contact of r.contacts.all) {
+      assert.ok(Object.isFrozen(contact), 'contacts are frozen');
+      assert.ok(Object.isFrozen(contact.normal), 'contact normals are frozen');
+    }
+    assert.throws(() => {
+      (r.contacts.all[0]!.normal as { x: number }).x = 99;
+    }, TypeError);
+  });
+
+  it('displacement reports requested-motion resolution, not depenetration', () => {
+    // Spawned overlapping the wall with zero velocity: recovery moves the
+    // body and reports a contact, but displacement stays zero because no
+    // requested motion resolved.
+    const r = move({ x: 10, y: 16, width: 8, height: 8 });
+    assert.ok(r.contacts.all.length > 0, 'recovery reports its contact');
+    assert.deepEqual(
+      { x: r.displacement.x, y: r.displacement.y },
+      { x: 0, y: 0 },
+      'recovery does not count as displacement',
+    );
+  });
+
+  it('drop-through suppresses one-way snap but keeps solid snap', () => {
+    const tileset = defineTileSet2D({
+      tiles: {
+        solid: { frame: 's', collision: 'solid' },
+        platform: { frame: 'p', collision: 'one-way-up' },
+      },
+    });
+    const map = defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [
+        // Solid floor at row 2, one-way platform at row 1 (id 2).
+        { id: 't', width: 1, height: 3, data: [0, 2, 1] },
+      ],
+    });
+    const falling = {
+      body: { x: 0, y: 0, width: 8, height: 8 },
+      velocity: { x: 0, y: 200 },
+      deltaSeconds: 0.016,
+      map,
+      collisionLayers: ['t'],
+      floorSnapDistance: 8,
+    };
+    // Falling 3.2px from y=0..8 toward the one-way top at y=16: snap would
+    // catch it without drop-through...
+    const snapped = movePlatformerBody2D({ ...falling, dropThroughOneWay: false });
+    assert.equal(snapped.contacts.floor?.cell.tileName, 'platform', 'snap catches the one-way platform');
+    // ...drop-through suppresses the one-way catch but the body keeps falling.
+    const dropped = movePlatformerBody2D({ ...falling, dropThroughOneWay: true });
+    assert.equal(dropped.contacts.floor, undefined, 'no one-way contact while dropping through');
+    assert.ok(dropped.body.y > 0, 'the body keeps its falling motion');
+  });
+});
