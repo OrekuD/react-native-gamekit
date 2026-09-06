@@ -245,14 +245,16 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
 
   async function saveInternal(slot: string, data: TData): Promise<void> {
     validateSlot(slot);
-    // save() already snapshotted and validated outside the queue; this re-validates for safety but is not the acceptance boundary.
-    const validated = validateCurrentData(schema, data, 'data');
+    // GS-STORAGE-02: save() already validated, normalized, cloned, and
+    // froze this snapshot at acceptance — re-running domain validation
+    // here would double-apply normalizing validators. Serialization still
+    // bounds-checks the bytes at its own boundary.
     const envelope: StoredGameEnvelope = {
       format: STORAGE_ENVELOPE_FORMAT,
       schemaId: schema.id,
       schemaVersion: schema.version,
       savedAtMs: Date.now(),
-      payload: validated,
+      payload: data,
     };
     let serialized: string;
     try {

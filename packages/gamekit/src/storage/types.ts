@@ -44,9 +44,23 @@ export interface CreateGameSaveStoreOptions<TData> {
 export interface GameSaveStore<TData> {
   load(slot: string): Promise<GameSaveLoadResult<TData>>;
   save(slot: string, data: TData): Promise<void>;
-  /** Alias for delete — both names are accepted */
+  /**
+   * Delete a slot's record (GS-STORAGE-04): `remove` is the canonical
+   * verb; `delete` is a same-behavior alias kept for preview
+   * compatibility. Removes the versioned record and its legacy heritage.
+   */
   remove(slot: string): Promise<void>;
+  /** Alias for remove — both names are accepted. */
   delete(slot: string): Promise<void>;
+  /**
+   * Drain operations accepted before the call (GS-STORAGE-04): snapshots
+   * the in-flight set, waits for every snapshot member to settle —
+   * including failures — and never waits for later work. Always resolves
+   * (never rejects): each operation's own returned promise carries its
+   * success or failure. Per-slot ordering is per store instance, not a
+   * global cross-store lock; disposal rejects new work while accepted
+   * work still settles normally.
+   */
   flush(): Promise<void>;
   dispose(): void;
   readonly disposed: boolean;

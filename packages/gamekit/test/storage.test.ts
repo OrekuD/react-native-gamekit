@@ -1034,3 +1034,144 @@ describe('GS-STORAGE-03 validation without widening', () => {
     assert.equal(utf8ByteLength(''), 0);
   });
 });
+
+describe('GS-STORAGE-02 single acceptance validation', () => {
+  function countingSchema() {
+    let runs = 0;
+    const schema = defineGameSave<{ n: number }>({
+      id: 'com.example.counting',
+      version: 1,
+      createDefault: () => ({ n: 0 }),
+      validate: (value) => {
+        runs += 1;
+        const v = value as { n: number };
+        if (typeof v.n !== 'number' || !Number.isFinite(v.n)) throw new Error('n must be finite');
+        // Normalizing validator: the double-run bug stored {n:2} for {n:0}.
+        return { n: v.n + 1 };
+      },
+    });
+    return { schema, runs: () => runs };
+  }
+
+  it('a normalizing validator runs exactly once per save', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const { schema, runs } = countingSchema();
+    const store = createGameSaveStore({ schema, adapter, namespace: 'count' });
+    await store.save('slot', { n: 0 });
+    assert.equal(runs(), 1, 'one domain pass per acceptance');
+    const raw = await adapter.read(storageKey('count', 'slot'));
+    assert.equal((JSON.parse(raw!) as { payload: { n: number } }).payload.n, 1, 'single normalization stored');
+    store.dispose();
+  });
+
+  it('queue delay and backend failure never re-run normalization', async () => {
+    const inner = createMemoryStorageAdapter();
+    let releaseWrite: (() => void) | null = null;
+    let failNext = false;
+    const adapter: GameStorageAdapter = {
+      read: inner.read.bind(inner),
+      write: async (key: string, value: string) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('backend down');
+        }
+        if (releaseWrite) {
+          await new Promise<void>((resolve) => {
+            releaseWrite = resolve as () => void;
+          });
+        }
+        return inner.write(key, value);
+      },
+      remove: inner.remove.bind(inner),
+    };
+    const { schema, runs } = countingSchema();
+    const store = createGameSaveStore({ schema, adapter, namespace: 'count' });
+    // Block the queue behind a gated write, then queue behind it.
+    releaseWrite = () => {};
+    const first = store.save('slot', { n: 10 });
+    const second = store.save('slot', { n: 20 });
+    assert.equal(runs(), 2, 'both accepted synchronously, one pass each');
+    releaseWrite = null;
+    await first;
+    await second;
+    assert.equal(runs(), 2, 'drain adds no passes');
+    const raw = await inner.read(storageKey('count', 'slot'));
+    assert.equal(
+      (JSON.parse(raw!) as { payload: { n: number } }).payload.n,
+      21,
+      'last queued value wins, normalized once',
+    );
+    failNext = true;
+    await assert.rejects(() => store.save('other', { n: 5 }), /backend write failed/);
+    assert.equal(runs(), 3, 'failure adds no passes');
+    store.dispose();
+  });
+
+  it('caller mutation after save cannot change queued bytes', async () => {
+    const inner = createMemoryStorageAdapter();
+    let releaseWrite: (() => void) | null = () => {};
+    const adapter: GameStorageAdapter = {
+      read: inner.read.bind(inner),
+      write: async (key: string, value: string) => {
+        if (releaseWrite) {
+          await new Promise<void>((resolve) => {
+            const gate = releaseWrite;
+            releaseWrite = null;
+            void gate;
+            resolve();
+          });
+        }
+        return inner.write(key, value);
+      },
+      remove: inner.remove.bind(inner),
+    };
+    const { schema } = countingSchema();
+    const store = createGameSaveStore({ schema, adapter, namespace: 'count' });
+    const input = { n: 1, extra: [1, 2, 3] } as unknown as { n: number };
+    const pending = store.save('slot', input);
+    input.n = 999;
+    (input as unknown as { extra: number[] }).extra.push(4);
+    releaseWrite = null;
+    await pending;
+    const raw = await inner.read(storageKey('count', 'slot'));
+    assert.equal((JSON.parse(raw!) as { payload: { n: number } }).payload.n, 2, 'snapshot taken at acceptance');
+    store.dispose();
+  });
+});
+
+describe('GS-STORAGE-04 flush and delete boundaries', () => {
+  it('flush resolves through failure while the operation promise rejects', async () => {
+    const inner = createMemoryStorageAdapter();
+    let failNext = true;
+    const adapter: GameStorageAdapter = {
+      read: inner.read.bind(inner),
+      write: async (key: string, value: string) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('backend down');
+        }
+        return inner.write(key, value);
+      },
+      remove: inner.remove.bind(inner),
+    };
+    const store = createGameSaveStore({ schema: settingsSchema, adapter, namespace: 'flush-err' });
+    const failing = store.save('slot', { volume: 0.5, muted: false, language: 'en' });
+    // Flush snapshots the failing op: it resolves despite the failure...
+    await store.flush();
+    // ...while the operation's own promise carries the failure.
+    await assert.rejects(() => failing, /backend write failed/);
+    store.dispose();
+  });
+
+  it('delete is a same-behavior alias for remove', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const store = createGameSaveStore({ schema: settingsSchema, adapter, namespace: 'del-alias' });
+    await store.save('slot', { volume: 0.5, muted: false, language: 'en' });
+    await store.delete('slot');
+    assert.equal((await store.load('slot')).status, 'default');
+    await store.save('slot', { volume: 0.5, muted: false, language: 'en' });
+    await store.remove('slot');
+    assert.equal((await store.load('slot')).status, 'default');
+    store.dispose();
+  });
+});
