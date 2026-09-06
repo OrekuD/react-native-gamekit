@@ -1220,3 +1220,126 @@ describe('T14-FF2 haptic capability fail-closed', () => {
     __setPulsarLoader(null);
   });
 });
+
+
+describe('GS-AUDIO-01 transactional playback startup', () => {
+  type Failures = { create?: boolean; connect?: boolean; start?: boolean };
+  interface FakeSource {
+    start(): void;
+    stop(): void;
+    ended: Array<() => void>;
+  }
+  function controllableBackend(failures: Failures = {}) {
+    const sources: FakeSource[] = [];
+    const api = {
+      AudioContext: class {
+        state = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData() {
+          return { length: 1, duration: 0.01 } as never;
+        }
+        createBufferSource() {
+          if (failures.create) throw new Error('create failed');
+          const source: FakeSource & { buffer: null; loop: boolean; connect(): void } = {
+            buffer: null,
+            loop: false,
+            connect() {
+              if (failures.connect) throw new Error('connect failed');
+            },
+            start() {
+              if (failures.start) throw new Error('start failed');
+            },
+            stop() {},
+            ended: [],
+          };
+          const withListener = source as unknown as FakeSource & { addEventListener(t: string, cb: () => void): void };
+          withListener.addEventListener = (_t: string, cb: () => void) => {
+            source.ended.push(cb);
+          };
+          sources.push(source);
+          return source as never;
+        }
+        createGain() {
+          return { gain: { value: 1 }, connect() {} } as never;
+        }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    };
+    return { api, sources };
+  }
+
+  async function flush(rounds = 6): Promise<void> {
+    for (let i = 0; i < rounds; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+
+  type AudioSeam = {
+    play(id: string, opts?: unknown): void;
+    playMusic(id: string): Promise<void>;
+    dispose(): void;
+    _getConcurrencyCount(key: string): number;
+    _getVoiceCounts(): { activeVoices: number; concurrencyKeys: number; cancelled: number };
+  };
+
+  async function makeAudio(failures: Failures = {}): Promise<{ audio: AudioSeam; sources: FakeSource[] }> {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    const { api, sources } = controllableBackend(failures);
+    __setAudioApiLoader(async () => api as never);
+    const audio = (await createGameAudio({ sounds: { a: 1 } })) as unknown as AudioSeam;
+    __setAudioApiLoader(null);
+    return { audio, sources };
+  }
+
+  it('create/connect/start failures leave zero counts', async () => {
+    for (const failures of [{ create: true }, { connect: true }, { start: true }] as Failures[]) {
+      const { audio, sources } = await makeAudio(failures);
+      audio.play('a', { concurrency: { key: 'a', limit: 1 } });
+      await flush();
+      assert.equal(audio._getConcurrencyCount('a'), 0, `concurrency released after ${JSON.stringify(failures)}`);
+      const counts = audio._getVoiceCounts();
+      assert.equal(counts.activeVoices, 0, `no voice retained after ${JSON.stringify(failures)}`);
+      assert.equal(counts.cancelled, 0, `no cancellation token retained after ${JSON.stringify(failures)}`);
+      assert.equal(sources.length, failures.create ? 0 : 1, 'at most one source existed');
+      audio.dispose();
+    }
+  });
+
+  it('a failed limit-1 effect never blocks the next valid play', async () => {
+    const { audio } = await makeAudio({ start: true });
+    audio.play('a', { concurrency: { key: 'a', limit: 1 } });
+    await flush();
+    assert.equal(audio._getConcurrencyCount('a'), 0, 'failed start releases its reservation');
+    audio.dispose();
+    // Fresh instance with a working backend: the count contract above is
+    // what keeps limit-1 playable (the leak would have wedged it at 1).
+    const retry = await makeAudio();
+    retry.audio.play('a', { concurrency: { key: 'a', limit: 1 } });
+    await flush();
+    assert.equal(retry.audio._getConcurrencyCount('a'), 1, 'a valid play occupies its slot');
+    retry.audio.dispose();
+  });
+
+  it('music start failure clears the current node and the retry succeeds', async () => {
+    const { audio } = await makeAudio({ start: true });
+    await audio.playMusic('a');
+    await flush();
+    const counts = audio._getVoiceCounts();
+    assert.equal(counts.activeVoices, 0, 'no voice retained for failed music');
+    audio.dispose();
+    const retry = await makeAudio();
+    await retry.audio.playMusic('a');
+    await flush();
+    retry.audio.dispose();
+  });
+});

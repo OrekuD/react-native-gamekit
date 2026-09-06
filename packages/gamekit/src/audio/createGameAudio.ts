@@ -231,15 +231,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   }
 
-  function cleanupVoice(voice: unknown, concurrencyKey?: string): void {
-    activeVoices.delete(voice);
-    if (concurrencyKey) {
-      const set = concurrencyMap.get(concurrencyKey);
-      if (set) { set.delete(voice); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
-    }
-    scheduleIdleSuspend();
-  }
-
   const ensureNotDisposed = (): void => {
     if (disposed) throw new GameAudioError('GameAudio is disposed');
   };
@@ -320,7 +311,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         // If another generation has taken over, don't start
         if (generation !== musicGeneration) return;
       }
-      const source = (context as unknown as { createBufferSource(): { buffer: unknown | null; loop: boolean; connect(dest: unknown): void; start(when?: number): void; stop(when?: number): void } }).createBufferSource();
+      const source = (context as unknown as { createBufferSource(): { buffer: unknown | null; loop: boolean; connect(dest: unknown): void; disconnect?(): void; start(when?: number): void; stop(when?: number): void } }).createBufferSource();
       source.buffer = buffer;
       source.loop = true;
       const dest = categoryGains['music'] ?? masterGain ?? (context as unknown as { destination: unknown }).destination;
@@ -330,7 +321,18 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       currentMusicNode = source;
       currentMusicId = id;
       activeMusicGeneration = generation;
-      source.start();
+      try {
+        source.start();
+      } catch (e) {
+        // GS-AUDIO-01: a failed music start must not wedge the music node —
+        // clear it so idle suspension and retries proceed, then report.
+        try { source.disconnect?.(); } catch {}
+        if (currentMusicNode === source) {
+          currentMusicNode = null;
+        }
+        scheduleIdleSuspend();
+        throw e;
+      }
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
       const state = (context as unknown as { state: string }).state;
       if (state === 'suspended' && !isEffectivelyPaused()) await (context as InstanceType<typeof AudioContext>).resume().catch(()=>{});
@@ -411,51 +413,94 @@ export async function createGameAudio<T extends AudioSoundRecord>(
             if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
             return;
           }
-          const source: {
+          type VoiceSource = {
             buffer: unknown | null;
             loop?: boolean;
             connect(dest: unknown): void;
+            disconnect?(): void;
             start(when?: number, offset?: number, duration?: number): void;
             stop(when?: number): void;
             addEventListener?: (type: string, cb: () => void) => void;
             onended?: (()=>void)|null;
-          } = (context as unknown as { createBufferSource(): { buffer: unknown | null; connect(dest: unknown): void; start(when?: number): void; stop(when?: number): void; addEventListener?: (type: string, cb: () => void) => void } }).createBufferSource();
-          source.buffer = buffer;
-          if (opts?.loop) source.loop = true;
-          let dest: unknown = (context as unknown as { destination: unknown }).destination;
-          const catGain = categoryGains[category];
-          if (catGain) dest = catGain;
-          else if (masterGain) dest = masterGain;
+          };
+          type ContextSource = {
+            createBufferSource(): VoiceSource;
+          };
+          // GS-AUDIO-01: one idempotent cleanup owns every stage from here.
+          // A failure in create/connect/start removes BOTH the reservation
+          // and the actual source, detaches handlers, disconnects owned
+          // nodes, and reconsiders idle suspension — never half-registered.
           let voiceGain: GainLike | null = null;
-          if (opts?.volume !== undefined) {
+          let cleaned = false;
+          let source: VoiceSource | null = null;
+          const releaseVoice = (): void => {
+            if (cleaned) return;
+            cleaned = true;
+            if (source !== null) {
+              activeVoices.delete(source);
+            }
+            if (limit !== undefined) {
+              const set = concurrencyMap.get(concurrencyKey);
+              if (set) {
+                if (source !== null) set.delete(source);
+                set.delete(reservation);
+                if (set.size === 0) concurrencyMap.delete(concurrencyKey);
+              }
+              cancelledReservations.delete(reservation);
+            }
+            const anySource = source as unknown as { onended?: (()=>void)|null } | null;
+            if (anySource !== null && anySource.onended === cleanup) anySource.onended = null;
+            try { source?.disconnect?.(); } catch {}
             try {
-              voiceGain = (context as unknown as { createGain: ()=> GainLike }).createGain();
-              if (voiceGain) {
-                const v = opts.volume as number;
-                try { (voiceGain.gain as unknown as { value:number }).value = v; } catch {}
-                voiceGain.connect(dest);
-                dest = voiceGain;
+              if (voiceGain !== null) {
+                (voiceGain as unknown as { disconnect?(): void }).disconnect?.();
               }
             } catch {}
-          }
-          source.connect(dest);
-          activeVoices.add(source);
-          const cleanup = (): void => {
-            cleanupVoice(source, limit!==undefined?concurrencyKey:undefined);
+            scheduleIdleSuspend();
           };
-          if (reservation) {
-            const set = concurrencyMap.get(concurrencyKey);
-            if (set) {
-              set.delete(reservation);
-              set.add(source);
+          const cleanup = (): void => {
+            releaseVoice();
+          };
+          try {
+            source = (context as unknown as ContextSource).createBufferSource();
+            source.buffer = buffer;
+            if (opts?.loop) source.loop = true;
+            let dest: unknown = (context as unknown as { destination: unknown }).destination;
+            const catGain = categoryGains[category];
+            if (catGain) dest = catGain;
+            else if (masterGain) dest = masterGain;
+            if (opts?.volume !== undefined) {
+              try {
+                voiceGain = (context as unknown as { createGain: ()=> GainLike }).createGain();
+                if (voiceGain) {
+                  const v = opts.volume as number;
+                  try { (voiceGain.gain as unknown as { value:number }).value = v; } catch {}
+                  voiceGain.connect(dest);
+                  dest = voiceGain;
+                }
+              } catch {}
             }
+            source.connect(dest);
+            activeVoices.add(source);
+            if (reservation) {
+              const set = concurrencyMap.get(concurrencyKey);
+              if (set) {
+                set.delete(reservation);
+                set.add(source);
+              }
+            }
+            const anySource = source as unknown as { onended?: (()=>void)|null; addEventListener?: (type:string, cb:()=>void)=>void };
+            if (typeof anySource.addEventListener === 'function') anySource.addEventListener('ended', cleanup);
+            else anySource.onended = cleanup;
+            source.start();
+            if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
+          } catch (e) {
+            releaseVoice();
+            console.warn(`[GameAudio] play("${String(id)}") failed:`, e);
           }
-          const anySource = source as unknown as { onended?: (()=>void)|null; addEventListener?: (type:string, cb:()=>void)=>void };
-          if (typeof anySource.addEventListener === 'function') anySource.addEventListener('ended', cleanup);
-          else anySource.onended = cleanup;
-          source.start();
-          if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
         } catch (e) {
+          // Pre-voice stages (decode/buffer) failed: no voice exists, but
+          // the reservation must still be released exactly once.
           if (reservation) {
             const set = concurrencyMap.get(concurrencyKey);
             if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
@@ -570,6 +615,12 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     try { return (context as unknown as { state: string }).state === 'suspended'; } catch { return false; }
   };
   (audio as unknown as { _getConcurrencyCount: (k:string)=>number })._getConcurrencyCount = (k: string) => concurrencyMap.get(k)?.size ?? 0;
+  // Test-only collection sizes for the ownership suites (GS-AUDIO-01/02).
+  (audio as unknown as { _getVoiceCounts: ()=>{ activeVoices: number; concurrencyKeys: number; cancelled: number } })._getVoiceCounts = () => ({
+    activeVoices: activeVoices.size,
+    concurrencyKeys: concurrencyMap.size,
+    cancelled: cancelledReservations.size,
+  });
   (audio as unknown as { _handleInterruption: (e:unknown)=>void })._handleInterruption = handleInterruption;
   (audio as unknown as { _getVolumes: ()=>typeof volumes })._getVolumes = () => ({ ...volumes });
   (audio as unknown as { _getGainTargets: ()=>Record<string, number> })._getGainTargets = () => {
