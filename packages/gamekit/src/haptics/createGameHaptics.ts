@@ -53,27 +53,13 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   }
   const { Presets } = pulsar;
 
-  // Capability: query Pulsar's HapticSupport when available — fail closed (FF2)
+  // Capability through the single public Settings adapter (GS-HAPTICS-02,
+  // verified against installed Pulsar 1.7.0): HapticSupport 0 is
+  // NO_SUPPORT, 1-3 are supported tiers; anything else fails closed.
   function getSupportLevel(): number | null {
     try {
-      const pAny = pulsar as unknown as { getHapticSupport?: ()=>number; Pulsar_hapticSupport?: ()=>number };
-      if (typeof pAny.getHapticSupport === 'function') {
-        const v = pAny.getHapticSupport();
-        if (typeof v === 'number' && Number.isFinite(v)) return v;
-      }
-      if (typeof pAny.Pulsar_hapticSupport === 'function') {
-        const v = pAny.Pulsar_hapticSupport();
-        if (typeof v === 'number' && Number.isFinite(v)) return v;
-      }
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const RN = require('react-native') as { TurboModuleRegistry?: { getEnforcing: (n:string)=>{ Pulsar_hapticSupport?: ()=>number } } };
-        const spec = RN.TurboModuleRegistry?.getEnforcing?.('RNPulsar') as { Pulsar_hapticSupport?: ()=>number } | undefined;
-        if (spec?.Pulsar_hapticSupport) {
-          const v = spec.Pulsar_hapticSupport();
-          if (typeof v === 'number' && Number.isFinite(v)) return v;
-        }
-      } catch {}
+      const level = pulsar.Settings?.getHapticsSupportLevel?.();
+      if (typeof level === 'number' && Number.isFinite(level)) return level;
     } catch {}
     return null;
   }
@@ -81,9 +67,15 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   function isCapabilitySupported(_preset: HapticPreset): boolean {
     const level = getSupportLevel();
     if (level === null) return false;
-    if (![0, 1, 2, 3].includes(level)) return false;
-    if (level === 0) return false; // NO_SUPPORT
-    return true;
+    const support = pulsar.HapticSupport;
+    if (support !== undefined) {
+      return (
+        level === support['LIMITED_SUPPORT'] ||
+        level === support['STANDARD_SUPPORT'] ||
+        level === support['ADVANCED_SUPPORT']
+      );
+    }
+    return level === 1 || level === 2 || level === 3;
   }
 
   let muted = Boolean(options?.muted);

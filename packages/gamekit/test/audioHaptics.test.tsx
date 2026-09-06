@@ -55,9 +55,8 @@ mock.module('react-native-pulsar', {
         notificationError: () => {},
       },
     },
+    Settings: { getHapticsSupportLevel: () => 2 },
     HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
-    Pulsar_hapticSupport: () => 2,
-    getHapticSupport: () => 2,
   },
   namedExports: {
     Presets: {
@@ -71,9 +70,8 @@ mock.module('react-native-pulsar', {
         notificationError: () => {},
       },
     },
+    Settings: { getHapticsSupportLevel: () => 2 },
     HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
-    Pulsar_hapticSupport: () => 2,
-    getHapticSupport: () => 2,
   },
 });
 // expo-asset is not mocked via mock.module — production code resolves via
@@ -968,7 +966,7 @@ describe('T14-F5 haptic capability truthful', () => {
     __setPulsarLoader(()=>({
       Presets: { System: { impactMedium: () => {}, impactLight: () => {}, selection: () => {} } },
       HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
-      Pulsar_hapticSupport: () => 0,
+      Settings: { getHapticsSupportLevel: () => 0 },
     } as never));
     let h=createGameHaptics();
     assert.equal(h.isSupported('impact'), false);
@@ -977,7 +975,7 @@ describe('T14-F5 haptic capability truthful', () => {
     __setPulsarLoader(()=>({
       Presets: { System: { impactMedium: () => {}, selection: () => {} } },
       HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
-      Pulsar_hapticSupport: () => 2,
+      Settings: { getHapticsSupportLevel: () => 2 },
     } as never));
     h=createGameHaptics();
     assert.equal(h.isSupported('impact'), true);
@@ -998,7 +996,7 @@ describe('T14-F5 haptic capability truthful', () => {
     __setPulsarLoader(()=>({
       Presets: { System: { impactMedium: () => { throw new Error('native boom'); } } },
       HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
-      Pulsar_hapticSupport: () => 2,
+      Settings: { getHapticsSupportLevel: () => 2 },
     } as never));
     const h=createGameHaptics();
     const r=h.play('impact');
@@ -1159,7 +1157,7 @@ describe('T14-FF2 haptic capability fail-closed', () => {
     const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
     __setPulsarLoader(()=>({
       Presets: { System: { impactMedium: () => {} } },
-      Pulsar_hapticSupport: () => { throw new Error('boom'); },
+      Settings: { getHapticsSupportLevel: () => { throw new Error('boom'); } },
     } as never));
     const h=createGameHaptics();
     assert.equal(h.isSupported('impact'), false);
@@ -1176,7 +1174,7 @@ describe('T14-FF2 haptic capability fail-closed', () => {
     for (const lvl of [99, -1, NaN, Infinity as unknown as number]) {
       __setPulsarLoader(()=>({
         Presets: { System: { impactMedium: () => {} } },
-        Pulsar_hapticSupport: () => lvl,
+        Settings: { getHapticsSupportLevel: () => lvl },
       } as never));
       const h=createGameHaptics();
       assert.equal(h.isSupported('impact'), false, `lvl ${String(lvl)}`);
@@ -1193,7 +1191,7 @@ describe('T14-FF2 haptic capability fail-closed', () => {
     for (const [lvl, expected] of cases) {
       __setPulsarLoader(()=>({
         Presets: { System: { impactMedium: () => {} } },
-        Pulsar_hapticSupport: () => lvl,
+        Settings: { getHapticsSupportLevel: () => lvl },
         HapticSupport: { NO_SUPPORT:0, LIMITED_SUPPORT:1, STANDARD_SUPPORT:2, ADVANCED_SUPPORT:3 },
       } as never));
       const h=createGameHaptics();
@@ -1211,7 +1209,7 @@ describe('T14-FF2 haptic capability fail-closed', () => {
     const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
     __setPulsarLoader(()=>({
       Presets: { System: { impactMedium: () => { throw new Error('native'); } } },
-      Pulsar_hapticSupport: () => 2,
+      Settings: { getHapticsSupportLevel: () => 2 },
     } as never));
     const h=createGameHaptics();
     const r=h.play('impact');
@@ -1802,5 +1800,62 @@ describe('GS-HAPTICS-01 independent manual and lifecycle pause gates', () => {
     haptics.dispose();
     assert.throws(() => haptics.bindLifecycle(second.source as never), /disposed/i);
     assert.equal(haptics.play('impact').reason, 'disposed');
+  });
+});
+
+describe('GS-HAPTICS-02 public capability API', () => {
+  function publicFake(level: unknown) {
+    return {
+      Presets: { System: { impactMedium: () => {}, selection: () => {} } },
+      Settings: {
+        getHapticsSupportLevel: () => {
+          if (level instanceof Error) throw level;
+          return level as number;
+        },
+      },
+      HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
+    } as never;
+  }
+
+  async function supportedWith(level: unknown): Promise<boolean> {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(() => publicFake(level));
+    const haptics = createGameHaptics();
+    const result = haptics.isSupported('impact');
+    haptics.dispose();
+    __setPulsarLoader(null);
+    return result;
+  }
+
+  it('every HapticSupport level maps through the public Settings API', async () => {
+    assert.equal(await supportedWith(0), false, 'NO_SUPPORT fails closed');
+    assert.equal(await supportedWith(1), true, 'LIMITED_SUPPORT plays');
+    assert.equal(await supportedWith(2), true, 'STANDARD_SUPPORT plays');
+    assert.equal(await supportedWith(3), true, 'ADVANCED_SUPPORT plays');
+    assert.equal(await supportedWith(4), false, 'unknown levels fail closed');
+    assert.equal(await supportedWith(-1), false, 'negative levels fail closed');
+    assert.equal(await supportedWith(Number.NaN), false, 'NaN fails closed');
+  });
+
+  it('missing Settings methods and backend throws fail closed', async () => {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(
+      () =>
+        ({
+          Presets: { System: { impactMedium: () => {} } },
+          Settings: {},
+        }) as never,
+    );
+    const missing = createGameHaptics();
+    assert.equal(missing.isSupported('impact'), false, 'missing method fails closed');
+    assert.equal(missing.play('impact').reason, 'unsupported');
+    missing.dispose();
+    __setPulsarLoader(() => publicFake(new Error('native boom')));
+    const throwing = createGameHaptics();
+    assert.equal(throwing.isSupported('impact'), false, 'backend throw fails closed');
+    throwing.dispose();
+    __setPulsarLoader(null);
   });
 });

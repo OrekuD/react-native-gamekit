@@ -1,13 +1,21 @@
 /**
- * Injectable resolver for the optional `react-native-pulsar` peer.
+ * Injectable resolver for the optional `react-native-pulsar` peer
+ * (GS-HAPTICS-02).
+ *
+ * The adapter surface is the package's PUBLIC entry — `Presets`,
+ * `Settings.getHapticsSupportLevel()`, and the `HapticSupport` enum —
+ * verified against installed react-native-pulsar 1.7.0. No TurboModule
+ * digging, no private root functions: capability queries go through the
+ * single Settings adapter, and a missing method fails closed downstream.
  */
 export type LoadedPulsar = {
   Presets: {
     System: Record<string, () => void>;
   };
+  Settings: {
+    getHapticsSupportLevel(): number;
+  };
   HapticSupport?: Record<string, number>;
-  Pulsar_hapticSupport?: () => number;
-  getHapticSupport?: () => number;
 };
 
 let loader: (() => LoadedPulsar) | null = null;
@@ -24,39 +32,27 @@ export function loadPulsar(): LoadedPulsar {
   const mod = require('react-native-pulsar') as unknown as LoadedPulsar & {
     default?: LoadedPulsar;
     Presets?: LoadedPulsar['Presets'];
+    Settings?: LoadedPulsar['Settings'];
     HapticSupport?: Record<string, number>;
-    Pulsar_hapticSupport?: () => number;
   };
-  const Presets = (mod as unknown as { Presets?: LoadedPulsar['Presets'] }).Presets ?? (mod as unknown as LoadedPulsar).Presets;
+  const Presets =
+    (mod as unknown as { Presets?: LoadedPulsar['Presets'] }).Presets ??
+    (mod as unknown as LoadedPulsar).Presets;
   if (!Presets) {
     throw new Error('Presets not found in react-native-pulsar — linking may have failed');
   }
-  // Resolve public HapticSupport enum from package root (not deep import)
+  // Resolve public Settings + HapticSupport from the package root (not deep imports).
+  const Settings =
+    (mod as unknown as { Settings?: LoadedPulsar['Settings'] }).Settings ??
+    (mod as unknown as { default?: { Settings?: LoadedPulsar['Settings'] } }).default?.Settings ??
+    (mod as unknown as LoadedPulsar).Settings;
   const HapticSupport =
     (mod as unknown as { HapticSupport?: Record<string, number> }).HapticSupport ??
     (mod as unknown as { default?: { HapticSupport?: Record<string, number> } }).default?.HapticSupport ??
     (mod as unknown as LoadedPulsar).HapticSupport;
-
-  // Resolve capability function from verified native adapter (TurboModule)
-  let Pulsar_hapticSupport: (() => number) | undefined;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const turbo = require('react-native').TurboModuleRegistry as unknown as { getEnforcing?: (name:string)=>{ Pulsar_hapticSupport?: ()=>number } };
-    const spec = turbo?.getEnforcing?.('RNPulsar') as unknown as { Pulsar_hapticSupport?: ()=>number } | undefined;
-    if (spec?.Pulsar_hapticSupport) Pulsar_hapticSupport = spec.Pulsar_hapticSupport.bind(spec);
-  } catch {}
-  if (!Pulsar_hapticSupport) {
-    const maybe = (mod as unknown as { Pulsar_hapticSupport?: ()=>number }).Pulsar_hapticSupport;
-    if (typeof maybe === 'function') Pulsar_hapticSupport = maybe;
-    else {
-      const maybeDefault = (mod as unknown as { default?: { Pulsar_hapticSupport?: ()=>number } }).default?.Pulsar_hapticSupport;
-      if (typeof maybeDefault === 'function') Pulsar_hapticSupport = maybeDefault;
-    }
-  }
   return {
     Presets,
+    Settings: Settings as LoadedPulsar['Settings'],
     HapticSupport,
-    Pulsar_hapticSupport,
-    getHapticSupport: Pulsar_hapticSupport ? () => Pulsar_hapticSupport!() : undefined,
   } as LoadedPulsar;
 }
