@@ -1,7 +1,7 @@
 import { GameStorageError, storageError } from './errors';
 import type { CreateGameSaveStoreOptions, GameSaveLoadResult, GameSaveStore } from './types';
 import { STORAGE_LIMITS } from './types';
-import { storageKey, validateNamespace, validateSlot } from './validation';
+import { storageKey, legacyStorageKey, validateNamespace, validateSlot } from './validation';
 import { createDefaultData, migratePayload, validateCurrentData } from './schema';
 import { cloneAndValidatePlainData, parseEnvelope, serializeEnvelope, STORAGE_ENVELOPE_FORMAT } from './serialization';
 import type { StoredGameEnvelope } from './types';
@@ -75,6 +75,20 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
         slot,
         cause,
       });
+    }
+    // GS-STORAGE-01: read-only legacy fallback — pre-upgrade records load
+    // without any rewrite. A v2 miss costs one extra read for heritage.
+    if (raw === undefined) {
+      try {
+        raw = await adapter.read(legacyStorageKey(namespace, slot));
+      } catch (cause) {
+        throw storageError(`backend read failed for slot "${slot}"`, 'BACKEND_READ_FAILED', {
+          operation: 'load',
+          namespace,
+          slot,
+          cause,
+        });
+      }
     }
     if (raw === undefined) {
       const data = createDefaultData(schema);
@@ -284,9 +298,16 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
 
   async function removeInternal(slot: string): Promise<void> {
     validateSlot(slot);
+    // GS-STORAGE-01: delete the versioned record and its legacy heritage.
+    // Heritage deletion matches v1 shared-fate semantics for colliding
+    // pairs and converges to independence as pairs save under v2.
     const key = storageKey(namespace, slot);
+    const legacyKey = legacyStorageKey(namespace, slot);
     try {
       await adapter.remove(key);
+      if (legacyKey !== key) {
+        await adapter.remove(legacyKey);
+      }
     } catch (cause) {
       throw storageError(`backend remove failed for slot "${slot}"`, 'BACKEND_REMOVE_FAILED', {
         operation: 'remove',

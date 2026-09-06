@@ -7,6 +7,7 @@ import { createGameSaveStore } from '../src/storage/store';
 import { createMemoryStorageAdapter, createFailingStorageAdapter } from '../src/storage/adapters/memory';
 import { STORAGE_LIMITS, type GameStorageAdapter } from '../src/storage/types';
 import { cloneAndValidatePlainData, parseEnvelope, serializeEnvelope } from '../src/storage/serialization';
+import { storageKey } from '../src/storage/validation';
 
 // ---------------------------------------------------------------------------
 // Helpers: real settings and checkpoint projections (T17.0)
@@ -121,7 +122,7 @@ describe('storage: schema and migrations (T17.1)', () => {
     const adapter = createMemoryStorageAdapter();
     const store = createGameSaveStore({ schema: saveSchemaV3, adapter, namespace: 'test-preserve' });
     // Write corrupted envelope directly via adapter (future version)
-    const key = `rn-gamekit.storage.test-preserve.slot1`;
+    const key = storageKey('test-preserve', 'slot1');
     await adapter.write(
       key,
       JSON.stringify({
@@ -153,7 +154,7 @@ describe('storage: schema and migrations (T17.1)', () => {
       migrations: { 1: migrateV1ToV2 }, // missing 2
     });
     const adapter = createMemoryStorageAdapter();
-    const key = `rn-gamekit.storage.test-missing.slot1`;
+    const key = storageKey('test-missing', 'slot1');
     await adapter.write(
       key,
       JSON.stringify({
@@ -175,7 +176,7 @@ describe('storage: schema and migrations (T17.1)', () => {
 
   it('future-version fails clearly', async () => {
     const adapter = createMemoryStorageAdapter();
-    const key = `rn-gamekit.storage.test-future.slot1`;
+    const key = storageKey('test-future', 'slot1');
     await adapter.write(
       key,
       JSON.stringify({
@@ -214,7 +215,7 @@ describe('storage: schema and migrations (T17.1)', () => {
         2: (v: unknown) => ({ ...(v as object), c: 3 }),
       },
     });
-    const key = `rn-gamekit.storage.test-pure.slot1`;
+    const key = storageKey('test-pure', 'slot1');
     await adapter.write(
       key,
       JSON.stringify({
@@ -343,7 +344,7 @@ describe('storage: serialization and envelopes (T17.2)', () => {
     const adapter = createMemoryStorageAdapter();
     const store = createGameSaveStore({ schema: saveSchemaV3, adapter, namespace: 'test-meta' });
     await store.save('slot1', { highScore: 1, unlockedLevels: [], coins: 0, achievements: [] });
-    const raw = await adapter.read(`rn-gamekit.storage.test-meta.slot1`);
+    const raw = await adapter.read(storageKey('test-meta', 'slot1'));
     assert.ok(raw !== undefined);
     const env = JSON.parse(raw!);
     assert.equal(typeof env.savedAtMs, 'number');
@@ -369,8 +370,8 @@ describe('storage: async store and adapters (T17.3)', () => {
     assert.equal(a.data.language, 'fr');
     assert.equal(b.data.language, 'de');
     // Keys are namespaced
-    assert.ok((await adapter.read('rn-gamekit.storage.game-a.slot1')) !== undefined);
-    assert.ok((await adapter.read('rn-gamekit.storage.game-b.slot1')) !== undefined);
+    assert.ok((await adapter.read(storageKey('game-a', 'slot1'))) !== undefined);
+    assert.ok((await adapter.read(storageKey('game-b', 'slot1'))) !== undefined);
     store.dispose();
     storeB.dispose();
   });
@@ -621,7 +622,7 @@ describe('storage: F1–F3 RED regressions (T17-RF1)', () => {
     continueWrite!();
     await pending;
     // Verify bytes were actually written despite dispose
-    const raw = await inner.read('rn-gamekit.storage.rf1-immediate.slot1');
+    const raw = await inner.read(storageKey('rf1-immediate', 'slot1'));
     assert.ok(raw !== undefined);
   });
 
@@ -662,7 +663,7 @@ describe('storage: F1–F3 RED regressions (T17-RF1)', () => {
     // Second queued save must still run after first despite dispose, and in order
     await p2;
     assert.equal(secondStarted, true);
-    const loaded = await inner.read('rn-gamekit.storage.rf1-queued.slot1');
+    const loaded = await inner.read(storageKey('rf1-queued', 'slot1'));
     assert.ok(loaded !== undefined && loaded.includes('"language":"ja"'));
   });
 
@@ -883,6 +884,99 @@ describe('storage: F1–F3 RED regressions (T17-RF1)', () => {
     });
     const after = await adapter.read(key);
     assert.equal(after, before);
+    store.dispose();
+  });
+});
+
+describe('GS-STORAGE-01 unambiguous persistent keys', () => {
+  it('separator-bearing namespace/slot pairs map to unique keys', async () => {
+    const { storageKey } = await import('../src/storage/validation.ts');
+    const pairs: Array<[string, string]> = [
+      ['game.a', 'b'],
+      ['game', 'a.b'],
+      ['a/b', 'c:d'],
+      ['a:b', 'c/d'],
+      ['a.b/c:d', 'e.f/g:h'],
+      ['x', 'y'],
+      ['ns-1_2', 'slot-3_4'],
+      ['ünïcode', 'slot'],
+      ['ns', 'slöt'],
+      ['a'.repeat(64), 'b'],
+      ['a', 'b'.repeat(64)],
+    ];
+    const keys = pairs.map(([ns, slot]) => storageKey(ns, slot));
+    assert.equal(new Set(keys).size, pairs.length, 'every distinct pair gets a distinct key');
+    for (const key of keys) {
+      assert.ok(!key.includes('undefined'), 'no unfilled segments');
+    }
+  });
+
+  it('two stores sharing an adapter keep independent data and deletion', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const schemaA = defineGameSave<{ v: number }>({
+      id: 'com.example.a',
+      version: 1,
+      createDefault: () => ({ v: 0 }),
+      validate: (value) => {
+        const v = value as { v: number };
+        if (typeof v.v !== 'number') throw new Error('bad v');
+        return { v: v.v };
+      },
+    });
+    const schemaB = defineGameSave<{ v: number }>({
+      id: 'com.example.b',
+      version: 1,
+      createDefault: () => ({ v: 0 }),
+      validate: (value) => {
+        const v = value as { v: number };
+        if (typeof v.v !== 'number') throw new Error('bad v');
+        return { v: v.v };
+      },
+    });
+    // Colliding under the legacy dotted scheme; disjoint under v2.
+    const first = createGameSaveStore({ schema: schemaA, adapter, namespace: 'game.a' });
+    const second = createGameSaveStore({ schema: schemaB, adapter, namespace: 'game' });
+    await first.save('b', { v: 1 });
+    await second.save('a.b', { v: 2 });
+    assert.equal((await first.load('b')).data.v, 1, 'first store keeps its record');
+    assert.equal((await second.load('a.b')).data.v, 2, 'second store keeps its record');
+    await first.remove('b');
+    assert.equal((await first.load('b')).status, 'default', 'first record deleted');
+    assert.equal((await second.load('a.b')).data.v, 2, 'second record survives the deletion');
+    first.dispose();
+    second.dispose();
+  });
+
+  it('legacy dotted records remain readable after the key upgrade', async () => {
+    const adapter = createMemoryStorageAdapter();
+    const schema = defineGameSave<{ v: number }>({
+      id: 'com.example.legacy',
+      version: 1,
+      createDefault: () => ({ v: 0 }),
+      validate: (value) => {
+        const v = value as { v: number };
+        if (typeof v.v !== 'number') throw new Error('bad v');
+        return { v: v.v };
+      },
+    });
+    const store = createGameSaveStore({ schema, adapter, namespace: 'game' });
+    // Seed a v1-shaped record directly through the adapter.
+    const { serializeEnvelope, STORAGE_ENVELOPE_FORMAT } = await import('../src/storage/serialization.ts');
+    await adapter.write(
+      'rn-gamekit.storage.game.slot',
+      serializeEnvelope({
+        format: STORAGE_ENVELOPE_FORMAT,
+        schemaId: 'com.example.legacy',
+        schemaVersion: 1,
+        savedAtMs: Date.now(),
+        payload: { v: 7 },
+      }),
+    );
+    const loaded = await store.load('slot');
+    assert.equal(loaded.data.v, 7, 'legacy record reads through the fallback');
+    // The next save migrates the record to the versioned key lazily.
+    await store.save('slot', { v: 8 });
+    assert.equal((await store.load('slot')).data.v, 8);
     store.dispose();
   });
 });

@@ -71,5 +71,28 @@ export function validateMigrations(
 }
 
 export function storageKey(namespace: string, slot: string): string {
+  // GS-STORAGE-01: length-prefixed tuple — dots, slashes, and colons
+  // inside names can never collide across pairs. Format-versioned so
+  // future schemes route without guessing.
+  return `rn-gamekit.storage/v2/${namespace.length}:${namespace}/${slot.length}:${slot}`;
+}
+
+/**
+ * Recovery/compatibility policy (GS-STORAGE-01, preview release):
+ *
+ * - Writes go to v2 keys only. Reads try v2, then fall back to the legacy
+ *   dotted key, so pre-upgrade records load without any rewrite.
+ * - The first v2 save for a slot lazily migrates it; no blanket rewrite
+ *   ever runs, and legacy records are never deleted after an ambiguous
+ *   read (a legacy key cannot identify which pair wrote it).
+ * - `remove` deletes both the v2 and legacy keys. Under v1, colliding
+ *   pairs already shared one record (shared fate on delete); v2 converges
+ *   to independence as each pair saves. A pair that never saves under v2
+ *   keeps reading its legacy record until it does.
+ * - A legacy collision (`('game.a','b')` vs `('game','a.b')`) cannot be
+ *   disambiguated from the key alone: both pairs read the same heritage
+ *   record, exactly as v1 behaved. New writes never collide.
+ */
+export function legacyStorageKey(namespace: string, slot: string): string {
   return `rn-gamekit.storage.${namespace}.${slot}`;
 }
