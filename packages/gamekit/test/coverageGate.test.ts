@@ -10,7 +10,7 @@ import { describe, it } from 'node:test';
 
 import { parseLcov, checkGate } from '../scripts/coverage-parse.mjs';
 
-function record(path, lh, lf, brh = 0, brf = 0, fnh = 0, fnf = 0) {
+function record(path: string, lh: number, lf: number, brh = 0, brf = 0, fnh = 0, fnf = 0) {
   return [
     `SF:${path}`,
     'FNF:' + fnf,
