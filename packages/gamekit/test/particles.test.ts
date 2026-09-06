@@ -433,3 +433,81 @@ describe('GS-PARTICLE-01 exclusive clock ownership and terminal registry', () =>
     assert.equal(ps.getActiveParticles('a').length, 0);
   });
 });
+
+describe('GS-PARTICLE-03 complete definition validation and ownership', () => {
+  function base(overrides: Record<string, unknown> = {}) {
+    return {
+      capacity: 10,
+      space: 'world',
+      overflow: 'drop-new',
+      particle: { kind: 'shape', shape: 'circle', radius: 4 },
+      burst: { count: 1 },
+      lifetimeSeconds: { min: 1, max: 1 },
+      speed: { min: 10, max: 10 },
+      gravity: { x: 0, y: 10 },
+      fadeOut: true,
+      ...overrides,
+    } as never;
+  }
+
+  it('fractional burst counts are rejected before pool allocation', () => {
+    assert.throws(() => defineParticleEffect(base({ burst: { count: 1.5 } })), /burst\.count.*integer/);
+    assert.throws(() => defineParticleEffect(base({ burst: { count: 0 } })), /burst\.count/);
+  });
+
+  it('sprite sizes must be finite and drawable', () => {
+    const sprite = (size: unknown) =>
+      base({ particle: { kind: 'sprite', sheet: 's', frame: 'f', size } });
+    for (const bad of [
+      { width: Number.NaN, height: 16 },
+      { width: 16, height: Number.POSITIVE_INFINITY },
+      { width: 0, height: 16 },
+      { width: -4, height: 16 },
+    ]) {
+      assert.throws(() => defineParticleEffect(sprite(bad)), /sprite size/, `rejects ${JSON.stringify(bad)}`);
+    }
+    assert.ok(defineParticleEffect(sprite({ width: 16, height: 16 })), 'valid sizes pass');
+  });
+
+  it('shape dimensions validate by presence with render-compatible ranges', () => {
+    const shape = (particle: unknown) => base({ particle });
+    assert.throws(
+      () => defineParticleEffect(shape({ kind: 'shape', shape: 'circle', radius: Number.NaN })),
+      /radius/,
+    );
+    assert.throws(
+      () => defineParticleEffect(shape({ kind: 'shape', shape: 'circle', radius: -2 })),
+      /radius/,
+    );
+    assert.throws(
+      () => defineParticleEffect(shape({ kind: 'shape', shape: 'rectangle', width: 0, height: 4 })),
+      /width/,
+    );
+    assert.throws(
+      () => defineParticleEffect(shape({ kind: 'shape', shape: 'rectangle', width: 8, height: Number.POSITIVE_INFINITY })),
+      /height/,
+    );
+    assert.throws(
+      () => defineParticleEffect(shape({ kind: 'shape', shape: 'circle', radius: 4, color: 42 })),
+      /color/,
+    );
+    assert.ok(defineParticleEffect(shape({ kind: 'shape', shape: 'circle' })), 'absent radius keeps its render default');
+  });
+
+  it('optional ranges validate by presence and sizes are deep-copied', () => {
+    assert.throws(() => defineParticleEffect(base({ direction: null })), /direction/);
+    assert.throws(() => defineParticleEffect(base({ rotation: null })), /rotation/);
+    const size = { width: 16, height: 16 };
+    const def = defineParticleEffect(
+      base({ particle: { kind: 'sprite', sheet: 's', frame: 'f', size } }),
+    );
+    size.width = 1;
+    size.height = 1;
+    assert.deepEqual(
+      (def.particle as { size: { width: number; height: number } }).size,
+      { width: 16, height: 16 },
+      'caller mutation cannot reach the definition',
+    );
+    assert.ok(Object.isFrozen((def.particle as { size: object }).size), 'the copied size is frozen');
+  });
+});

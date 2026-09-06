@@ -14,6 +14,18 @@ function assertRange(range: unknown, name: string): void {
   if (r.min > r.max) throw new ParticleError(`${name}.min must be <= max`);
 }
 
+function assertPositiveSize(value: unknown, name: string): void {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new ParticleError(`${name} must be a finite number greater than zero`);
+  }
+}
+
+function assertNonnegative(value: unknown, name: string): void {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new ParticleError(`${name} must be a finite number greater than or equal to zero`);
+  }
+}
+
 function assertPoint(p: unknown, name: string): void {
   if (!p || typeof p !== 'object') throw new ParticleError(`${name} must be {x,y}`);
   const pt = p as { x: unknown; y: unknown };
@@ -49,21 +61,49 @@ export function defineParticleEffect(def: ParticleEffectDefinitionInput): Partic
   if (def.particle.kind === 'sprite') {
     if (typeof def.particle.sheet !== 'string' || !def.particle.sheet) throw new ParticleError('sprite sheet must be non-empty string');
     if (typeof def.particle.frame !== 'string' || !def.particle.frame) throw new ParticleError('sprite frame must be non-empty string');
-    if (!def.particle.size || typeof def.particle.size.width !== 'number' || typeof def.particle.size.height !== 'number') throw new ParticleError('sprite size must be {width,height}');
+    // GS-PARTICLE-03: drawable dimensions only — NaN/Infinity/zero would
+    // reach native drawing or break the uniform-ratio check.
+    if (!def.particle.size || typeof def.particle.size !== 'object') {
+      throw new ParticleError('sprite size must be {width,height}');
+    }
+    assertPositiveSize(def.particle.size.width, 'sprite size.width');
+    assertPositiveSize(def.particle.size.height, 'sprite size.height');
   } else if (def.particle.kind === 'shape') {
     if (def.particle.shape !== 'circle' && def.particle.shape !== 'rectangle') throw new ParticleError('shape must be circle or rectangle');
+    // GS-PARTICLE-03: shape dimensions validate by presence — absent
+    // fields keep their render defaults, present fields must be finite and
+    // drawable (radius zero collapses to a point, like scale zero).
+    if (def.particle.shape === 'circle') {
+      if (def.particle.radius !== undefined) assertNonnegative(def.particle.radius, 'circle radius');
+      if (def.particle.width !== undefined || def.particle.height !== undefined) {
+        throw new ParticleError('circle particles take radius, not width/height');
+      }
+    } else {
+      if (def.particle.width !== undefined) assertPositiveSize(def.particle.width, 'rectangle width');
+      if (def.particle.height !== undefined) assertPositiveSize(def.particle.height, 'rectangle height');
+      if (def.particle.radius !== undefined) {
+        throw new ParticleError('rectangle particles take width/height, not radius');
+      }
+    }
+    if (def.particle.color !== undefined && typeof def.particle.color !== 'string') {
+      throw new ParticleError('shape color must be a string');
+    }
   } else {
     throw new ParticleError('particle.kind must be sprite or shape');
   }
-  if (!def.burst || typeof def.burst.count !== 'number' || !Number.isFinite(def.burst.count) || def.burst.count < 1 || def.burst.count > def.capacity) {
-    throw new ParticleError('burst.count must be 1..capacity');
+  // GS-PARTICLE-03: integer counts only — a fractional count would emit
+  // ceil(count) particles from a loop bound that promises otherwise.
+  if (!def.burst || typeof def.burst.count !== 'number' || !Number.isFinite(def.burst.count) || !Number.isInteger(def.burst.count) || def.burst.count < 1 || def.burst.count > def.capacity) {
+    throw new ParticleError('burst.count must be an integer 1..capacity');
   }
   assertRange(def.lifetimeSeconds, 'lifetimeSeconds');
   if (def.lifetimeSeconds.min <= 0) throw new ParticleError('lifetimeSeconds.min must be >0');
   assertRange(def.speed, 'speed');
   if (def.speed.min < 0) throw new ParticleError('speed.min must be >=0');
-  if (def.direction) assertRange(def.direction, 'direction');
-  if (def.rotation) assertRange(def.rotation, 'rotation');
+  // GS-PARTICLE-03: optional ranges validate by PRESENCE — a null or
+  // otherwise present-but-invalid value must fail, not fall through.
+  if (def.direction !== undefined) assertRange(def.direction, 'direction');
+  if (def.rotation !== undefined) assertRange(def.rotation, 'rotation');
   // T20A-R2: optional scale fields validate by PRESENCE, not truthiness —
   // raw JavaScript values such as null, false, or 0 must fail at the boundary
   // instead of silently falling back to the default scale.
@@ -98,7 +138,14 @@ export function defineParticleEffect(def: ParticleEffectDefinitionInput): Partic
   return Object.freeze(
     {
       ...def,
-      particle: Object.freeze({ ...def.particle }),
+      // GS-PARTICLE-03: the nested size record is cloned, never aliased —
+      // caller mutation after definition cannot reach the system.
+      particle: Object.freeze({
+        ...def.particle,
+        ...('size' in def.particle && def.particle.size !== undefined
+          ? { size: Object.freeze({ ...def.particle.size as { width: number; height: number } }) }
+          : {}),
+      }),
       burst: Object.freeze({ ...def.burst }),
       lifetimeSeconds: Object.freeze({ ...def.lifetimeSeconds }),
       speed: Object.freeze({ ...def.speed }),
