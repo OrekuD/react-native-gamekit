@@ -663,3 +663,185 @@ describe('T13.3 ordered per-session delivery', () => {
     assert.notEqual(seedGameEvent(e1), seedGameEvent(e3), 'different ordinal should change seed');
   });
 });
+
+describe('GS-EVENT-01 per-tick delivery snapshots', () => {
+  function tickOnce(
+    emit: (events: { emit: (name: 'a' | 'b', payload: unknown) => void }) => void,
+  ) {
+    const { game } = makeGameWithEvents(
+      ({ events }: any) => {
+        emit(events);
+        return { v: 0 };
+      },
+      ['a', 'b'],
+    );
+    const driver = new ManualFrameDriver();
+    const session = createGameSessionWithDriver(game, { frameDriver: driver, fixedStepMs: 10 });
+    return { session, driver };
+  }
+
+  it('add/remove during the first delivery takes effect only from the next tick', () => {
+    const { session, driver } = tickOnce((events) => {
+      events.emit('a', { n: 1 });
+      events.emit('a', { n: 2 });
+      events.emit('b', { s: 'x' });
+    });
+    const order: string[] = [];
+    let lateA: ((e: { readonly payload: { readonly n: number } }) => void) | undefined;
+    const bListener = (e: { readonly payload: { readonly s: string } }): void => {
+      order.push(`b:${e.payload.s}`);
+    };
+    const bSub = session.addGameEventListener('b', bListener);
+    session.addGameEventListener('a', (e) => {
+      const n = (e as unknown as { payload: { n: number } }).payload.n;
+      order.push(`a:${n}`);
+      if (n === 1) {
+        // Added during the first delivery: must NOT receive a:2 this tick.
+        lateA = (late): void => {
+          order.push(`late-a:${late.payload.n}`);
+        };
+        session.addGameEventListener('a', lateA);
+        // Removed during the first delivery: the tick snapshot was taken
+        // upfront, so b is still delivered this tick.
+        bSub.remove();
+      }
+    });
+    session.start();
+    driver.fireNext(0);
+    driver.fireNext(10);
+    assert.deepEqual(order, ['a:1', 'a:2', 'b:x'], 'per-tick snapshots ignore mid-tick changes');
+    // Second tick proves the changes landed for later ticks.
+    order.length = 0;
+    driver.fireNext(20);
+    assert.deepEqual(
+      order,
+      ['a:1', 'late-a:1', 'a:2', 'late-a:2'],
+      'added listeners receive later ticks; removed listeners stay gone',
+    );
+    session.dispose();
+  });
+
+  it('pause, transition, and dispose during delivery complete the tick batch', () => {
+    const { session, driver } = tickOnce((events) => {
+      events.emit('a', { n: 1 });
+      events.emit('a', { n: 2 });
+    });
+    const seen: number[] = [];
+    session.addGameEventListener('a', (e) => {
+      seen.push((e as unknown as { payload: { n: number } }).payload.n);
+      session.pause();
+    });
+    session.start();
+    driver.fireNext(0);
+    driver.fireNext(10);
+    assert.deepEqual(seen, [1, 2], 'siblings still run after a pause mid-delivery');
+    assert.equal(session.status, 'paused', 'the pause takes effect after the batch');
+    session.dispose();
+  });
+
+  it('dispose during delivery does not abort sibling envelopes', () => {
+    const { session, driver } = tickOnce((events) => {
+      events.emit('a', { n: 1 });
+      events.emit('b', { s: 'y' });
+    });
+    const seen: string[] = [];
+    session.addGameEventListener('a', () => {
+      seen.push('a');
+      session.dispose();
+    });
+    session.addGameEventListener('b', () => {
+      seen.push('b');
+    });
+    session.start();
+    driver.fireNext(0);
+    driver.fireNext(10);
+    assert.deepEqual(seen, ['a', 'b'], 'the tick batch completes through dispose');
+    assert.equal(session.status, 'disposed');
+  });
+});
+
+describe('GS-EVENT-02 envelope authority versus published frame', () => {
+  it('catch-up listeners see event ticks ahead of the published frame', () => {
+    const { game } = makeGameWithEvents(({ events, tick }: any) => {
+      events.emit('a', { n: tick });
+      return { v: tick };
+    });
+    const driver = new ManualFrameDriver();
+    const session = createGameSessionWithDriver(game, { frameDriver: driver, fixedStepMs: 10 });
+    const records: Array<{ tick: number; frameTick: number }> = [];
+    session.addGameEventListener('a', (e) => {
+      const envelope = e as unknown as { tick: number };
+      const frame = session.getRenderFrame() as unknown as { tick: number };
+      records.push({ tick: envelope.tick, frameTick: frame.tick });
+    });
+    session.start();
+    // Stall, then run two simulation ticks in one driver callback.
+    driver.fireNext(0);
+    driver.fireNext(25);
+    driver.fireNext(35);
+    assert.ok(records.length >= 2, 'catch-up emits one envelope per tick');
+    for (const record of records) {
+      assert.ok(
+        record.frameTick <= record.tick,
+        `envelope tick ${record.tick} is the authority; the published frame (${record.frameTick}) never runs ahead`,
+      );
+    }
+    const envelopeTicks = records.map((r) => r.tick);
+    assert.deepEqual([...envelopeTicks].sort((a, b) => a - b), envelopeTicks, 'envelopes stay in tick order');
+    session.dispose();
+  });
+});
+
+describe('GS-EVENT-03 no user-code execution during validation', () => {
+  it('inherited then getters are never invoked', () => {
+    let invoked = 0;
+    const proto = {
+      get then(): unknown {
+        invoked += 1;
+        throw new Error('getter must never run');
+      },
+    };
+    const payload = Object.create(proto) as Record<string, unknown>;
+    payload.n = 1;
+    assert.throws(() => cloneAndValidatePayload(payload, 'a'), GameEventError);
+    assert.equal(invoked, 0, 'the inherited getter never runs');
+  });
+
+  it('own accessors are never invoked', () => {
+    let invoked = 0;
+    const payload = {
+      get n(): number {
+        invoked += 1;
+        return 1;
+      },
+    };
+    assert.throws(() => cloneAndValidatePayload(payload, 'a'), /accessor/);
+    assert.equal(invoked, 0, 'the own getter never runs');
+  });
+
+  it('class instances fail through GameEventError without property reads', () => {
+    let read = 0;
+    class Secret {
+      get exposed(): number {
+        read += 1;
+        return 1;
+      }
+    }
+    assert.throws(() => cloneAndValidatePayload(new Secret(), 'a'), GameEventError);
+    assert.equal(read, 0, 'no instance property is read');
+    assert.throws(() => cloneAndValidatePayload(new Map(), 'a'), GameEventError);
+    assert.throws(() => cloneAndValidatePayload(new Date(), 'a'), GameEventError);
+    assert.throws(() => cloneAndValidatePayload(Promise.resolve(1), 'a'), /promise\/thenable/);
+  });
+
+  it('plain shared references still clone by value', () => {
+    const shared = { x: 1 };
+    const cloned = cloneAndValidatePayload({ a: shared, b: shared }, 'a') as {
+      a: { x: number };
+      b: { x: number };
+    };
+    assert.deepEqual(cloned.a, { x: 1 });
+    assert.deepEqual(cloned.b, { x: 1 });
+    assert.notEqual(cloned.a, cloned.b, 'shared references clone independently');
+  });
+});

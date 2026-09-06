@@ -101,18 +101,14 @@ export function cloneAndValidatePayload(
 
     // Use try/finally to ensure ancestry is cleaned even when we throw.
     try {
-      // Promise / thenable check without invoking getter if possible.
-      // Use descriptor for `then` to avoid executing a getter.
-      const thenDesc = Object.getOwnPropertyDescriptor(obj as Record<string, unknown>, 'then' as unknown as string);
-      const thenValue = thenDesc ? thenDesc.value : (obj as Record<string, unknown>).then;
-      if (typeof thenValue === 'function') {
-        const isThenable =
-          obj instanceof Promise || (!Array.isArray(obj) && !isPlainRecord(obj));
-        if (isThenable) {
-          fail(path, 'promise/thenable is not a supported payload type');
-        }
-        // Plain records with a `then` function are rejected as a function
-        // value when that property is cloned, so no top-level failure here.
+      // GS-EVENT-03: thenables are rejected without invoking any user code.
+      // Only safe operations run here (instanceof, getPrototypeOf, own
+      // descriptors). A Promise fails with its useful path; every other
+      // non-plain object fails at the array/record branches below — the
+      // preliminary inherited `.then` read that could execute a getter is
+      // gone. Own `then` functions are rejected later as function values.
+      if (obj instanceof Promise) {
+        fail(path, 'promise/thenable is not a supported payload type');
       }
 
       if (isReactElement(obj)) {

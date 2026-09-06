@@ -137,6 +137,13 @@ export interface GameSession<
    * accumulated timing fraction at call time and is only meaningful for
    * headless inspection. Rendering uses the UI-owned alpha clock; the
    * envelope fields never change between commits.
+   *
+   * Event-time authority (GS-EVENT-02): this frame is the most recently
+   * PUBLISHED presentation frame, which can lag the authoritative tick
+   * when several simulation ticks run in one driver callback. Inside a
+   * game-event listener, the envelope (tick, scene, ordinal, payload) is
+   * the authority for that event — never re-read this frame to place the
+   * event. Put the data an effect needs into its small payload.
    */
   getRenderFrame(): GameRenderFrame<TScenes>;
   /** Observe simulation commits at commit frequency (never per display frame). */
@@ -147,12 +154,17 @@ export interface GameSession<
    * Each listener receives committed envelopes for the subscribed name in
    * deterministic `(tick, ordinal)` order. Delivery happens after the
    * source tick's authoritative state commits and never during the update
-   * itself. Listeners are invoked from a per-event snapshot; a listener
-   * added during delivery receives only later events. Removing a listener
-   * is idempotent and prevents future deliveries. A throwing listener does
-   * not suppress siblings or alter simulation; the error is reported via a
-   * visible non-recursive sink (`console.error`). Simulation never awaits
-   * an async effect started by a listener.
+   * itself. Listeners run from a per-tick snapshot taken before the
+   * tick's first delivery (GS-EVENT-01): a listener added during delivery
+   * receives only later ticks, and a removal prevents only future ticks —
+   * neither affects the envelopes already staged for the running tick.
+   * Lifecycle calls during delivery (pause, setScene, dispose) take
+   * effect after the staged batch completes: every snapshotted listener
+   * still runs exactly once for the tick. Removing a listener is
+   * idempotent. A throwing listener does not suppress siblings or alter
+   * simulation; the error is reported via a visible non-recursive sink
+   * (`console.error`). Simulation never awaits an async effect started
+   * by a listener.
    */
   addGameEventListener<TName extends keyof InferGameEventMap<TEventDefs> & string>(
     name: TName,
