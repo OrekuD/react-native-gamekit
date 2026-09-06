@@ -17,11 +17,13 @@ import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
 import {
   computeSpriteRsxform,
-  resolveSpriteFrameRect,
   spriteGroupCorrection,
-  type SpriteTransformInput,
 } from './spriteTransform';
-import { applySpriteFrameSelection } from './spriteSelection';
+import {
+  applySpriteFrameSelection,
+  materializeSpriteSelection,
+  selectSpriteFrameRect,
+} from './spriteSelection';
 
 export { resolveSpriteFrameRect, type SpriteFrameRect } from './spriteTransform';
 
@@ -99,49 +101,51 @@ export function Sprite({
     });
   };
 
-  const staticFrame = typeof frame === 'string' ? frame : undefined;
-  const frameSize = useMemo(() => resolveSpriteFrameRect(source, staticFrame), [source, staticFrame]);
-  const input: SpriteTransformInput = {
-    x,
-    y,
-    rotation,
-    scale,
-    flipX,
-    flipY,
-    anchorX: anchor.x,
-    anchorY: anchor.y,
-    frameWidth: frameSize.width,
-    frameHeight: frameSize.height,
-  };
-
   const rects = useRectBuffer(1, resolveFrameRectWorklet);
   const xforms = useRSXformBuffer(1, (xform) => {
     'worklet';
-    // RF4: resolve the selected frame's rectangle and dimensions in the same
-    // worklet update so the anchor math always uses the current frame size.
-    const name = typeof frame === 'string' ? frame : frame?.value;
-    let width = frameSize.width;
-    let height = frameSize.height;
-    if (name !== undefined && source.descriptor.kind === 'sprite-sheet') {
-      const rect = (source as LoadedSpriteSheet).frames[name];
-      if (rect !== undefined) {
-        width = rect.width;
-        height = rect.height;
-      }
-    }
+    // GS-SPRITE-03: the same shared selection the rect modifier resolves,
+    // so clip-driven frame changes reach the anchor math with current
+    // dimensions. Absent selection draws nothing; its transform is finite.
+    const resolved = selectSpriteFrameRect(
+      source,
+      materializeSpriteSelection(frame, clip, elapsedMs),
+    );
     const result = computeSpriteRsxform({
-      ...input,
-      frameWidth: width,
-      frameHeight: height,
+      x,
+      y,
+      rotation,
+      scale,
+      flipX,
+      flipY,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
+      frameWidth: resolved?.width ?? 0,
+      frameHeight: resolved?.height ?? 0,
     });
     xform.set(result.scos, result.ssin, result.tx, result.ty);
   });
-  const groupTransform = useMemo(
-    () => spriteGroupCorrection(input) as unknown as Parameters<typeof Group>[0]['transform'],
-    // The correction reads animated values at draw time; the element list
-    // identity is stable (values are shared-value reads inside the group).
-    [anchor.x, anchor.y, frameSize.width, frameSize.height],
-  );
+  // GS-SPRITE-01: the correction depends on position, rotation, scale,
+  // flips, and the live frame dimensions, so it is derived on the UI
+  // runtime from live values — never memoized from React-render reads.
+  const groupTransform = useDerivedValue(() => {
+    const resolved = selectSpriteFrameRect(
+      source,
+      materializeSpriteSelection(frame, clip, elapsedMs),
+    );
+    return spriteGroupCorrection({
+      x,
+      y,
+      rotation,
+      scale,
+      flipX,
+      flipY,
+      anchorX: anchor.x,
+      anchorY: anchor.y,
+      frameWidth: resolved?.width ?? 0,
+      frameHeight: resolved?.height ?? 0,
+    });
+  }, [x, y, rotation, scale, flipX, flipY, frame, clip, elapsedMs, source, anchor.x, anchor.y]);
   const colors = useMemo(() => (tint === undefined ? undefined : [tint]), [tint]);
 
   // The Skia Group has no `visible` prop: hiding is expressed as a combined

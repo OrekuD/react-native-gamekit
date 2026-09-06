@@ -5,8 +5,9 @@
  * `Atlas` with fixed-capacity, UI-owned buffers. The normal path owns all
  * derived-value plumbing: `select` maps the committed snapshot to the item
  * array and `write` is a UI-runtime setter that writes transforms in place —
- * no per-frame allocation, no per-frame React, no author-written
- * `useDerivedValue` side effects.
+ * no per-frame React and no author-written `useDerivedValue` side effects.
+ * Per commit the select array, one policy object, and one RSXform result
+ * per written item are allocated; buffers themselves are never reallocated.
  *
  * Contract:
  * - `capacity` is fixed for the mounted batch; active count is explicit.
@@ -30,6 +31,7 @@ import type { SceneSnapshot } from '../../scene/types';
 import type { SceneMap } from '../../definition/types';
 import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
 import { computeSpriteRsxform } from './spriteTransform';
+import { selectSpriteFrameRect } from './spriteSelection';
 import { batchUpdatePolicy } from './spriteBatchPolicy';
 
 /** The per-item write surface handed to the author's `write` mapper. */
@@ -98,11 +100,13 @@ function frameRectOf(
   frame: string,
 ): { x: number; y: number; width: number; height: number } | undefined {
   'worklet';
-  if (source.descriptor.kind === 'image') {
-    const image = source as LoadedImage;
-    return { x: 0, y: 0, width: image.width, height: image.height };
+  // GS-SPRITE-04: the shared selection contract resolves the rectangle, so
+  // unknown frames fail with the same actionable error as retained sprites.
+  const resolved = selectSpriteFrameRect(source, { frame });
+  if (resolved === undefined) {
+    throw new Error(`frame ${JSON.stringify(frame)} does not belong to this sprite sheet`);
   }
-  return (source as LoadedSpriteSheet).frames[frame];
+  return resolved;
 }
 
 export function SpriteBatch<
@@ -149,9 +153,11 @@ export function SpriteBatch<
     () => ({
       set: (index, frame, x, y, rotation, scale, visible = true) => {
         'worklet';
-        if (index < 0 || index >= capacity) {
+        // GS-SPRITE-04: the author-exposed index is validated as an integer
+        // slot — a fractional index would silently miss every buffer slot.
+        if (!Number.isInteger(index) || index < 0 || index >= capacity) {
           throw new Error(
-            `SpriteBatch write index ${index} is outside the capacity ${capacity}`,
+            `SpriteBatch write index ${String(index)} is outside the capacity ${capacity}`,
           );
         }
         const rectSlot = rects.value[index];
@@ -191,8 +197,10 @@ export function SpriteBatch<
 
   // The batch's own UI mapper: one derived value reads the committed
   // snapshot, runs the author's select + write per item, and reports the
-  // active count. Buffers are mutated in place; no objects are allocated
-  // per item per frame beyond the item array the select returns.
+  // active count. Buffers are mutated in place with no per-frame React;
+  // per commit the select array, one policy object, and one RSXform result
+  // per written item are allocated (GS-SPRITE-04: scalar writers stay
+  // unjustified without a benchmark showing this matters).
   const activeCount = useDerivedValue(() => {
     'worklet';
     const envelope = commit.value;
@@ -212,16 +220,10 @@ export function SpriteBatch<
       alpha: alpha.value,
     });
     const policy = batchUpdatePolicy(items.length, capacity, __DEV__);
-    if (policy.overflow) {
-      // RF8: production never crashes the UI runtime for ordinary data
-      // growth: hide the overflowing items.
-      for (let index = capacity; index < items.length; index += 1) {
-        const slot = rects.value[index];
-        if (slot !== undefined) {
-          slot.setXYWH(0, 0, 0, 0);
-        }
-      }
-    }
+    // GS-SPRITE-04: no overflow loop — `policy.activeCount` already clamps
+    // production writes to capacity, and every buffer slot past capacity is
+    // absent by construction, so iterating [capacity, items.length) could
+    // only add unbounded dead work.
     const count = policy.activeCount;
     // T12.6 + T12-F5: culling hides off-screen slots in place, and
     // authored writes run ONLY through `policy.activeCount`. In production

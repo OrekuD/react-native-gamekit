@@ -16,6 +16,20 @@
 import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
 import type { SpriteFrameRect } from './spriteTransform';
 import { spriteFrameNameForClip } from '../../sprites/sampleSpriteClip';
+import type { SharedValue } from 'react-native-reanimated';
+
+/** A static value or a UI-runtime shared value carrying it. Shared-value
+ * payloads list both the exact and the undefined-extended shapes because
+ * shared values are invariant in their payload. */
+export type SpriteSelectable<T> = T | SharedValue<T>;
+
+/** Selection props as the Sprite/GameSprite call sites declare them. */
+export type SpriteFrameProp =
+  | string
+  | SharedValue<string>
+  | SharedValue<string | undefined>
+  | undefined;
+export type SpriteClipProp = string | SharedValue<string> | undefined;
 
 /** The discrete selection inputs for one sprite (all optional). */
 export interface SpriteSelection {
@@ -61,6 +75,38 @@ export function selectSpriteFrameRect(
     );
   }
   return rect;
+}
+
+/**
+ * Materialize mixed static/shared selection props into one plain selection
+ * (GS-SPRITE-03): every worklet that resolves frames — rect, transform, and
+ * Group correction — starts from this single helper, so clip-driven frame
+ * changes reach every consumer coherently.
+ */
+export function materializeSpriteSelection(
+  frame: SpriteFrameProp,
+  clip: SpriteClipProp,
+  elapsedMs: SpriteSelectable<number> | undefined,
+): SpriteSelection {
+  'worklet';
+  const selection: {
+    frame?: string;
+    clip?: string;
+    elapsedMs?: number;
+  } = {};
+  const frameValue = typeof frame === 'string' ? frame : frame?.value;
+  if (frameValue !== undefined) {
+    selection.frame = frameValue;
+  }
+  const clipValue = typeof clip === 'string' ? clip : clip?.value;
+  if (clipValue !== undefined) {
+    selection.clip = clipValue;
+  }
+  const elapsedValue = typeof elapsedMs === 'number' ? elapsedMs : elapsedMs?.value;
+  if (elapsedValue !== undefined) {
+    selection.elapsedMs = elapsedValue;
+  }
+  return selection;
 }
 
 /** A Skia rect-buffer entry (structural: only `setXYWH` is used). */
