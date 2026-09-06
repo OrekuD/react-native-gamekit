@@ -539,3 +539,86 @@ describe('GS-TILE-05 exact query edge semantics', () => {
     assert.equal(away.contacts.all.length, 0, 'leaving the abutment is contact-free');
   });
 });
+
+describe('GS-TILE-02 single collision eligibility policy', () => {
+  function decoSolidMap(): TileMap2D {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    return defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [
+        // Solid-looking but decorative: must never block, even selected.
+        { id: 'deco', width: 3, height: 1, data: [1, 1, 1], collidable: false },
+        { id: 't', width: 3, height: 1, data: [0, 0, 0] },
+      ],
+    });
+  }
+
+  it('a non-collidable layer reports no collision even when selected', () => {
+    const map = decoSolidMap();
+    const cells = cellsInAabb(map, { x: 0, y: 0, width: 48, height: 16 }, ['deco']);
+    assert.ok(cells.length > 0, 'the decorative cells are still queried');
+    for (const cell of cells) {
+      assert.equal(cell.collision, undefined, 'decoration carries no collision role');
+    }
+    const r = movePlatformerBody2D({
+      body: { x: 0, y: 0, width: 8, height: 8 },
+      velocity: { x: 500, y: 0 },
+      deltaSeconds: 0.016,
+      map,
+      collisionLayers: ['deco'],
+    });
+    assert.equal(r.contacts.all.length, 0, 'selected decoration does not block');
+    assert.equal(r.body.x, 8, 'motion is unobstructed');
+  });
+
+  it('an unselected solid layer does not block', () => {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    const map = defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [{ id: 't', width: 3, height: 1, data: [0, 1, 0] }],
+    });
+    const r = movePlatformerBody2D({
+      body: { x: 0, y: 0, width: 16, height: 16 },
+      velocity: { x: 500, y: 0 },
+      deltaSeconds: 0.016,
+      map,
+      collisionLayers: [],
+    });
+    assert.equal(r.contacts.all.length, 0, 'omitted layers never collide');
+    assert.equal(r.body.x, 8, 'motion passes through the unselected wall');
+  });
+
+  it('unknown collision layer ids fail at the boundary', () => {
+    const map = decoSolidMap();
+    assert.throws(
+      () =>
+        movePlatformerBody2D({
+          body: { x: 0, y: 0, width: 8, height: 8 },
+          velocity: { x: 0, y: 0 },
+          deltaSeconds: 0.016,
+          map,
+          collisionLayers: ['nope'],
+        }),
+      /unknown collision layer/,
+    );
+  });
+
+  it('duplicate layer selections report once', () => {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    const map = defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [{ id: 't', width: 3, height: 1, data: [0, 1, 0] }],
+    });
+    const r = movePlatformerBody2D({
+      body: { x: 0, y: 0, width: 16, height: 16 },
+      velocity: { x: 500, y: 0 },
+      deltaSeconds: 0.016,
+      map,
+      collisionLayers: ['t', 't'],
+    });
+    assert.equal(r.contacts.all.length, 1, 'one wall reports one contact');
+  });
+});

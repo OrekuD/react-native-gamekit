@@ -289,11 +289,15 @@ export function cellAabb(map: TileMap2D, cx: number, cy: number): Aabb2D {
 
 /** Frozen immutable query result builder. */
 export function makeCell(map: TileMap2D, layerId: string, cx: number, cy: number, tileId: number): TileCell2D {
+  // GS-TILE-02: the single eligibility authority — a decorative
+  // (collidable: false) layer reports no collision role even for solid
+  // tiles, so queries and movement agree that decoration never blocks.
+  const collidable = map.layerById[layerId]?.collidable ?? false;
   return Object.freeze({
     layerId,
     tileId,
     tileName: map.tileset.nameOfId[tileId]!,
-    collision: map.tileset.collisionOfId[tileId],
+    collision: collidable ? map.tileset.collisionOfId[tileId] : undefined,
     cell: Object.freeze({ x: cx, y: cy }),
     aabb: cellAabb(map, cx, cy),
   });

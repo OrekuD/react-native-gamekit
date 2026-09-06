@@ -76,6 +76,18 @@ export function movePlatformerBody2D(options: {
   if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) {
     throw tileError('deltaSeconds', `must be a finite number >= 0; got ${String(deltaSeconds)}`);
   }
+  // GS-TILE-02: layer selection is explicit and exact — unknown ids fail
+  // here instead of silently colliding with nothing (a typo would otherwise
+  // drop the player through the world). Duplicates are harmless: queries
+  // iterate map layers, so an id can never report twice.
+  if (!Array.isArray(collisionLayers)) {
+    throw tileError('collisionLayers', `must be an array of layer ids; got ${String(collisionLayers)}`);
+  }
+  for (const layerId of collisionLayers) {
+    if (typeof layerId !== 'string' || map.layerById[layerId] === undefined) {
+      throw tileError('collisionLayers', `unknown collision layer ${JSON.stringify(layerId)}`);
+    }
+  }
   const intendedX = vx * deltaSeconds;
   const intendedY = vy * deltaSeconds;
   const dropThrough = options.dropThroughOneWay ?? false;
