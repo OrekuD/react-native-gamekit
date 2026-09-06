@@ -4,6 +4,14 @@
  * `image(...)` and `spriteSheet(...)` build immutable descriptors;
  * `defineAssets(...)` groups them into a deeply immutable typed manifest.
  * Definition performs no I/O and allocates no native handle.
+ *
+ * Ownership decision (GS-ASSET-04): declaration helpers CLONE the
+ * author-supplied structure and freeze the clone. Caller-owned spec
+ * records, frame/clip objects, and group maps are never frozen in place,
+ * so one reusable author record can back several declarations and later
+ * edits cannot reach an already-built manifest. Descriptor objects are
+ * expected from `image(...)`/`spriteSheet(...)` and are shared already
+ * immutable; the helpers never take ownership of caller input.
  */
 import { createDeepFreeze } from '../core/session/deepFreeze';
 import { validateImageSource, validateManifest, validateSpriteSheet } from './validation';
@@ -38,12 +46,24 @@ export function spriteSheet<
   },
 ): SpriteSheetDescriptor<TFrames, TClips> {
   validateSpriteSheet(source, spec);
+  // Clone the author records before freezing: the caller's spec stays
+  // owned by the caller and reusable for further declarations.
+  const frames = Object.fromEntries(
+    Object.entries(spec.frames).map(([name, rect]) => [name, { ...rect }]),
+  ) as TFrames;
+  const animations = Object.fromEntries(
+    Object.entries(spec.animations).map(([name, clip]) => [
+      name,
+      { ...clip, frames: [...clip.frames] },
+    ]),
+    // The shape was validated above; the clone preserves every value.
+  ) as unknown as TClips;
   const freezer = createDeepFreeze();
   return freezer({
     kind: 'sprite-sheet',
     source,
-    frames: spec.frames,
-    animations: spec.animations,
+    frames,
+    animations,
   }) as SpriteSheetDescriptor<TFrames, TClips>;
 }
 
@@ -57,6 +77,12 @@ export function defineAssets<TGroups extends AssetGroupMap>(
   groups: TGroups,
 ): GameAssetManifest<TGroups> {
   validateManifest(groups);
+  // Clone the group/asset maps before freezing: the caller's object stays
+  // owned by the caller. Descriptor values are shared — they are expected
+  // from image()/spriteSheet() and are already immutable.
+  const groupsCopy = Object.fromEntries(
+    Object.entries(groups).map(([group, assets]) => [group, { ...assets }]),
+  ) as TGroups;
   const freezer = createDeepFreeze();
-  return freezer(groups) as GameAssetManifest<TGroups>;
+  return freezer(groupsCopy) as GameAssetManifest<TGroups>;
 }

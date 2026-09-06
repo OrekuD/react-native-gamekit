@@ -54,10 +54,11 @@ describe('asset manifest definition (T7.2)', () => {
     assert.ok(Object.isFrozen(manifest.gameplay.player.frames));
     assert.ok(Object.isFrozen(manifest.gameplay.player.animations));
     assert.ok(Object.isFrozen(manifest.gameplay.player.animations.idle.frames));
-    // The input object graph is frozen in place too: neither the input nor
-    // the returned manifest can be mutated after definition.
-    assert.ok(Object.isFrozen(input));
-    assert.ok(Object.isFrozen(input.boot.logo));
+    // GS-ASSET-04: only the returned manifest graph is frozen. The input
+    // object graph stays owned by the caller (see the declaration
+    // ownership suite below); helper-built descriptors are shared.
+    assert.equal(Object.isFrozen(input), false);
+    assert.equal(Object.isFrozen(input.boot), false);
   });
 
   it('two descriptors with the same source stay two logical identities', () => {
@@ -185,5 +186,57 @@ describe('asset manifest definition (T7.2)', () => {
   it('definition allocates no native handle and performs no I/O', () => {
     const manifest = defineAssets({ boot: { logo: image(LOGO) } });
     assert.equal(manifest.boot.logo.source, LOGO, 'no source rewrite');
+  });
+});
+
+describe('GS-ASSET-04 declaration ownership', () => {
+  it('spriteSheet clones author records instead of freezing them in place', () => {
+    const spec: {
+      frames: { 'idle-0': { x: number; y: number; width: number; height: number } };
+      animations: { idle: { frames: ['idle-0']; frameDurationMs: number; mode: 'loop' } };
+    } = {
+      frames: { 'idle-0': { x: 0, y: 0, width: 32, height: 32 } },
+      animations: { idle: { frames: ['idle-0'], frameDurationMs: 140, mode: 'loop' } },
+    };
+    const sheet = spriteSheet(PLAYER_SHEET, spec);
+
+    assert.ok(Object.isFrozen(sheet), 'the declaration is frozen');
+    assert.ok(Object.isFrozen(sheet.frames), 'cloned frames are frozen');
+    assert.ok(Object.isFrozen(sheet.frames['idle-0']), 'cloned rects are frozen');
+    assert.ok(Object.isFrozen(sheet.animations.idle.frames), 'cloned clip frame lists are frozen');
+    assert.equal(Object.isFrozen(spec.frames), false, 'author frames stay owned by the caller');
+    assert.equal(Object.isFrozen(spec.frames['idle-0']), false, 'author rects stay mutable');
+    assert.equal(Object.isFrozen(spec.animations), false, 'author clips stay owned by the caller');
+    assert.equal(Object.isFrozen(spec.animations.idle.frames), false, 'author frame lists stay mutable');
+  });
+
+  it('the same author spec stays reusable across declarations', () => {
+    const spec: {
+      frames: { 'idle-0': { x: number; y: number; width: number; height: number } };
+      animations: { idle: { frames: ['idle-0']; frameDurationMs: number; mode: 'loop' } };
+    } = {
+      frames: { 'idle-0': { x: 0, y: 0, width: 32, height: 32 } },
+      animations: { idle: { frames: ['idle-0'], frameDurationMs: 140, mode: 'loop' } },
+    };
+    const first = spriteSheet(PLAYER_SHEET, spec);
+    // Mutating the reusable author record between declarations is legal:
+    // earlier declarations keep their own cloned values.
+    spec.frames['idle-0'].width = 16;
+    const second = spriteSheet(PLAYER_SHEET, spec);
+
+    assert.equal(first.frames['idle-0'].width, 32, 'the first declaration keeps its values');
+    assert.equal(second.frames['idle-0'].width, 16, 'the second declaration sees the edit');
+  });
+
+  it('defineAssets clones group maps instead of freezing the input', () => {
+    const logo = image(LOGO);
+    const input = { boot: { logo } };
+    const manifest = defineAssets(input);
+
+    assert.ok(Object.isFrozen(manifest), 'the manifest is frozen');
+    assert.ok(Object.isFrozen(manifest.boot), 'cloned group maps are frozen');
+    assert.equal(manifest.boot.logo, logo, 'helper-built descriptors are shared, already immutable');
+    assert.equal(Object.isFrozen(input), false, 'the caller group map stays owned by the caller');
+    assert.equal(Object.isFrozen(input.boot), false, 'the caller asset map stays owned by the caller');
   });
 });
