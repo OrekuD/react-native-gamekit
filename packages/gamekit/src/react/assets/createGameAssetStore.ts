@@ -10,12 +10,22 @@
  * - `acquire` resolves only with a complete usable lease.
  * - Reference counts keep a shared source alive across leases; the native
  *   handle is disposed exactly once when the final lease releases it.
+ * - Each reference token releases exactly once, decrements its captured
+ *   entry (never a fresh URI lookup), and only removes the cache mapping
+ *   when the mapping still holds that exact entry (GS-ASSET-01/02).
+ * - Each acquisition stage has one cleanup owner: a reference transfers to
+ *   the attempt only after successful validation, so a failed validation
+ *   releases exactly once and never touches another owner's reference.
  * - A failed/abandoned attempt releases every handle it acquired; entries
  *   still leased elsewhere are preserved.
- * - Attempts carry an epoch token: stale completion after retry/unmount is
- *   ignored and can never double-dispose.
+ * - Stale completion after retry/unmount is rejected by the caller's abort
+ *   signal and the store's disposed flag; late decodes dispose their own
+ *   handle without touching a successor entry.
  * - `AbortSignal` detaches an imperative caller immediately; late results
  *   from the underlying work are ignored.
+ * - Abort/disposed state is checked after the final awaited step and before
+ *   the lease is published, so an abort racing completion never surfaces
+ *   a lease for a cancelled request.
  * - Progress is monotonic and counts requested logical resources (a
  *   deduplicated source still counts once per logical descriptor).
  * - The store rejects acquisitions after disposal; disposal is idempotent.
@@ -67,13 +77,12 @@ interface ResourceEntry {
   readonly uri: string;
   handle: NativeImageHandle | undefined;
   inFlight: Promise<NativeImageHandle> | undefined;
-  /** Logical descriptor keys sharing this resolved source. */
-  readonly logicalKeys: Set<string>;
   refCount: number;
 }
 
+/** References owned by one in-progress acquisition (GS-ASSET-04: no epoch
+ * token — staleness is decided by the caller's abort signal, not a counter). */
 interface Attempt {
-  readonly token: number;
   /** Idempotent release closures for every reference this attempt owns. */
   readonly acquired: ResourceRef[];
 }
@@ -138,10 +147,8 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
 } {
   const groups = new Set<string>(Object.keys(manifest));
   const logical = logicalAssetsOf(manifest);
-  const byKey = new Map<string, LogicalAsset>(logical.map((asset) => [asset.key, asset]));
   const resources = new Map<string, ResourceEntry>();
   let disposed = false;
-  let nextAttemptToken = 1;
   /** Per-attempt ownership is explicit: the attempt object is passed through
    * every resolve/decode/validate operation; no shared singleton (R4). */
 
@@ -175,67 +182,63 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     });
   }
 
-  /** Drop one reference held by a caller that never recorded a logical key. */
-  function dropResourceRef(uri: string): void {
-    const entry = resources.get(uri);
-    if (entry === undefined) {
-      return;
-    }
+  /**
+   * Drop one reference to the captured entry (GS-ASSET-01/02). The entry
+   * object — not a fresh URI lookup — is decremented, and the cache mapping
+   * is removed only when it still holds this exact entry, so a stale token
+   * can never affect a successor generation for the same URI.
+   */
+  function dropResourceRef(entry: ResourceEntry): void {
     entry.refCount -= 1;
     if (entry.refCount <= 0) {
       if (entry.handle !== undefined) {
         entry.handle.dispose();
       }
-      resources.delete(uri);
+      if (resources.get(entry.uri) === entry) {
+        resources.delete(entry.uri);
+      }
     }
   }
 
   /**
-   * Begin one owned reference to a resource. Every waiter — cache miss,
-   * in-flight share, or completed cache hit — goes through this single
-   * accounting path and receives an idempotent release closure (RF5). The
-   * caller must either commit the ref to the attempt or call release()
-   * exactly once; the final release disposes the native handle.
+   * Begin one owned reference to a resource (GS-ASSET-01). Every waiter —
+   * cache miss, in-flight share, or completed cache hit — goes through this
+   * single accounting path and receives a token bound to the exact entry
+   * object. The token releases exactly once: a flag guards the decrement,
+   * so a validation failure (released by its stage) followed by attempt
+   * cleanup (releasing the attempt's tokens) can never double-release.
+   * The caller must either transfer the token to the attempt or let its
+   * owning stage release it exactly once; the final release disposes the
+   * native handle.
    */
-  function beginResourceRef(uri: string): ResourceRef {
+  function beginResourceRef(uri: string): { readonly ref: ResourceRef; readonly entry: ResourceEntry } {
     const existing = resources.get(uri);
-    let entry: ResourceEntry;
     if (existing !== undefined && existing.handle !== undefined) {
       // Completed cache hit.
-      entry = existing;
-      entry.refCount += 1;
-      const handle = existing.handle;
-      return {
-        release: () => dropResourceRef(uri),
-        ready: async () => handle,
-      };
+      existing.refCount += 1;
+      return { ref: idempotentRef(existing), entry: existing };
     }
     if (existing !== undefined && existing.inFlight !== undefined) {
       // Shared in-flight decode.
-      entry = existing;
-      entry.refCount += 1;
-      const shared = existing.inFlight;
-      return {
-        release: () => dropResourceRef(uri),
-        ready: async () => shared,
-      };
+      existing.refCount += 1;
+      return { ref: idempotentRef(existing), entry: existing };
     }
     // Cache miss: this waiter starts the decode.
-    entry = {
+    const entry: ResourceEntry = {
       uri,
       handle: undefined,
       inFlight: undefined,
-      logicalKeys: new Set(),
       refCount: 1,
     };
     resources.set(uri, entry);
     const promise = (async () => {
       const handle = await pipelines.decode(uri);
       // A late completion must never resurrect a disposed store or an entry
-      // whose last waiter aborted while the decode was in flight.
+      // whose last waiter aborted while the decode was in flight. Identity
+      // matters here too: the mapping may now hold a successor entry.
       if (disposed || entry.refCount <= 0) {
         handle.dispose();
-        if (entry.refCount <= 0) {
+        if (entry.refCount <= 0 && resources.get(uri) === entry) {
           resources.delete(uri);
         }
         throw new AssetStoreError('ASSET_ABORTED', [], 'asset acquisition aborted');
@@ -244,36 +247,63 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       return handle;
     })();
     entry.inFlight = promise;
-    void promise.then(
-      () => {
+    const cleanup = (): void => {
+      if (entry.inFlight === promise) {
         entry.inFlight = undefined;
-      },
-      () => {
-        entry.inFlight = undefined;
-      },
-    );
+      }
+    };
+    promise.then(cleanup, cleanup);
+    const ref = idempotentRef(entry);
+    return { ref, entry };
+  }
+
+  /** One release closure bound to its entry; safe to call repeatedly. */
+  function idempotentRef(entry: ResourceEntry): ResourceRef {
+    let released = false;
+    const ready = async (): Promise<NativeImageHandle> => {
+      if (entry.handle !== undefined) {
+        return entry.handle;
+      }
+      const inFlight = entry.inFlight;
+      if (inFlight === undefined) {
+        throw new AssetStoreError(
+          'ASSET_DECODE_FAILED',
+          [],
+          `resource ${JSON.stringify(entry.uri)} has no decoded handle`,
+        );
+      }
+      return inFlight;
+    };
     return {
-      release: () => dropResourceRef(uri),
-      ready: async () => promise,
+      release: () => {
+        if (released) {
+          return;
+        }
+        released = true;
+        dropResourceRef(entry);
+      },
+      ready,
     };
   }
 
+  /**
+   * Acquire one logical asset (GS-ASSET-01). This stage owns its reference
+   * until successful validation transfers it to the attempt: on any
+   * failure the stage releases exactly once and the token never enters
+   * `attempt.acquired`, so attempt cleanup can never release it again.
+   * Returns the exact entry backing this asset for the lease table.
+   */
   async function acquireOne(
     asset: LogicalAsset,
     attempt: Attempt,
     signal: AbortSignal | undefined,
-  ): Promise<void> {
+  ): Promise<ResourceEntry> {
     const uri = await raceWithAbort(pipelines.resolve(asset.descriptor.source), signal);
     // RF5: the reference token exists before any cancellable await; abort
     // can never leave a positive reference behind.
-    const ref = beginResourceRef(uri);
+    const { ref, entry } = beginResourceRef(uri);
     try {
       const handle = await raceWithAbort(ref.ready(), signal);
-      attempt.acquired.push(ref);
-      const entry = resources.get(uri);
-      if (entry !== undefined) {
-        entry.logicalKeys.add(asset.key);
-      }
       if (asset.descriptor.kind === 'sprite-sheet') {
         validateFrames(
           [asset.group, asset.name, 'frames'],
@@ -282,9 +312,11 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
           handle.height(),
         );
       }
+      // Transfer ownership to the attempt only after validation succeeds.
+      attempt.acquired.push(ref);
+      return entry;
     } catch (error) {
-      // Every failure, abort, and stale completion releases this waiter's
-      // reference exactly once; surviving owners keep theirs.
+      // The single owner releases exactly once; surviving owners keep theirs.
       ref.release();
       throw error;
     }
@@ -321,21 +353,22 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       return createLease(new Map(), () => undefined);
     }
 
-    const token = nextAttemptToken;
-    nextAttemptToken += 1;
-    const attempt: Attempt = { token, acquired: [] };
+    const attempt: Attempt = { acquired: [] };
 
-    const loaded = new Map<string, string>();
+    const loaded = new Map<string, { readonly asset: LogicalAsset; readonly entry: ResourceEntry }>();
     try {
       let completed = 0;
       const total = requested.length;
       for (const asset of requested) {
         throwIfAborted();
-        await acquireOne(asset, attempt, signal);
-        loaded.set(asset.key, asset.key);
+        const entry = await acquireOne(asset, attempt, signal);
+        loaded.set(asset.key, { asset, entry });
         completed += 1;
         options.onProgress?.(completed / total);
       }
+      // GS-ASSET-02: an abort racing the final step must surface instead of
+      // publishing a lease for a cancelled request.
+      throwIfAborted();
       return createLease(loaded, () => {
         for (const ref of attempt.acquired) {
           ref.release();
@@ -351,17 +384,51 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     }
   };
 
+  /**
+   * Build one validated loaded value from the exact entry that backed the
+   * acquisition (GS-ASSET-04). The handle is always present: `ready()` only
+   * resolves after the entry's handle is set.
+   */
+  function loadedValueFor(asset: LogicalAsset, entry: ResourceEntry): LoadedImage | LoadedSpriteSheet {
+    const handle = entry.handle;
+    if (handle === undefined) {
+      // Defensive: reachable only if the store's own accounting is broken.
+      // Fail clearly rather than publishing an imageless loaded value.
+      throw new AssetStoreError(
+        'ASSET_DECODE_FAILED',
+        [asset.group, asset.name],
+        `resource ${JSON.stringify(entry.uri)} resolved without a decoded handle`,
+      );
+    }
+    if (asset.descriptor.kind === 'image') {
+      return {
+        descriptor: asset.descriptor,
+        width: handle.width(),
+        height: handle.height(),
+        image: handle,
+      };
+    }
+    return {
+      descriptor: asset.descriptor,
+      frames: asset.descriptor.frames,
+      width: handle.width(),
+      height: handle.height(),
+      image: handle,
+    };
+  }
+
   function createLease(
-    loadedKeys: ReadonlyMap<string, string>,
+    loaded: ReadonlyMap<string, { readonly asset: LogicalAsset; readonly entry: ResourceEntry }>,
     onDispose: () => void,
   ): GameAssetLease<TManifest> {
     let leaseDisposed = false;
-    const loaded = new Map<string, LogicalAsset>();
-    for (const key of loadedKeys.keys()) {
-      const asset = byKey.get(key);
-      if (asset !== undefined) {
-        loaded.set(key, asset);
-      }
+    // GS-ASSET-04: the lease holds a direct descriptor→validated value
+    // table built once from the captured entries. Lookup is a single map
+    // hit: no per-get scans of loaded descriptors or resource key sets,
+    // and no wrapper allocated per call.
+    const table = new Map<ImageDescriptor | SpriteSheetDescriptor, LoadedImage | LoadedSpriteSheet>();
+    for (const { asset, entry } of loaded.values()) {
+      table.set(asset.descriptor, loadedValueFor(asset, entry));
     }
     const assets: LoadedAssets<TManifest> = {
       manifest,
@@ -372,8 +439,8 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
         if (leaseDisposed) {
           throw new AssetStoreError('ASSET_STORE_DISPOSED', [], 'lease is disposed');
         }
-        const entry = findLoadedFor(descriptor, loaded);
-        if (entry === undefined) {
+        const value = table.get(descriptor as ImageDescriptor | SpriteSheetDescriptor);
+        if (value === undefined) {
           // R9: v1 lookup is descriptor-reference membership — the exact
           // descriptor object the manifest declared — not a nominal manifest
           // identity. Identically shaped manifests share the structural type,
@@ -385,7 +452,7 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
             'descriptor is not a reference declared by this manifest and group selection',
           );
         }
-        return entry as TDescriptor extends { readonly kind: 'sprite-sheet' }
+        return value as TDescriptor extends { readonly kind: 'sprite-sheet' }
           ? LoadedSpriteSheet
           : LoadedImage;
       },
@@ -400,40 +467,6 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
         onDispose();
       },
     };
-  }
-
-  function findLoadedFor(
-    descriptor: ImageDescriptor | SpriteSheetDescriptor,
-    loaded: ReadonlyMap<string, LogicalAsset>,
-  ): unknown {
-    for (const asset of loaded.values()) {
-      if (asset.descriptor === descriptor) {
-        const entry = entryFor(asset.key);
-        const handle = entry?.handle;
-        const width = handle?.width() ?? 0;
-        const height = handle?.height() ?? 0;
-        if (asset.descriptor.kind === 'image') {
-          return { descriptor: asset.descriptor, width, height, image: handle };
-        }
-        return {
-          descriptor: asset.descriptor,
-          frames: asset.descriptor.frames,
-          width,
-          height,
-          image: handle,
-        };
-      }
-    }
-    return undefined;
-  }
-
-  function entryFor(logicalKey: string): ResourceEntry | undefined {
-    for (const entry of resources.values()) {
-      if (entry.logicalKeys.has(logicalKey)) {
-        return entry;
-      }
-    }
-    return undefined;
   }
 
   return {

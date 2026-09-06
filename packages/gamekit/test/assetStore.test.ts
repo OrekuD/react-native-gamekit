@@ -437,3 +437,169 @@ describe('asset store ownership (T7.4)', () => {
     store.dispose();
   });
 });
+
+describe('GS-ASSET-01 reference token ownership', () => {
+  it('a failed sheet sharing a URI never disposes a live good lease', async () => {
+    const shared = defineAssets({
+      boot: { good: image(11) },
+      gameplay: {
+        bad: spriteSheet(11, {
+          frames: { oob: { x: 1000, y: 0, width: 32, height: 32 } },
+          animations: { idle: { frames: ['oob'], frameDurationMs: 140, mode: 'loop' } },
+        }),
+      },
+    });
+    const fakes = fakePipelines();
+    const store = createGameAssetStoreCore(shared, fakes.pipelines);
+
+    const goodLease = await store.acquire({ groups: ['boot'] });
+    assert.equal(goodLease.assets.get(shared.boot.good).width, 64);
+
+    await assert.rejects(
+      store.acquire({ groups: ['gameplay'] }),
+      /ASSET_FRAME_OUT_OF_BOUNDS/,
+      'the invalid sheet fails acquisition',
+    );
+    assert.equal(
+      fakes.disposedHandles.length,
+      0,
+      'the failed attempt releases exactly once and keeps the live lease',
+    );
+    assert.equal(goodLease.assets.get(shared.boot.good).width, 64, 'the good lease still resolves');
+
+    goodLease.dispose();
+    assert.equal(fakes.disposedHandles.length, 1, 'one native disposal after the last owner releases');
+    store.dispose();
+  });
+
+  it('a single acquire with a bad sheet releases every reference exactly once', async () => {
+    const shared = defineAssets({
+      boot: { good: image(12) },
+      gameplay: {
+        bad: spriteSheet(12, {
+          frames: { oob: { x: 1000, y: 0, width: 32, height: 32 } },
+          animations: { idle: { frames: ['oob'], frameDurationMs: 140, mode: 'loop' } },
+        }),
+      },
+    });
+    const fakes = fakePipelines();
+    const store = createGameAssetStoreCore(shared, fakes.pipelines);
+
+    await assert.rejects(store.acquire({ groups: ['boot', 'gameplay'] }), /ASSET_FRAME_OUT_OF_BOUNDS/);
+    assert.equal(fakes.disposedHandles.length, 1, 'the shared decode disposes exactly once');
+    // A later acquire still works: no negative refcount corrupted the cache.
+    const retry = await store.acquire({ groups: ['boot'] });
+    assert.equal(retry.assets.get(shared.boot.good).width, 64);
+    retry.dispose();
+    store.dispose();
+  });
+});
+
+describe('GS-ASSET-02 late completion never touches a successor entry', () => {
+  /** Release the gated decode at `index`, waiting for it to exist. */
+  async function releaseGateAt(gate: Array<() => void>, index: number): Promise<void> {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (gate.length > index) {
+        const [release] = gate.splice(index, 1);
+        release?.();
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`gated decode ${index} never started`);
+  }
+
+  it('A-before-B: an aborted decode resolving late keeps the successor lease complete', async () => {
+    const fakes = fakePipelines({ gated: true });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+
+    const controllerA = new AbortController();
+    const pendingA = store.acquire({ groups: ['boot'], signal: controllerA.signal });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controllerA.abort();
+    await assert.rejects(() => pendingA, /ASSET_ABORTED/);
+
+    const pendingB = store.acquire({ groups: ['boot'] });
+    // Gate order is A's logo, then B's logo: A resolves late, before B.
+    // A must dispose only its own handle and leave B's entry alone.
+    await releaseGateAt(fakes.decodeGate, 0);
+    await releaseGateAt(fakes.decodeGate, 0);
+    await releaseGateAt(fakes.decodeGate, 0);
+    const leaseB = await pendingB;
+    assert.equal(leaseB.assets.get(manifest.boot.logo).width, 64, 'successor lease is complete');
+    assert.equal(
+      leaseB.assets.get(manifest.boot.icon).width,
+      64,
+      'every asset of the successor lease resolves',
+    );
+    leaseB.dispose();
+    store.dispose();
+  });
+
+  it('B-before-A: the successor wins even when the predecessor resolves last', async () => {
+    const fakes = fakePipelines({ gated: true });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+
+    const controllerA = new AbortController();
+    const pendingA = store.acquire({ groups: ['boot'], signal: controllerA.signal });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controllerA.abort();
+    await assert.rejects(() => pendingA, /ASSET_ABORTED/);
+
+    const pendingB = store.acquire({ groups: ['boot'] });
+    // Hold A's logo decode back while B's logo (index 1) and icon resolve.
+    await releaseGateAt(fakes.decodeGate, 1);
+    await releaseGateAt(fakes.decodeGate, 1);
+    const leaseB = await pendingB;
+    assert.equal(leaseB.assets.get(manifest.boot.logo).width, 64);
+    // Now the predecessor resolves last: it must not disturb the live lease.
+    await releaseGateAt(fakes.decodeGate, 0);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(leaseB.assets.get(manifest.boot.logo).width, 64, 'late predecessor is harmless');
+    leaseB.dispose();
+    store.dispose();
+  });
+
+  it('abort during a shared decode keeps the surviving waiter working', async () => {
+    const fakes = fakePipelines({ gated: true });
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+
+    const controllerA = new AbortController();
+    const pendingA = store.acquire({ groups: ['boot'], signal: controllerA.signal });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // B joins the same in-flight decode before A aborts.
+    const pendingB = store.acquire({ groups: ['boot'] });
+    controllerA.abort();
+    await assert.rejects(() => pendingA, /ASSET_ABORTED/);
+    // The shared logo decode, then B's own icon decode (A never reached it).
+    await releaseGateAt(fakes.decodeGate, 0);
+    await releaseGateAt(fakes.decodeGate, 0);
+    const leaseB = await pendingB;
+    assert.equal(leaseB.assets.get(manifest.boot.logo).width, 64, 'shared decode survives');
+    assert.equal(fakes.decodeCounts.get('file:///assets/1.png'), 1, 'decoded exactly once');
+    leaseB.dispose();
+    store.dispose();
+  });
+
+  it('an abort racing the final acquire step publishes no lease', async () => {
+    const fakes = fakePipelines();
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    const controller = new AbortController();
+    await assert.rejects(
+      store.acquire({
+        groups: ['boot'],
+        signal: controller.signal,
+        // Abort only after the final asset completes: the only check that
+        // can still refuse publication is the one before createLease.
+        onProgress: (progress) => {
+          if (progress === 1) {
+            controller.abort();
+          }
+        },
+      }),
+      /ASSET_ABORTED/,
+      'abort before publication surfaces instead of a lease',
+    );
+    store.dispose();
+  });
+});
