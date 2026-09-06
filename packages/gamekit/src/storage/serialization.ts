@@ -75,11 +75,12 @@ export function cloneAndValidatePlainData(value: unknown, basePath = 'payload'):
     if (ancestry.has(obj)) fail(path, 'cycle detected in payload');
     ancestry.add(obj);
     try {
-      const thenDesc = Object.getOwnPropertyDescriptor(obj as Record<string, unknown>, 'then' as unknown as string);
-      const thenValue = thenDesc ? thenDesc.value : (obj as Record<string, unknown>).then;
-      if (typeof thenValue === 'function') {
-        const isThenable = obj instanceof Promise || (!Array.isArray(obj) && !isPlainRecord(obj));
-        if (isThenable) fail(path, 'promise/thenable is not a supported storage type');
+      // GS-STORAGE-03 (coordinates GS-EVENT-03): thenables are rejected
+      // without invoking any user code. Only instanceof runs here; every
+      // other non-plain object fails at the array/record branches below.
+      // Own `then` functions are rejected later as function values.
+      if (obj instanceof Promise) {
+        fail(path, 'promise/thenable is not a supported storage type');
       }
       if (isReactElement(obj)) fail(path, 'React element is not a supported storage type');
 
@@ -151,16 +152,45 @@ export function cloneAndValidatePlainData(value: unknown, basePath = 'payload'):
   return result;
 }
 
-function serializedByteLength(str: string): number {
-  // Use Buffer if available (Node), otherwise TextEncoder
-  if (typeof Buffer !== 'undefined' && typeof Buffer.byteLength === 'function') {
-    return Buffer.byteLength(str, 'utf8');
-  }
+/**
+ * Exact UTF-8 byte length (GS-STORAGE-03): the single routine for every
+ * storage size check. TextEncoder is exact everywhere it exists (Node,
+ * browsers, modern Hermes); the scalar fallback below is bit-exact too,
+ * including unpaired surrogates (which encode as U+FFFD, 3 bytes).
+ */
+export function utf8ByteLength(str: string): number {
   if (typeof TextEncoder !== 'undefined') {
     return new TextEncoder().encode(str).length;
   }
-  // Fallback: approximate as UTF-16 length * ~2
-  return str.length * 2;
+  return utf8ByteLengthScalar(str);
+}
+
+/** Bit-exact scalar UTF-8 length for runtimes without TextEncoder. */
+export function utf8ByteLengthScalar(str: string): number {
+  let bytes = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
+      const next = str.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        i++;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+function serializedByteLength(str: string): number {
+  return utf8ByteLength(str);
 }
 
 export function serializeEnvelope(envelope: StoredGameEnvelope): string {

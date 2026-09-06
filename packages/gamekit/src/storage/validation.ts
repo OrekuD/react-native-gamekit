@@ -59,8 +59,12 @@ export function validateMigrations(
   }
   for (const [rawKey, fn] of Object.entries(migrations)) {
     const n = Number(rawKey);
-    if (!Number.isSafeInteger(n) || n < 1 || n >= currentVersion) {
-      throw storageError(`migration key "${rawKey}" must be an integer 1..${currentVersion - 1}`, 'INVALID_MIGRATION', {
+    // GS-STORAGE-03: keys must be canonical — '01' and '1e0' normalize to
+    // 1 but would never be found by the numeric lookup, and two spellings
+    // of one version must not both be accepted (the canonicality check
+    // rejects every non-canonical spelling, so each version appears once).
+    if (!Number.isSafeInteger(n) || n < 1 || n >= currentVersion || String(n) !== rawKey) {
+      throw storageError(`migration key "${rawKey}" must be a canonical integer 1..${currentVersion - 1}`, 'INVALID_MIGRATION', {
         path: `migrations.${rawKey}`,
       });
     }

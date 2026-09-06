@@ -3,14 +3,8 @@ import type { CreateGameSaveStoreOptions, GameSaveLoadResult, GameSaveStore } fr
 import { STORAGE_LIMITS } from './types';
 import { storageKey, legacyStorageKey, validateNamespace, validateSlot } from './validation';
 import { createDefaultData, migratePayload, validateCurrentData } from './schema';
-import { cloneAndValidatePlainData, parseEnvelope, serializeEnvelope, STORAGE_ENVELOPE_FORMAT } from './serialization';
+import { cloneAndValidatePlainData, parseEnvelope, serializeEnvelope, utf8ByteLength, STORAGE_ENVELOPE_FORMAT } from './serialization';
 import type { StoredGameEnvelope } from './types';
-
-function serializedByteLength(str: string): number {
-  if (typeof Buffer !== 'undefined' && typeof Buffer.byteLength === 'function') return Buffer.byteLength(str, 'utf8');
-  if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str).length;
-  return str.length * 2;
-}
 
 export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<TData>): GameSaveStore<TData> {
   const schema = options.schema;
@@ -96,7 +90,7 @@ export function createGameSaveStore<TData>(options: CreateGameSaveStoreOptions<T
     }
 
     // F3: measure raw UTF-8 byte length before JSON.parse and reject oversized records.
-    const rawBytes = serializedByteLength(raw);
+    const rawBytes = utf8ByteLength(raw);
     if (rawBytes > STORAGE_LIMITS.MAX_SERIALIZED_BYTES) {
       throw storageError(`stored record for slot "${slot}" exceeds ${STORAGE_LIMITS.MAX_SERIALIZED_BYTES} bytes (got ${rawBytes})`, 'SIZE_EXCEEDED', {
         operation: 'load',

@@ -980,3 +980,57 @@ describe('GS-STORAGE-01 unambiguous persistent keys', () => {
     store.dispose();
   });
 });
+
+describe('GS-STORAGE-03 validation without widening', () => {
+  it('inherited then getters are never invoked', async () => {
+    const { cloneAndValidatePlainData } = await import('../src/storage/serialization.ts');
+    let invoked = 0;
+    const proto = {
+      get then(): unknown {
+        invoked += 1;
+        throw new Error('getter must never run');
+      },
+    };
+    const payload = Object.create(proto) as Record<string, unknown>;
+    payload.n = 1;
+    assert.throws(() => cloneAndValidatePlainData(payload, 'payload'), GameStorageError);
+    assert.equal(invoked, 0, 'the inherited getter never runs');
+  });
+
+  it('noncanonical and duplicate migration keys are rejected', async () => {
+    const { validateMigrations } = await import('../src/storage/validation.ts');
+    const fn = () => ({});
+    assert.throws(() => validateMigrations({ '01': fn } as never, 3), /migration key "01"/);
+    assert.throws(() => validateMigrations({ '1e0': fn } as never, 3), /migration key "1e0"/);
+    assert.throws(
+      () => validateMigrations({ '1': fn, '01': fn } as never, 3),
+      /canonical integer/,
+    );
+    assert.throws(() => validateMigrations({ '2': fn } as never, 2), /1\.\.1/);
+    // Canonical keys still pass.
+    validateMigrations({ 1: fn, 2: fn } as never, 3);
+  });
+
+  it('one exact byte-length routine across ASCII, BMP, astral, and lone surrogates', async () => {
+    const { utf8ByteLength } = await import('../src/storage/serialization.ts');
+    const cases = [
+      'hello',
+      'héllo wörld',
+      '中文日本語한국어',
+      'emoji 🎮🕹️👾',
+      'mixéd 🎮 text 中',
+      '\ud800lone high',
+      'lone low\udc00',
+      'a'.repeat(1000),
+      '🎮'.repeat(500),
+    ];
+    for (const text of cases) {
+      assert.equal(
+        utf8ByteLength(text),
+        Buffer.byteLength(text, 'utf8'),
+        `exact for ${JSON.stringify(text.slice(0, 12))}`,
+      );
+    }
+    assert.equal(utf8ByteLength(''), 0);
+  });
+});
