@@ -133,6 +133,7 @@
     "bench:deepfreeze": "node --import tsx bench/deepFreeze.bench.ts",
     "bench:spatialhash": "node --import tsx bench/spatialHash.bench.ts",
     "bench:tilequeries": "node --import tsx bench/tileQueries.bench.ts",
+    "bench:particles": "node --import tsx bench/particles.bench.ts",
     "test:coverage:gate": "node scripts/coverage-gate.mjs",
     "typecheck:assets": "tsc -p tsconfig.assets.json"
   },

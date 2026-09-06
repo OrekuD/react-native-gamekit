@@ -70,7 +70,6 @@ interface MutableSlot {
   rotationSpeed: number;
   scaleStart: number;
   scaleEnd: number;
-  opacity: number;
   color: string;
   spawnSequence: number;
 }
@@ -129,7 +128,6 @@ export function createParticleSystem<
         rotationSpeed: 0,
         scaleStart: 1,
         scaleEnd: 1,
-        opacity: 0,
         color: '#ffffff',
         spawnSequence: -1,
       })),
@@ -219,7 +217,6 @@ export function createParticleSystem<
       slot.rotationSpeed = sampled.rotationSpeed;
       slot.scaleStart = sampled.scaleStart;
       slot.scaleEnd = sampled.scaleEnd;
-      slot.opacity = sampled.opacity;
       slot.color = sampled.color;
       slot.spawnSequence = sampled.spawnSequence;
       const log = emissionsLog.get(effect)!;
@@ -262,7 +259,6 @@ export function createParticleSystem<
     }
     activeClock += deltaSeconds;
     for (const [name, pool] of pools) {
-      const def = definitions.get(name)!;
       let active = 0;
       for (const slot of pool) {
         if (!slot.active) continue;
@@ -271,12 +267,9 @@ export function createParticleSystem<
           // T15-TF1: expiry IS a registry membership change — bump so the
           // pruned registry ships before the driver sleeps.
           slot.active = false;
-          slot.opacity = 0;
           registryRevision++;
           continue;
         }
-          const sampled = sampleSlotAtAge(ageView(slot), def, slot.age);
-        slot.opacity = sampled.opacity;
         active++;
       }
       const d = diagnostics.get(name)!;
@@ -440,7 +433,6 @@ export function createParticleSystem<
         for (const slot of pool) {
           slot.active = false;
           slot.age = 0;
-          slot.opacity = 0;
           slot.spawnSequence = -1;
         }
       }
