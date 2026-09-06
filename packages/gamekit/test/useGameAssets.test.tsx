@@ -379,3 +379,37 @@ describe('GS-ASSET-03 request identity and hook ordering', () => {
     });
   });
 });
+
+describe('GS-ASSET-03 acceptance: StrictMode mount', () => {
+  it('StrictMode mounts ready and releases everything on unmount', async () => {
+    const { StrictMode } = await import('react');
+    const created: TestStore[] = [];
+    const storeFactory = (): TestStore => {
+      const store = fakeStore();
+      created.push(store);
+      return store;
+    };
+    const states: unknown[] = [];
+    let renderer: ReactTestRenderer | undefined;
+    await act(async () => {
+      renderer = create(
+        <StrictMode>
+          <Probe groups={['boot']} storeFactory={storeFactory} onState={(s) => states.push(s)} />
+        </StrictMode>,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+    assert.equal(
+      (states.at(-1) as { status: string }).status,
+      'ready',
+      'StrictMode double-effects still settle ready',
+    );
+    await act(async () => {
+      renderer?.unmount();
+    });
+    assert.ok(created.length >= 1, 'at least one store served the mount');
+    for (const store of created) {
+      assert.ok(store.disposedCount >= 1, 'every created store is disposed on unmount');
+    }
+  });
+});

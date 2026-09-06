@@ -603,3 +603,26 @@ describe('GS-ASSET-02 late completion never touches a successor entry', () => {
     store.dispose();
   });
 });
+
+describe('GS-ASSET-01 acceptance: progress and cleanup edges', () => {
+  it('an onProgress throw fails the acquire without leaking references', async () => {
+    const fakes = fakePipelines();
+    const store = createGameAssetStoreCore(manifest, fakes.pipelines);
+    await assert.rejects(
+      store.acquire({
+        groups: ['boot'],
+        onProgress: () => {
+          throw new Error('progress observer blew up');
+        },
+      }),
+      /progress observer blew up/,
+    );
+    // Every reference the failed attempt held is released exactly once:
+    // the shared decode disposed once and a later acquire starts clean.
+    assert.equal(fakes.disposedHandles.length, 1, 'one native disposal for the failed attempt');
+    const retry = await store.acquire({ groups: ['boot'] });
+    assert.equal(retry.assets.get(manifest.boot.logo).width, 64);
+    retry.dispose();
+    store.dispose();
+  });
+});
