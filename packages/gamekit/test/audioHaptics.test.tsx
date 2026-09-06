@@ -1859,3 +1859,63 @@ describe('GS-HAPTICS-02 public capability API', () => {
     __setPulsarLoader(null);
   });
 });
+
+describe('GS-HAPTICS-03 deterministic throttle', () => {
+  async function makeHaptics(now: () => number, presetImpl?: () => void) {
+    const { __setPulsarLoader } = await import('../src/haptics/resolver.ts');
+    const { createGameHaptics } = await import('../src/haptics/createGameHaptics.ts');
+    __setPulsarLoader(
+      () =>
+        ({
+          Presets: { System: { impactMedium: presetImpl ?? (() => {}), selection: () => {} } },
+          Settings: { getHapticsSupportLevel: () => 2 },
+          HapticSupport: { NO_SUPPORT: 0, LIMITED_SUPPORT: 1, STANDARD_SUPPORT: 2, ADVANCED_SUPPORT: 3 },
+        }) as never,
+    );
+    const haptics = createGameHaptics({ now });
+    return {
+      haptics,
+      done: () => {
+        haptics.dispose();
+        return __setPulsarLoader(null);
+      },
+    };
+  }
+
+  it('first request, exact boundary, and rollback follow the policy', async () => {
+    let now = 0;
+    const { haptics, done } = await makeHaptics(() => now);
+    assert.equal(haptics.play('impact').played, true, 'first request at t=0 plays');
+    now = 50;
+    assert.equal(haptics.play('impact').reason, 'throttled', 'within 100ms throttles');
+    now = 100;
+    assert.equal(haptics.play('impact').played, true, 'exact boundary plays');
+    now = 1000;
+    assert.equal(haptics.play('impact').played, true);
+    now = 50;
+    assert.equal(haptics.play('impact').played, true, 'clock rollback never suppresses');
+    await done();
+  });
+
+  it('failed dispatch does not consume the throttle budget', async () => {
+    let now = 0;
+    let fail = true;
+    const { haptics, done } = await makeHaptics(() => now, () => {
+      if (fail) throw new Error('native boom');
+    });
+    assert.equal(haptics.play('impact').reason, 'error');
+    fail = false;
+    now = 50;
+    assert.equal(haptics.play('impact').played, true, 'the failed attempt left budget intact');
+    await done();
+  });
+
+  it('competing presets share one global budget', async () => {
+    let now = 0;
+    const { haptics, done } = await makeHaptics(() => now);
+    assert.equal(haptics.play('impact').played, true);
+    now = 50;
+    assert.equal(haptics.play('selection').reason, 'throttled', 'a selection pulse consumes the shared interval');
+    await done();
+  });
+});

@@ -40,4 +40,9 @@ export interface GameHaptics {
 
 export interface CreateGameHapticsOptions {
   readonly muted?: boolean;
+  /**
+   * Monotonic clock for the throttle budget (GS-HAPTICS-03). Defaults to
+   * `Date.now`; inject a controlled clock for deterministic tests.
+   */
+  readonly now?: () => number;
 }

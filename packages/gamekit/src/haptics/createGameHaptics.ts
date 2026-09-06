@@ -86,7 +86,13 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
   let manualPaused = false;
   let lifecyclePaused = false;
   let backgrounded = false;
-  let lastPlayAt = 0;
+  // GS-HAPTICS-03: monotonic clock at the adapter seam (injectable for
+  // deterministic tests; defaults to wall time). The throttle is one
+  // GLOBAL 100ms budget shared by every preset: a selection pulse
+  // consumes the interval for a following success effect. Only successful
+  // dispatches consume budget — failures and rollbacks never suppress.
+  const now = options?.now ?? Date.now;
+  let lastPlayAt = Number.NEGATIVE_INFINITY;
   // T20L-R3: exactly one active lifecycle source per haptics instance. The
   // active detach is retained so replacement swaps sources, repeated detach
   // is idempotent, and disposal detaches before everything else.
@@ -125,11 +131,12 @@ export function createGameHaptics(options?: CreateGameHapticsOptions): GameHapti
         (Presets.System as Record<string, unknown>)[systemName] ??
         (Presets as Record<string, unknown>)[preset];
       if (typeof fn !== 'function') return { played: false, reason: 'unsupported' };
-      const now = Date.now();
-      if (now - lastPlayAt < MIN_INTERVAL_MS) return { played: false, reason: 'throttled' };
-      lastPlayAt = now;
+      const at = now();
+      const elapsed = at - lastPlayAt;
+      if (elapsed >= 0 && elapsed < MIN_INTERVAL_MS) return { played: false, reason: 'throttled' };
       try {
         (fn as () => void)();
+        lastPlayAt = at;
         // played means request dispatched, not confirmed physical playback — system may suppress
         return { played: true };
       } catch {
