@@ -61,8 +61,13 @@ export function cellsInAabb(
   const out: TileCell2D[] = [];
   const minCx = Math.floor((aabb.x - map.origin.x) / map.cellSize.width);
   const minCy = Math.floor((aabb.y - map.origin.y) / map.cellSize.height);
-  const maxCx = Math.floor((aabb.x + aabb.width - map.origin.x - 1e-9) / map.cellSize.width);
-  const maxCy = Math.floor((aabb.y + aabb.height - map.origin.y - 1e-9) / map.cellSize.height);
+  // GS-TILE-05: half-open tile areas, exact arithmetic — no shared epsilon.
+  // The maximum corner selects ceil(max/cell) - 1, so exact boundaries
+  // exclude the next cell and tiny positive extents still select their
+  // own. A zero/negative extent is a point query for the cell containing
+  // the minimum corner (documented divergence from inclusive contact).
+  const maxCx = maxCellIndex(aabb.x, aabb.width, map.origin.x, map.cellSize.width);
+  const maxCy = maxCellIndex(aabb.y, aabb.height, map.origin.y, map.cellSize.height);
   for (const layer of map.layers) {
     if (layerIds !== undefined && !layerIds.includes(layer.id)) continue;
     const span = clampSpan(layer, minCx, minCy, maxCx, maxCy);
@@ -70,6 +75,18 @@ export function cellsInAabb(
     collectSpan(map, layer.id, span, out);
   }
   return Object.freeze(out);
+}
+
+/**
+ * Last cell index covered by the half-open span [min, min + extent).
+ * Exact boundaries exclude the next cell; zero/negative extents fall back
+ * to the cell containing the minimum corner (point-query semantics).
+ */
+function maxCellIndex(min: number, extent: number, origin: number, cell: number): number {
+  if (!(min + extent > min)) {
+    return Math.floor((min - origin) / cell);
+  }
+  return Math.ceil((min + extent - origin) / cell) - 1;
 }
 
 /**

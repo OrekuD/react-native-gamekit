@@ -467,3 +467,75 @@ describe('T16.5 narrow Tiled adapter', () => {
     );
   });
 });
+
+describe('GS-TILE-05 exact query edge semantics', () => {
+  function exactMap(origin = { x: 0, y: 0 }): TileMap2D {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    return defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      origin,
+      tileset,
+      layers: [{ id: 't', width: 4, height: 4, data: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1] }],
+    });
+  }
+
+  function cellsOf(map: TileMap2D, aabb: { x: number; y: number; width: number; height: number }): string {
+    return cellsInAabb(map, aabb, ['t'])
+      .map((c) => `${c.cell.x},${c.cell.y}`)
+      .join(' ');
+  }
+
+  it('exact boundaries select half-open cells without epsilon', () => {
+    const map = exactMap();
+    assert.equal(cellsOf(map, { x: 0, y: 0, width: 32, height: 16 }), '0,0 1,0');
+    assert.equal(cellsOf(map, { x: 16, y: 0, width: 16, height: 16 }), '1,0', 'starts exactly on a boundary');
+    assert.equal(cellsOf(map, { x: 0, y: 0, width: 32.0001, height: 16 }), '0,0 1,0 2,0', 'overshoot reaches the next cell');
+  });
+
+  it('tiny positive extents still select their cell', () => {
+    const map = exactMap();
+    assert.equal(cellsOf(map, { x: 0, y: 0, width: 1e-12, height: 1e-12 }), '0,0');
+    assert.equal(cellsOf(map, { x: 20, y: 20, width: 1e-9, height: 1e-9 }), '1,1');
+  });
+
+  it('zero-size queries use point semantics', () => {
+    const map = exactMap();
+    assert.equal(cellsOf(map, { x: 5, y: 5, width: 0, height: 0 }), '0,0', 'interior point selects its cell');
+    assert.equal(cellsOf(map, { x: 16, y: 0, width: 0, height: 0 }), '1,0', 'boundary point selects the cell it opens');
+  });
+
+  it('negative origins and large coordinates stay exact', () => {
+    const map = exactMap({ x: -16, y: -16 });
+    assert.equal(cellsOf(map, { x: 0, y: 0, width: 16, height: 16 }), '1,1');
+    const big = exactMap();
+    assert.equal(cellsOf(big, { x: 1e6, y: 0, width: 32, height: 16 }), '', 'outside the finite map stays empty');
+  });
+
+  it('endpoint movement touches exactly abutting walls', () => {
+    const tileset = defineTileSet2D({ tiles: { solid: { frame: 's', collision: 'solid' } } });
+    const wall = defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset,
+      layers: [{ id: 't', width: 3, height: 1, data: [0, 1, 0] }],
+    });
+    // Body edge exactly abuts the wall's left face; moving in reports contact.
+    const into = movePlatformerBody2D({
+      body: { x: 0, y: 0, width: 16, height: 16 },
+      velocity: { x: 500, y: 0 },
+      deltaSeconds: 0.016,
+      map: wall,
+      collisionLayers: ['t'],
+    });
+    assert.equal(into.contacts.rightWall?.normal.x, -1, 'abutting motion into the wall contacts');
+    assert.equal(into.body.x, 0, 'the body stops at the abutting plane');
+    // Moving away from the same abutment reports nothing.
+    const away = movePlatformerBody2D({
+      body: { x: 0, y: 0, width: 16, height: 16 },
+      velocity: { x: -500, y: 0 },
+      deltaSeconds: 0.016,
+      map: wall,
+      collisionLayers: ['t'],
+    });
+    assert.equal(away.contacts.all.length, 0, 'leaving the abutment is contact-free');
+  });
+});
