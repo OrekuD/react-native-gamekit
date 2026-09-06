@@ -36,8 +36,8 @@ export function image(source: number): ImageDescriptor {
  * references are restricted to the declared frames.
  */
 export function spriteSheet<
-  TFrames extends Record<string, SpriteFrameRect>,
-  TClips extends Record<string, SpriteClip<Extract<keyof TFrames, string>>>,
+  const TFrames extends Record<string, SpriteFrameRect>,
+  const TClips extends Record<string, SpriteClip<Extract<keyof TFrames, string>>>,
 >(
   source: number,
   spec: {

@@ -8,6 +8,7 @@ export {
   sampleSpriteClipFrame,
   sampleSpriteClipFrameName,
   spriteClipDurationMs,
+  spriteFrameNameForClip,
 } from './sprites/sampleSpriteClip';
 export {
   advanceSpriteAnimation,

@@ -8,7 +8,7 @@ Sources: [definitions](../../packages/gamekit/src/tilemap/definitions.ts), [quer
 
 ## GS-TILE-01 — P1: tile-window identity does not include its map/layer/source generation
 
-**Evidence: source-confirmed.** `windowSV` survives prop changes. `windowCovers` only compares cell coordinates, so changing the map/layer/source to one with the same dimensions can reuse the old IDs and old `frameFlat` indefinitely. Queued `requestWindow` callbacks capture an old map but write the same shared window without a generation check. The worklet also accesses `layerData.width/height`, capturing an object that includes the full layer data despite comments promising a bounded transfer.
+**Evidence: source-confirmed identity gap; capture size needs transformed-code verification.** `windowSV` survives prop changes. `windowCovers` only compares cell coordinates, so changing the map/layer/source to one with the same dimensions can reuse the old IDs and old `frameFlat` indefinitely. Queued `requestWindow` callbacks capture an old map but write the same shared window without a generation check. The worklet also accesses `layerData.width/height` from an object containing the full layer data. This is a capture-size risk despite comments promising a bounded transfer; source spelling alone does not prove which fields the Worklets transform captures.
 
 **Resolve:** give the presentation binding an identity derived from map, layer, frame table/source, and capacity-affecting configuration. Reset/hard-cut the window on identity changes and reject old requests before publishing. Extract width/height scalars before creating worklets; inspect the transformed closure to prove the full layer is absent. Keep one pending request per binding and clear it on failures/disposal.
 

@@ -6,19 +6,13 @@ This repository installs React Native Gesture Handler **3.1.0** (upgraded from
 2.32.0 on 2026-08-08). Generate game code with the RNGH 3 hook API and the
 global `GestureStateManager`:
 
-```ts
-import { GestureDetector, useManualGesture } from 'react-native-gesture-handler';
-
-const gesture = useManualGesture({
-  onTouchesDown: () => {
-    'worklet';
-    GestureStateManager.activate();
-    for (const touch of event.changedTouches) {
-      runOnJS(beginOnJS)(touch.id, touch.x, touch.y);
-    }
-  },
-});
-```
+Check the installed `src/v3/gestureStateManager.ts` and GameKit's
+`GamePointerInput.tsx` for exact signatures. The global state manager takes
+the event's `handlerTag`; `activate(event.handlerTag)` and
+`deactivate(event.handlerTag)` are different from legacy per-handler
+manager methods. Forward compact packets with the installed Worklets
+`scheduleOnRN` API. A touch-down snippet without ownership, containment,
+up/cancel/finalize, and invalidation is not a complete game input adapter.
 
 RNGH 2 builder code (`Gesture.Pan().onUpdate(...)`, `Gesture.Manual()`,
 `stateManager` arguments) is legacy in 3.x; its types are exported with a
@@ -59,8 +53,9 @@ Each receives a `GestureTouchEvent` with `changedTouches`, `allTouches`, and
 `numberOfTouches`. Track touches by `touch.id` — array order is not stable.
 
 **State management changed:** `stateManager` is no longer passed to touch
-callbacks. Use the global `GestureStateManager` (`activate()`, `end()`,
-`fail()`, `cancel()`) instead.
+callbacks. Use the global `GestureStateManager` methods with the handler tag
+(`activate(tag)`, `deactivate(tag)`, `fail(tag)` in the installed
+3.1.0 source); do not copy the legacy `end()`/`cancel()` signatures.
 
 ## Worklet execution
 
@@ -117,7 +112,12 @@ automatically fail when all pointers lift; drive its state explicitly with the
 global `GestureStateManager` and always clean up cancel/up paths.
 
 GameKit's `GamePointerInput` pattern (manual gesture, activate on touch-down,
-`runOnJS` forwarding, explicit end on last lift) is the canonical example.
+coalesced `scheduleOnRN` packets, explicit deactivation on last lift) is a
+reference implementation to inspect, not proof that every failure path is
+correct. Test pending pointer end/cancel before a simulation sample, pause
+with queued packets, and replacement while RN delivery is delayed. Button
+pads need the same ownership guarantees, including zone removal and rects
+measured in the pad's coordinate space.
 `ForceTouch` is not available in the hook API.
 
 ## Navigation conflict policy
@@ -171,7 +171,7 @@ or platform semantics require individual elements.
 ## Input performance checklist
 
 - one or a small number of surface detectors
-- no RN-runtime crossing for every move
+- compact, rate-bounded move crossings; immediate ordered down/up/cancel edges
 - no object-graph capture in worklets
 - no logs in move/update callbacks
 - pointer samples coalesced only when semantics permit

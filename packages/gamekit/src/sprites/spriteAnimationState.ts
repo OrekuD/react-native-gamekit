@@ -8,6 +8,13 @@
  * elapsed game time always select the same presented frame (see
  * `sampleSpriteClip`).
  *
+ * Simulation-only execution (GS-ANIMATION-02): these state transitions run
+ * on fixed-step game time in the simulation, never on the UI runtime, so
+ * they carry no worklet directive — a directive here would promise UI
+ * execution the error branches (structured error classes) cannot keep.
+ * The UI-reachable frame-selection helpers live in `sampleSpriteClip` and
+ * `react/sprites/spriteSelection` with a UI-safe call graph.
+ *
  * Separation of concerns: gameplay-significant animation state lives in the
  * scene snapshot and advances from fixed-step game time; a renderer-only
  * loop may interpolate presentation from the latest committed state plus
@@ -33,14 +40,12 @@ export interface SpriteAnimationState<TClipName extends string = string> {
 }
 
 function assertFinitePositiveSpeed(speed: number): void {
-  'worklet';
   if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) {
     throw new Error('sprite animation speed must be a finite number greater than zero');
   }
 }
 
 function assertFiniteDelta(deltaSeconds: number): void {
-  'worklet';
   if (typeof deltaSeconds !== 'number' || !Number.isFinite(deltaSeconds)) {
     throw new Error('sprite animation delta must be a finite number of seconds');
   }
@@ -56,7 +61,6 @@ function clipOf(
   descriptor: SpriteSheetDescriptor,
   clip: string,
 ): SpriteSheetDescriptor['animations'][string] {
-  'worklet';
   const animation = descriptor.animations[clip];
   if (animation === undefined) {
     throw new GameAssetError(
@@ -69,16 +73,14 @@ function clipOf(
 }
 
 /**
- * Start playback of `clip` from its beginning. The clip name is preserved
- * as a string literal in the returned state; unknown clips are rejected at
- * runtime (the manifest descriptor keeps the sheet-level frame and clip
- * names literal via the spriteSheet contract).
+ * Start playback of `clip` from its beginning. The clip name is constrained
+ * to the descriptor's animation keys, so a misspelled clip fails compilation;
+ * untyped callers still hit the runtime check below.
  */
-export function startSpriteAnimation<TClipName extends string>(
-  descriptor: SpriteSheetDescriptor,
-  clip: TClipName,
-): SpriteAnimationState<TClipName> {
-  'worklet';
+export function startSpriteAnimation<TDescriptor extends SpriteSheetDescriptor>(
+  descriptor: TDescriptor,
+  clip: SpriteClipNames<TDescriptor>,
+): SpriteAnimationState<SpriteClipNames<TDescriptor>> {
   clipOf(descriptor, clip);
   return {
     clip,
@@ -96,12 +98,14 @@ export function startSpriteAnimation<TClipName extends string>(
  * clearly. Loop clips keep their elapsed time bounded within one timeline
  * (modulo), so arbitrarily large deltas cost constant arithmetic.
  */
-export function advanceSpriteAnimation<TClipName extends string>(
-  descriptor: SpriteSheetDescriptor,
-  state: SpriteAnimationState<TClipName>,
+export function advanceSpriteAnimation<
+  TDescriptor extends SpriteSheetDescriptor,
+  TClip extends SpriteClipNames<TDescriptor>,
+>(
+  descriptor: TDescriptor,
+  state: SpriteAnimationState<TClip>,
   deltaSeconds: number,
-): SpriteAnimationState<TClipName> {
-  'worklet';
+): SpriteAnimationState<TClip> {
   assertFiniteDelta(deltaSeconds);
   if (state.paused || state.completed) {
     return state;
@@ -124,12 +128,14 @@ export function advanceSpriteAnimation<TClipName extends string>(
  * Switch playback to `clip`, restarting it from the beginning. The clip
  * name is typed against the descriptor's animation table.
  */
-export function playSpriteAnimation<TClipName extends string>(
-  descriptor: SpriteSheetDescriptor,
-  state: SpriteAnimationState<TClipName>,
-  clip: TClipName,
-): SpriteAnimationState<TClipName> {
-  'worklet';
+export function playSpriteAnimation<
+  TDescriptor extends SpriteSheetDescriptor,
+  TClip extends SpriteClipNames<TDescriptor>,
+>(
+  descriptor: TDescriptor,
+  state: SpriteAnimationState<TClip>,
+  clip: SpriteClipNames<TDescriptor>,
+): SpriteAnimationState<SpriteClipNames<TDescriptor>> {
   if (clip === state.clip) {
     return state;
   }
@@ -147,7 +153,6 @@ export function playSpriteAnimation<TClipName extends string>(
 export function pauseSpriteAnimation<TClipName extends string>(
   state: SpriteAnimationState<TClipName>,
 ): SpriteAnimationState<TClipName> {
-  'worklet';
   return state.paused ? state : { ...state, paused: true };
 }
 
@@ -155,7 +160,6 @@ export function pauseSpriteAnimation<TClipName extends string>(
 export function resumeSpriteAnimation<TClipName extends string>(
   state: SpriteAnimationState<TClipName>,
 ): SpriteAnimationState<TClipName> {
-  'worklet';
   return state.paused ? { ...state, paused: false } : state;
 }
 
@@ -163,7 +167,6 @@ export function resumeSpriteAnimation<TClipName extends string>(
 export function resetSpriteAnimation<TClipName extends string>(
   state: SpriteAnimationState<TClipName>,
 ): SpriteAnimationState<TClipName> {
-  'worklet';
   return { ...state, elapsedMs: 0, completed: false };
 }
 
@@ -172,7 +175,6 @@ export function setSpriteAnimationSpeed<TClipName extends string>(
   state: SpriteAnimationState<TClipName>,
   speed: number,
 ): SpriteAnimationState<TClipName> {
-  'worklet';
   assertFinitePositiveSpeed(speed);
   return state.speed === speed ? state : { ...state, speed };
 }

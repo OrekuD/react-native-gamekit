@@ -7,7 +7,16 @@ description: Design, implement, profile, or review high-performance React Native
 
 Build GameKit features around explicit runtime ownership and measured frame cost. Treat React as the lifecycle and composition layer, not the per-frame simulation loop.
 
-This skill supplements `react-native-skia` and `reanimated-skia-performance`. Use those for detailed visual recipes; use this skill to keep the engine architecture, input pipeline, and performance contract coherent.
+This skill supplements `react-native-skia` and `reanimated-skia-performance`. Use those for detailed visual recipes; use this skill to check engine architecture, input pipelines, and performance claims. Its patterns are hypotheses to verify against the installed code and the requested task, not reasons to preserve unnecessary machinery.
+
+## Review from first principles
+
+For each system, state the player-facing purpose, authoritative owner, and smallest contract that serves the current games. Review systems separately and follow dependencies when a boundary spans two systems.
+
+1. Identify what can be deleted without losing required behavior: unused state, duplicate representations, inert flags, compatibility branches for unsupported versions, and diagnostics that run when disabled.
+2. Simplify ownership and failure paths before optimizing. A capacity, generation counter, or immutable type is not proof that work is bounded, stale results are rejected, or resources release once; trace the actual callers and cleanup.
+3. Separate reproduced defects, source-confirmed contract gaps, and performance hypotheses. Include a concrete trigger, smallest proposed change, and behavioral acceptance criteria. A system with no justified change should be left alone.
+4. Respect review-only scope. Write implementation guidance without changing runtime code unless requested. Do not add future-task features to make an audit look complete.
 
 ## Start with a compatibility gate
 
@@ -19,7 +28,7 @@ Before proposing APIs or editing code:
 4. Check official compatibility pages before upgrading any native dependency.
 5. Assume an Expo development build with prebuild is allowed. Do not constrain GameKit to Expo Go.
 
-The repository baseline captured on 2026-08-08 is RN 0.86.2, Expo 57.0.10, Skia 2.11.0, Reanimated 4.5.3, Worklets 0.10.3, and RNGH 3.1.0 (upgraded from 2.32.0; `expo install --check` deliberately flags the Skia/Reanimated/Worklets/RNGH divergence from the SDK 57 matrix). Re-check rather than trusting this snapshot.
+The manifests and lockfile reviewed on 2026-09-05 pin RN 0.86.2, Expo 57.0.10, Skia 2.11.0, Reanimated 4.5.3, Worklets 0.10.3, and RNGH 3.1.0. This is an inspected repository snapshot, not an upstream compatibility certification. Re-check installed versions before using API examples; historical source notes do not override the installed packages.
 
 Read `references/sources.md` when facts may have changed.
 
@@ -69,8 +78,10 @@ Do not convert an entire game to immediate mode without profiling. Do not raster
 - Pass shared and derived values directly to supported Skia props.
 - Never use React state, a Zustand write, or an RN-runtime callback for every animation frame.
 - Never read a shared value during React render.
-- Avoid RN-to-UI and UI-to-RN scheduling in hot loops.
-- Keep worklet closures small; captured objects are copied to another runtime.
+- Bound required RN/UI crossings by rate and payload size. Coalesced input and sparse tile-window requests are legitimate bridges; keep edges ordered and reject packets from retired owners.
+- Disabled instrumentation must do no diagnostic scheduling, timestamp reads, or packet construction on either runtime. A callback that crosses runtimes only to no-op on RN is still work.
+- Inspect the complete worklet call graph, including error branches, and the transformed closure. Reading one field of a large captured map/asset/session object may transfer more than intended; extract trusted scalars first and verify.
+- Distinguish React topology, SharedValue notification, host-object mutation, and native redraw. When writing Skia buffers outside their hook modifiers, verify the installed notification contract and actual redraw; a mutated mock rect is insufficient evidence.
 - Memoize stable frame callbacks and RNGH gesture definitions.
 - Use one clock or frame callback per subsystem rather than one per entity.
 - Cancel indefinite animations and deactivate frame callbacks during pause or unmount.
@@ -91,23 +102,27 @@ Read `references/reanimated-runtime.md` before adding a new clock, reaction, or 
 
 Read `references/gesture-input.md` for callback, composition, and version rules.
 
-## Profile before optimizing
+## Prove correctness, then profile before optimizing
+
+Exercise failure and replacement paths before throughput: late async completion after abort/reacquire, cleanup after partial initialization, pause/resume with queued input, same-size map/source replacement, and disposal while callbacks are pending. Use tests that observe public behavior, not only source text or counters supplied by the implementation.
 
 1. Establish a reproducible stress scene and representative device matrix.
 2. Measure a release or `debugOptimized` build; development mode is diagnostic only.
 3. Capture frame rate, missed frames, simulation time, draw time, memory, allocations, and input latency.
-4. Change one architectural variable at a time.
+4. Change one architectural variable at a time, starting with deletion or simpler ownership where possible.
 5. Re-run the same scenario and preserve the result as a benchmark or regression test.
 
 Target the whole-frame budget: 16.67 ms at 60 Hz and 8.33 ms at 120 Hz. Leave headroom for the OS, compositor, audio, and transient work.
+
+Record simulation ticks, display callbacks, publications, visible count, allocated capacity, transfer bytes, and total work separately. A per-axis limit can permit excessive total work; culling zero-size slots may still scan full capacity. Stable React topology, mocked native tests, and Node/V8 microbenchmarks do not prove Hermes/UI/GPU performance. If hardware measurements are unavailable, report the gap and a reproducible scenario rather than a performance pass.
 
 Read `references/performance-review.md` for acceptance criteria and symptom-driven diagnosis.
 
 ## Reject these anti-patterns
 
-- `setState`, Zustand writes, logging, or `scheduleOnRN` inside per-frame callbacks
+- per-frame React/Zustand writes, unbounded logging, unnecessary diagnostic round trips, or unbounded cross-runtime payloads
 - one React component, shared value, clock, or gesture detector per particle when batching is possible
-- rebuilding paths, paragraphs, shaders, images, or sprite metadata every frame
+- rebuilding invariant paths, paragraphs, shaders, images, or sprite metadata every frame; dynamic Picture recording requires a measured allocation/draw budget
 - large worklet closures that capture the game definition or asset registry
 - using `makeMutable` as the public engine state model
 - mutating the same value observed by `useAnimatedReaction`
@@ -124,10 +139,10 @@ For implementation or review work, report:
 - behavior at 60 Hz and 120 Hz, including pause/resume
 - asset-loading and cleanup behavior
 - input conflict and coordinate-mapping behavior
-- benchmark scenario, build mode, device class, and before/after evidence
+- benchmark scenario, build mode, device class, and before/after evidence (or explicitly unmeasured status)
 - any version-sensitive or experimental APIs used
 
-Prefer a simple measured solution over a speculative abstraction. Keep renderer and scheduling boundaries narrow enough that future 3D support can replace the renderer without replacing the game definition or simulation contract.
+Prefer a simple measured solution over a speculative abstraction. Keep renderer and scheduling boundaries narrow for the current 2D games. Preserve useful separation from native rendering without designing an unrequested 3D API.
 
 ## Reference map
 

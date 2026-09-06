@@ -35,3 +35,10 @@ const jump = startSpriteAnimation(player, 'jump');
 const jumpDone = advanceSpriteAnimation(player, jump, 1);
 const completed: boolean = jumpDone.completed;
 void completed;
+
+// Misspelled clips fail compilation against the descriptor's animation keys
+// (GS-ANIMATION-02); untyped callers still hit the runtime ASSET_UNKNOWN_CLIP.
+// @ts-expect-error 'idel' is not a clip of the player sheet
+startSpriteAnimation(player, 'idel');
+// @ts-expect-error 'run' is not a clip of the player sheet
+playSpriteAnimation(player, running, 'run');

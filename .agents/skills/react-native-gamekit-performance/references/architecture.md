@@ -4,7 +4,8 @@
 
 Make simple 2D games easy without hiding the facts that determine performance: who owns state, when work runs, how data crosses runtimes, and how a scene becomes draw commands.
 
-Keep the public game definition renderer-neutral enough that a future 3D renderer can reuse lifecycle, input actions, simulation, assets, scenes, and testing tools.
+Keep the current 2D game definition independent of native renderer types. Do
+not add APIs solely to anticipate a future 3D renderer.
 
 ## Runtime ownership
 
@@ -81,13 +82,20 @@ Keep private simulation structures behind the engine boundary. Publish compact i
 - stable entity/render IDs
 - transform, frame, tint, opacity, and layer
 - camera and viewport data
-- references to already-loaded asset handles
+- stable asset identifiers when needed; native handles stay in renderer-owned
+  asset leases passed beside the frame, not inside deep-frozen simulation snapshots
 
 Prefer structure-of-arrays or batched sprite data when profiling shows object traversal or component count is expensive. Do not expose Skia classes in the core game definition unless the feature is explicitly renderer-specific.
 
 ### 4. Interpolate presentation
 
-When render refresh is faster than simulation, interpolate previous and current snapshots using the accumulator fraction. Interpolation changes presentation only; collision and game rules use authoritative simulation state.
+GameKit's native presentation uses a UI-owned alpha clock reset by commit
+revision; the headless `getRenderFrame().alpha` exposes the simulation
+accumulator fraction for inspection. Do not add a per-display RN round trip
+to fetch it. Interpolate the adjacent snapshots carried by the same commit;
+camera and entity presentation must use compatible endpoints after catch-up.
+Interpolation changes presentation only; collision and game rules use
+authoritative simulation state.
 
 Never feed an interpolated position back into the simulation.
 
@@ -97,7 +105,9 @@ Choose retained nodes, Atlas, Picture, or textures from the actual draw workload
 
 ## Scene and lifecycle boundaries
 
-Each scene should have explicit hooks for enter, pause, resume, and exit. Cleanup must cover:
+Use the implemented scene/session contracts: scene `create`, `update`,
+`snapshot`, and optional `dispose`; session status owns pause/resume. Do not
+invent scene enter/pause/resume hooks in a performance review. Cleanup must cover:
 
 - frame callbacks and animations
 - gesture state and pending inputs

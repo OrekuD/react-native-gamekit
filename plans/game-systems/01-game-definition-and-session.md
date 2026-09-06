@@ -1,6 +1,6 @@
 # Game definition and fixed-step session
 
-Reviewed 2026-09-05 against working tree based on `a27f78b`. Review only; implementation is pending. Priority and evidence conventions are in [README](README.md).
+Reviewed 2026-09-05 against working tree based on `a27f78b`. This records the original review, not verification of subsequent implementation commits. Priority, evidence, and implementation status conventions are in [README](README.md).
 
 ## Purpose and verdict
 

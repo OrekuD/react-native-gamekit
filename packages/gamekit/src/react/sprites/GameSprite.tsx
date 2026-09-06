@@ -13,7 +13,11 @@ import type { CommitFrame } from '../../core/session/types';
 import type { SceneSnapshot } from '../../scene/types';
 import type { SceneMap } from '../../definition/types';
 import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
+import { spriteFrameNameForClip } from '../../sprites/sampleSpriteClip';
 import { Sprite, type SpriteAnimatable, type SpriteAnimatableBoolean, type SpriteProps } from './Sprite';
+
+/** Re-exported from the single sampler contract (GS-ANIMATION-01). */
+export { spriteFrameNameForClip };
 
 /** Interpolation context for the select mapper. */
 export interface GameSpriteSelectContext<
@@ -68,39 +72,6 @@ export interface GameSpriteProps<
   readonly anchor?: { readonly x: number; readonly y: number };
   /** Worklet mapper from the scene snapshots to presentation values. */
   readonly select: (context: GameSpriteSelectContext<TScenes, TSceneName>) => GameSpriteSelection;
-}
-
-/**
- * Select the frame name for a clip + elapsed time (loop/once semantics).
- * Reads the descriptor's animation table; the result is resolved against
- * the frame rectangles by the caller. Reuses the pure sampler's semantics.
- */
-export function spriteFrameNameForClip(
-  animations: Readonly<
-    Record<
-      string,
-      {
-        readonly frames: readonly string[];
-        readonly frameDurationMs: number;
-        readonly mode: 'loop' | 'once';
-      }
-    >
-  >,
-  clip: string,
-  elapsedMs: number,
-): string {
-  'worklet';
-  const animation = animations[clip];
-  if (animation === undefined || animation.frames.length === 0) {
-    return clip;
-  }
-  const duration = animation.frameDurationMs;
-  const count = animation.frames.length;
-  const index =
-    animation.mode === 'once'
-      ? Math.min(Math.floor(elapsedMs / duration), count - 1)
-      : Math.floor(elapsedMs / duration) % count;
-  return animation.frames[index] ?? animation.frames[0] ?? clip;
 }
 
 export function GameSprite<

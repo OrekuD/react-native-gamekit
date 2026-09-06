@@ -24,7 +24,7 @@ Sources: [definitions](../../packages/gamekit/src/assets/defineAssets.ts), [vali
 
 ## GS-ASSET-03 — P1: changing groups can violate React hook ordering
 
-**Evidence: source-confirmed; execute mounted regression before fixing.** `useGameAssets` returns a loading value when a ready state's group key differs, **before its `useEffect` call**. On that render it calls fewer hooks than the previous render. Existing tests do not exercise a ready → different-groups update sufficiently to catch the hook-order failure.
+**Evidence: reproduced with React-test-renderer and an injected asset store at the audit baseline.** `useGameAssets` returns a loading value when a ready state's group key differs, **before its `useEffect` call**. On that render it calls fewer hooks than the previous render; the mounted probe throws “Rendered fewer hooks than expected.” Replacing the manifest while keeping group names also exposed the old manifest's ready lease for the first render. The baseline suite does not catch these transitions.
 
 **Resolve:** always execute all hooks, then select the externally visible state. Track request identity using manifest identity, normalized groups, factory identity where applicable, and retry attempt. The current key contains only groups, so a new manifest with identical group names can expose the previous manifest's ready lease until effects run. Clear stale ready/error/progress views consistently, without mutating refs as a substitute for ownership.
 

@@ -60,6 +60,7 @@ export {
   sampleSpriteClipFrame,
   sampleSpriteClipFrameName,
   spriteClipDurationMs,
+  spriteFrameNameForClip,
 } from './sprites/sampleSpriteClip';
 export type { SpriteAnimationState, SpriteClipNames } from './sprites/spriteAnimationState';
 export { defineAssets, image, spriteSheet } from './assets/defineAssets';

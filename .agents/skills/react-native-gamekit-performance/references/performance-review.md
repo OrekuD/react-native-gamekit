@@ -66,7 +66,10 @@ At minimum capture:
 - texture/image count and approximate memory
 - scene enter/exit resource balance
 
-Add cheap counters behind a development flag, but disable debug overlays for final performance captures.
+Gate counters at their producing runtime and disable debug overlays for final
+performance captures. Absent instrumentation must not read diagnostic clocks,
+construct packets, or schedule RN callbacks that merely no-op after arrival.
+Record any enabled measurement overhead.
 
 ## Symptom-driven diagnosis
 
@@ -150,7 +153,10 @@ The available frame time halved. Check:
 
 - every state value has one authoritative owner
 - worklet captures are small
-- no `scheduleOnRN`/`scheduleOnUI` stream in the hot path
+- required crossings have explicit rate, payload, ordering, and stale-owner bounds
+- no diagnostic crossing or timestamp reads when instrumentation is absent
+- the complete worklet call graph and transformed captures fit the installed runtime
+- native buffer notification is verified separately from host-object mutation
 - frame callbacks are centralized and lifecycle-controlled
 - reactions cannot self-trigger
 - indefinite animations are cancelled
@@ -198,3 +204,11 @@ A frame-sensitive change is ready when:
 - the result includes reproducible commands/steps and device/build metadata
 
 If no measurement exists, describe the change as an architectural hypothesis, not a performance improvement.
+
+Source checks and mocked renderer tests are useful regression evidence for
+topology, worklet declarations, and intended buffer writes. They cannot prove
+native redraw, thread scheduling, GPU cost, or hardware frame pacing. Keep
+those acceptance rows explicitly pending until measured. Count visited items,
+allocated slots, transferred bytes, and total cell references as well as the
+visible population; per-axis limits and zero-size hidden slots do not prove
+bounded total frame cost.

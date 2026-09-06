@@ -32,6 +32,8 @@ Contact normals consistently resolve the first argument. Containment, exact circ
 
 **Resolve:** narrow the comment immediately in the implementation task. Only replace the AABB path with scalar slab arithmetic if a representative miss-heavy benchmark makes this material. Keep grazing, starting-overlap, zero-displacement, and tie rules intact; do not copy circle sweep complexity into the AABB path unnecessarily.
 
+**Acceptance:** comments distinguish the actual allocation behavior of each sweep API. If arithmetic changes, existing hit/miss and tie regressions pass, and the same representative workload demonstrates the claimed allocation/cost reduction. A comment-only correction needs no new runtime test.
+
 ## Scope boundaries
 
 The index is an opaque process-local handle backed by a WeakMap; cloning/serializing it does not preserve queryability. Document this if exposing it to workers/replay tooling. Do not move it into renderer snapshots. Broader untyped/overflow input policy belongs to [geometry](07-geometry.md); do not repeat that work independently here.

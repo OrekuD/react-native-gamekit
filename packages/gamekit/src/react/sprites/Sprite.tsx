@@ -21,6 +21,7 @@ import {
   spriteGroupCorrection,
   type SpriteTransformInput,
 } from './spriteTransform';
+import { applySpriteFrameSelection } from './spriteSelection';
 
 export { resolveSpriteFrameRect, type SpriteFrameRect } from './spriteTransform';
 
@@ -82,46 +83,20 @@ export function Sprite({
   // Worklet-safe frame resolution: an explicit `frame` wins; otherwise the
   // clip + elapsed time select the frame (the clip/elapsed may be animated
   // shared values, so the resolution happens inside the rect modifier).
+  // The arithmetic lives in the shared selection contract — this modifier
+  // only adapts props into it (GS-ANIMATION-01).
   const resolveFrameRectWorklet = (
     rect: { setXYWH(x: number, y: number, width: number, height: number): void },
   ): void => {
     'worklet';
     const clipValue = typeof clip === 'string' ? clip : clip?.value;
     const elapsedValue = typeof elapsedMs === 'number' ? elapsedMs : elapsedMs?.value;
-    let name: string | undefined = typeof frame === 'string' ? frame : frame?.value;
-    if (name === undefined && source.descriptor.kind === 'sprite-sheet' && clipValue !== undefined) {
-      const sheet = source as LoadedSpriteSheet;
-      // R3: resolve the clip through the descriptor's animation table, then
-      // the returned frame name through the frame rectangles below.
-      const animation = sheet.descriptor.animations[clipValue];
-      if (animation !== undefined && animation.frames.length > 0) {
-        const duration = animation.frameDurationMs;
-        const count = animation.frames.length;
-        const index =
-          animation.mode === 'once'
-            ? Math.min(Math.floor((elapsedValue ?? 0) / duration), count - 1)
-            : Math.floor((elapsedValue ?? 0) / duration) % count;
-        name = animation.frames[index] ?? animation.frames[0];
-      }
-    }
-    const frameRect =
-      source.descriptor.kind === 'image'
-        ? { x: 0, y: 0, width: (source as LoadedImage).width, height: (source as LoadedImage).height }
-        : name === undefined
-          ? undefined
-          : (source as LoadedSpriteSheet).frames[name];
-    if (frameRect === undefined) {
-      if (name === undefined) {
-        // RF4: the selection has not been published yet (scene mismatch or a
-        // shared frame before its first value): present nothing, never throw.
-        rect.setXYWH(0, 0, 0, 0);
-        return;
-      }
-      throw new Error(
-        `frame ${JSON.stringify(name)} does not belong to this sprite sheet (loaded frames: ${Object.keys((source as LoadedSpriteSheet).frames).join(', ')})`,
-      );
-    }
-    rect.setXYWH(frameRect.x, frameRect.y, frameRect.width, frameRect.height);
+    const name: string | undefined = typeof frame === 'string' ? frame : frame?.value;
+    applySpriteFrameSelection(rect, source, {
+      ...(name === undefined ? {} : { frame: name }),
+      ...(clipValue === undefined ? {} : { clip: clipValue }),
+      ...(elapsedValue === undefined ? {} : { elapsedMs: elapsedValue }),
+    });
   };
 
   const staticFrame = typeof frame === 'string' ? frame : undefined;

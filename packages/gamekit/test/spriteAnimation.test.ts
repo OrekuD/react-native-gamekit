@@ -179,12 +179,14 @@ describe('animation playback state (T7.3)', () => {
   it('rejects unknown clips at runtime with a structured error', () => {
     const descriptor = sheet();
     assert.throws(
-      () => startSpriteAnimation(descriptor, 'dash' as 'idle' | 'pop' | 'single'),
+      // Untyped caller: the compiler no longer accepts the misspelling, so
+      // the runtime check is reached through a boundary cast.
+      () => startSpriteAnimation(descriptor, 'dash' as never),
       /ASSET_UNKNOWN_CLIP/,
     );
     const state = startSpriteAnimation(descriptor, 'idle');
     assert.throws(
-      () => playSpriteAnimation(descriptor, state, 'dash' as 'idle' | 'pop' | 'single'),
+      () => playSpriteAnimation(descriptor, state, 'dash' as never),
       /ASSET_UNKNOWN_CLIP/,
     );
   });
@@ -203,5 +205,53 @@ describe('animation playback state (T7.3)', () => {
       completed: false,
     });
     assert.equal(typeof advanceSpriteAnimation, 'function');
+  });
+});
+
+describe('GS-ANIMATION-01 single sampler contract', () => {
+  it('one-shot negative elapsed clamps to the first frame', () => {
+    const pop = sheet().animations.pop;
+    assert.equal(sampleSpriteClipFrame(pop, -1), 0, 'negative clamps to frame 0, never a negative index');
+    assert.equal(sampleSpriteClipFrameName(pop, -250), 'idle-0', 'name follows the clamped index');
+  });
+
+  it('loop negative elapsed wraps uniformly into range', () => {
+    const idle = sheet().animations.idle;
+    assert.equal(sampleSpriteClipFrame(idle, -1), 2, '-1ms wraps to the last frame');
+    assert.equal(sampleSpriteClipFrame(idle, -100), 2, 'exact negative boundary wraps');
+    assert.equal(sampleSpriteClipFrame(idle, -101), 1, 'past the boundary wraps further');
+  });
+
+  it('non-finite elapsed fails clearly instead of selecting frame 0', () => {
+    const idle = sheet().animations.idle;
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      assert.throws(() => sampleSpriteClipFrame(idle, bad), /finite/, `index rejects ${String(bad)}`);
+      assert.throws(() => sampleSpriteClipFrameName(idle, bad), /finite/, `name rejects ${String(bad)}`);
+    }
+  });
+
+  it('an empty clip fails clearly instead of returning NaN', () => {
+    const empty = { frames: [], frameDurationMs: 100, mode: 'loop' } as never;
+    assert.throws(() => sampleSpriteClipFrame(empty, 0), /at least one frame/);
+  });
+
+  it('unknown clips throw instead of returning the clip string', async () => {
+    const { spriteFrameNameForClip } = await import('../src/index');
+    const animations = sheet().animations;
+    assert.throws(() => spriteFrameNameForClip(animations, 'dash', 0), /ASSET_UNKNOWN_CLIP/);
+  });
+
+  it('clip names resolve identically through both sampler paths', async () => {
+    const { spriteFrameNameForClip } = await import('../src/index');
+    const animations = sheet().animations;
+    for (const clip of ['idle', 'pop'] as const) {
+      for (let ms = -500; ms <= 1500; ms += 37) {
+        assert.equal(
+          spriteFrameNameForClip(animations, clip, ms),
+          sampleSpriteClipFrameName(animations[clip]!, ms),
+          `${clip} at ${ms}ms agrees across paths`,
+        );
+      }
+    }
   });
 });
