@@ -55,8 +55,14 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Typecheck public API fixtures
+        run: pnpm --filter ./packages/gamekit typecheck:api
+
       - name: Test
         run: pnpm test
+
+      - name: Library coverage gate
+        run: pnpm --filter ./packages/gamekit test:coverage:gate
 
       - name: Build docs
         run: pnpm --filter @react-native-gamekit/docs build
