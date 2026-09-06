@@ -13,12 +13,18 @@
  * Lifecycle:
  * - The requested group list is normalized (sorted) so a recreated
  *   equivalent array does not reload.
+ * - Every render executes all hooks unconditionally; when the rendered
+ *   request differs from the state's request, the hook exposes a fresh
+ *   loading view synchronously instead of a stale ready lease (GS-ASSET-03).
+ * - Request identity combines manifest identity, factory identity,
+ *   normalized groups, and retry attempt, so a new manifest with identical
+ *   group names can never expose the previous manifest's lease.
  * - Retry starts a new attempt; late completion from an older attempt can
  *   never replace the new state.
  * - Unmount invalidates the attempt, releases the lease, and disposes the
  *   store — hook-owned resources are released exactly once.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { GameAssetError } from '../../assets/errors';
 import type { AssetGroupMap, GameAssetLease, LoadedAssets } from '../../assets/types';
@@ -59,6 +65,23 @@ export function dedupeGroups(groups: readonly string[]): readonly string[] {
   return [...new Set(groups)].sort();
 }
 
+/** Stable numeric identities for request participants (GS-ASSET-03): object
+ * identity, so a new manifest object with identical group names is a new
+ * request even when every group string matches. */
+const manifestIdentities = new WeakMap<object, number>();
+const factoryIdentities = new WeakMap<object, number>();
+let nextParticipantId = 1;
+
+function participantId(table: WeakMap<object, number>, value: object): number {
+  let id = table.get(value);
+  if (id === undefined) {
+    id = nextParticipantId;
+    nextParticipantId += 1;
+    table.set(value, id);
+  }
+  return id;
+}
+
 /** Order-independent group key: equivalent arrays map to one key. */
 export function stableGroupsKey(groups: readonly string[]): string {
   return dedupeGroups(groups).join('\u0000');
@@ -71,11 +94,22 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
 ): GameAssetsState<TManifest> {
   const groupsKey = stableGroupsKey(options.groups);
   const [attempt, setAttempt] = useState(0);
+  // A memoized normalized array: stable across equivalent recreated group
+  // arrays, so the effect below never reloads for one (R6).
+  const normalizedGroups = useMemo(() => dedupeGroups(options.groups), [groupsKey]);
+  // `??` selects a reference, never a new closure, so the default factory
+  // keeps a stable identity across renders.
+  const factory = storeFactory ?? defaultStoreFactory;
+  // GS-ASSET-03/04: the full request identity. Manifest and factory use
+  // object identity; groups are normalized; the attempt drives retries.
+  const requestKey =
+    `${participantId(manifestIdentities, manifest)}:` +
+    `${participantId(factoryIdentities, factory)}:${groupsKey}:${attempt}`;
   const [state, setState] = useState<GameAssetsState<TManifest>>({
     status: 'loading',
     progress: 0,
     retry: () => undefined,
-    requestKey: groupsKey,
+    requestKey,
   });
   const storeRef = useRef<HookStore<TManifest> | undefined>(undefined);
   const leaseRef = useRef<GameAssetLease<TManifest> | undefined>(undefined);
@@ -85,27 +119,17 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
     setAttempt((current) => current + 1);
   }, []);
 
-  // Ref mirror of the attempt so stale-effect completions are rejected
-  // after a retry re-renders with a higher attempt.
-  const attemptRef = useRef(attempt);
-  attemptRef.current = attempt;
-
-  // RF7: if the rendered request differs from the state's request, expose
-  // loading synchronously instead of the previous ready lease — the old
-  // lease is disposed by the effect cleanup, so no consumer can observe it
-  // under the new request.
-  if (state.requestKey !== groupsKey && state.status === 'ready') {
-    return { status: 'loading', progress: 0, retry, requestKey: groupsKey };
-  }
-
   useEffect(() => {
-    const store = (storeFactory ?? defaultStoreFactory)(manifest);
+    const store = factory(manifest);
     storeRef.current = store;
+    // Per-effect invalidation (GS-ASSET-03): cleanup sets `disposed` before
+    // any newer effect runs, so stale completions are rejected without a
+    // render-time ref mutation standing in for ownership.
     let disposed = false;
-    const attemptAtStart = attempt;
-    const isCurrent = (): boolean => attemptRef.current === attemptAtStart;
-    const setIfCurrent = (updater: (previous: GameAssetsState<TManifest>) => GameAssetsState<TManifest>): void => {
-      if (!disposed && isCurrent()) {
+    const setIfCurrent = (
+      updater: (previous: GameAssetsState<TManifest>) => GameAssetsState<TManifest>,
+    ): void => {
+      if (!disposed) {
         setState(updater);
       }
     };
@@ -118,38 +142,40 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
       status: 'loading',
       progress: 0,
       retry: retry,
-      requestKey: groupsKey,
+      requestKey,
     });
 
     store
       .acquire({
-        groups: dedupeGroups(options.groups),
+        groups: normalizedGroups,
         signal: controller.signal,
         onProgress: (progress) => {
           setIfCurrent((previous) =>
-            previous.status === 'loading' ? { ...previous, progress } : previous,
+            previous.status === 'loading' && previous.requestKey === requestKey
+              ? { ...previous, progress }
+              : previous,
           );
         },
       })
       .then((lease) => {
-        if (disposed || !isCurrent()) {
+        if (disposed) {
           // Stale completion (retry/unmount): release immediately.
           lease.dispose();
           return;
         }
         leaseRef.current?.dispose();
         leaseRef.current = lease;
-        setState({ status: 'ready', assets: lease.assets, requestKey: groupsKey });
+        setState({ status: 'ready', assets: lease.assets, requestKey });
       })
       .catch((error: unknown) => {
-        if (disposed || !isCurrent()) {
+        if (disposed) {
           return;
         }
         const structured =
           error instanceof GameAssetError
             ? error
             : new GameAssetError('ASSET_DECODE_FAILED', [], error instanceof Error ? error.message : String(error));
-        setState({ status: 'error', error: structured, retry, requestKey: groupsKey });
+        setState({ status: 'error', error: structured, retry, requestKey });
       });
 
     return () => {
@@ -162,10 +188,16 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
       storeRef.current = undefined;
       store.dispose();
     };
-    // The groups key is order-independent, so a recreated equivalent array
-    // does not reload; the attempt state drives retries. The store factory
-    // is the internal test seam and must be stable across renders.
-  }, [attempt, groupsKey, manifest, storeFactory]);
+    // The effect re-runs only when the request identity (or its stable
+    // derivatives) changes; equivalent recreated group arrays do not reload.
+  }, [requestKey, manifest, factory, normalizedGroups, groupsKey, retry]);
+
+  // GS-ASSET-03: every hook above runs unconditionally. When the rendered
+  // request differs from the state's request, expose a fresh loading view
+  // synchronously — never a stale ready lease, error, or progress.
+  if (state.requestKey !== requestKey) {
+    return { status: 'loading', progress: 0, retry, requestKey };
+  }
 
   return state;
 }
