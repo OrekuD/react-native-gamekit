@@ -192,6 +192,11 @@ export async function createGameAudio<T extends AudioSoundRecord>(
   let pendingMusic: { id: keyof T & string; generation: number } | null = null;
   const activeVoices = new Set<unknown>();
   const concurrencyMap = new Map<string, Set<unknown>>();
+  // GS-AUDIO-02: pending reservations are tracked distinctly from live
+  // voices. Only pending work takes cancellation tokens (removed when its
+  // continuation runs); live voices use normal stop/cleanup and lose all
+  // owner references immediately — never a token.
+  const pendingReservations = new Set<unknown>();
   const cancelledReservations = new Set<unknown>();
 
   function isEffectivelyPaused(): boolean {
@@ -229,6 +234,31 @@ export async function createGameAudio<T extends AudioSoundRecord>(
         }
       }, 1500);
     }
+  }
+
+  /** Drop one live voice: normal stop/cleanup with no token (GS-AUDIO-02). */
+  function dropVoice(voice: unknown, concurrencyKey: string | undefined): void {
+    activeVoices.delete(voice);
+    if (concurrencyKey !== undefined) {
+      const set = concurrencyMap.get(concurrencyKey);
+      if (set) {
+        set.delete(voice);
+        if (set.size === 0) concurrencyMap.delete(concurrencyKey);
+      }
+    }
+    cancelledReservations.delete(voice);
+    scheduleIdleSuspend();
+  }
+
+  /** Drop one pending reservation from every collection that holds it. */
+  function dropReservation(reservation: unknown, concurrencyKey: string): void {
+    pendingReservations.delete(reservation);
+    const set = concurrencyMap.get(concurrencyKey);
+    if (set) {
+      set.delete(reservation);
+      if (set.size === 0) concurrencyMap.delete(concurrencyKey);
+    }
+    cancelledReservations.delete(reservation);
   }
 
   const ensureNotDisposed = (): void => {
@@ -373,15 +403,18 @@ export async function createGameAudio<T extends AudioSoundRecord>(
           if (overflow === 'stop-oldest') {
             const oldest = set.values().next().value as unknown;
             if (oldest) {
-              try { (oldest as { stop: (w?:number)=>void }).stop(); } catch {}
-              set.delete(oldest);
-              activeVoices.delete(oldest);
-              cancelledReservations.add(oldest);
+              if (pendingReservations.has(oldest)) {
+                cancelledReservations.add(oldest);
+              } else {
+                try { (oldest as { stop: (w?:number)=>void }).stop(); } catch {}
+                dropVoice(oldest, concurrencyKey);
+              }
             }
           }
         }
         reservation = {};
         set.add(reservation);
+        pendingReservations.add(reservation);
       }
       try {
         const state = (context as unknown as { state: string }).state;
@@ -391,9 +424,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       void (async () => {
         if (disposed || !context || isEffectivelyPaused()) {
           if (reservation) {
-            const set = concurrencyMap.get(concurrencyKey);
-            if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
-            cancelledReservations.delete(reservation);
+            dropReservation(reservation, concurrencyKey);
           }
           return;
         }
@@ -401,16 +432,12 @@ export async function createGameAudio<T extends AudioSoundRecord>(
           const buffer = await getBuffer(id as keyof T & string);
           if (disposed || !context || isEffectivelyPaused()) {
             if (reservation) {
-              const set = concurrencyMap.get(concurrencyKey);
-              if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
-              cancelledReservations.delete(reservation);
+              dropReservation(reservation, concurrencyKey);
             }
             return;
           }
           if (reservation && cancelledReservations.has(reservation)) {
-            cancelledReservations.delete(reservation);
-            const set = concurrencyMap.get(concurrencyKey);
-            if (set) { set.delete(reservation); if (set.size===0) concurrencyMap.delete(concurrencyKey); }
+            dropReservation(reservation, concurrencyKey);
             return;
           }
           type VoiceSource = {
@@ -437,16 +464,10 @@ export async function createGameAudio<T extends AudioSoundRecord>(
             if (cleaned) return;
             cleaned = true;
             if (source !== null) {
-              activeVoices.delete(source);
+              dropVoice(source, limit !== undefined ? concurrencyKey : undefined);
             }
-            if (limit !== undefined) {
-              const set = concurrencyMap.get(concurrencyKey);
-              if (set) {
-                if (source !== null) set.delete(source);
-                set.delete(reservation);
-                if (set.size === 0) concurrencyMap.delete(concurrencyKey);
-              }
-              cancelledReservations.delete(reservation);
+            if (reservation && limit !== undefined) {
+              dropReservation(reservation, concurrencyKey);
             }
             const anySource = source as unknown as { onended?: (()=>void)|null } | null;
             if (anySource !== null && anySource.onended === cleanup) anySource.onended = null;
@@ -483,6 +504,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
             source.connect(dest);
             activeVoices.add(source);
             if (reservation) {
+              pendingReservations.delete(reservation);
               const set = concurrencyMap.get(concurrencyKey);
               if (set) {
                 set.delete(reservation);

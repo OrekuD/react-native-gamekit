@@ -1343,3 +1343,86 @@ describe('GS-AUDIO-01 transactional playback startup', () => {
     retry.audio.dispose();
   });
 });
+
+describe('GS-AUDIO-02 stop-oldest collection bounds', () => {
+  interface FakeSource {
+    start(): void;
+    stop(): void;
+    ended: Array<() => void>;
+  }
+  function backend() {
+    const sources: FakeSource[] = [];
+    const api = {
+      AudioContext: class {
+        state = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData() {
+          return { length: 1, duration: 0.01 } as never;
+        }
+        createBufferSource() {
+          const source: FakeSource & { buffer: null; loop: boolean; connect(): void } = {
+            buffer: null,
+            loop: false,
+            connect() {},
+            start() {},
+            stop() {},
+            ended: [],
+          };
+          const withListener = source as unknown as FakeSource & { addEventListener(t: string, cb: () => void): void };
+          withListener.addEventListener = (_t: string, cb: () => void) => {
+            source.ended.push(cb);
+          };
+          sources.push(source);
+          return source as never;
+        }
+        createGain() {
+          return { gain: { value: 1 }, connect() {} } as never;
+        }
+        async suspend() {}
+        async resume() {}
+        async close() {}
+      },
+      AudioManager: {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      },
+    };
+    return { api, sources };
+  }
+
+  type AudioSeam = {
+    play(id: string, opts?: unknown): void;
+    dispose(): void;
+    _getVoiceCounts(): { activeVoices: number; concurrencyKeys: number; cancelled: number };
+  };
+
+  it('thousands of stop-oldest replacements stay bounded', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    const { api, sources } = backend();
+    __setAudioApiLoader(async () => api as never);
+    const audio = (await createGameAudio({ sounds: { a: 1 } })) as unknown as AudioSeam;
+    for (let i = 0; i < 3000; i++) {
+      audio.play('a', { concurrency: { key: 'a', limit: 1, overflow: 'stop-oldest' } });
+      if (i % 500 === 499) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    // Ended callbacks for every stopped voice: cleanup must stay idempotent.
+    for (const source of sources) {
+      for (const cb of source.ended.splice(0)) {
+        cb();
+      }
+    }
+    const counts = audio._getVoiceCounts();
+    assert.ok(counts.cancelled <= 2, `cancelled tokens bounded (got ${counts.cancelled})`);
+    assert.ok(counts.concurrencyKeys <= 2, `concurrency keys bounded (got ${counts.concurrencyKeys})`);
+    assert.ok(counts.activeVoices <= 1, `live voices bounded by the limit (got ${counts.activeVoices})`);
+    audio.dispose();
+    __setAudioApiLoader(null);
+  });
+});
