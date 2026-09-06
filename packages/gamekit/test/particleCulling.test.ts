@@ -27,14 +27,17 @@ describe('T15-RF2 camera-visible world culling', () => {
   it('camera far from logical origin hides origin particles', () => {
     const bounds = cameraVisibleWorldBounds(cameraAt(5000, 5000), VIEW_REF, PARTICLE_CULL_PADDING);
     assert.ok(bounds !== undefined);
-    assert.equal(visibleInBounds(0, 0, bounds), false, 'origin must be hidden');
-    assert.equal(visibleInBounds(5000, 5000, bounds), true, 'camera center visible');
+    assert.equal(visibleInBounds(0, 0, 0, bounds), false, 'origin must be hidden');
+    assert.equal(visibleInBounds(5000, 5000, 0, bounds), true, 'camera center visible');
   });
 
-  it('no camera context yields undefined bounds (fail-closed hide)', () => {
+  it('missing camera and viewport still yield undefined bounds (fail-closed hide)', () => {
     assert.equal(cameraVisibleWorldBounds(null, VIEW_REF, 0), undefined);
     const cam = cameraAt(0, 0);
     assert.equal(cameraVisibleWorldBounds(cam, null, 0), undefined);
+    // The viewport fallback (GS-PARTICLE-02) is what renders without a
+    // camera; with neither source there is still nothing to show.
+    assert.equal(cameraVisibleWorldBounds(null, null, 0), undefined);
   });
 
   it('zoom narrows the visible region around the center', () => {
@@ -43,8 +46,8 @@ describe('T15-RF2 camera-visible world culling', () => {
     assert.ok(bounds !== undefined);
     assert.ok(Math.abs(bounds.maxX - bounds.minX - 160) < 1e-9);
     assert.ok(Math.abs(bounds.maxY - bounds.minY - 240) < 1e-9);
-    assert.equal(visibleInBounds(1000 + 70, 1000, bounds), true);
-    assert.equal(visibleInBounds(1000 + 90, 1000, bounds), false);
+    assert.equal(visibleInBounds(1000 + 70, 1000, 0, bounds), true);
+    assert.equal(visibleInBounds(1000 + 90, 1000, 0, bounds), false);
   });
 
   it('rotation swaps effective extents at 90 degrees', () => {
@@ -60,7 +63,7 @@ describe('T15-RF2 camera-visible world culling', () => {
     assert.ok(Math.abs(padded.maxX - padded.minX - (320 + 100)) < 1e-9);
     const s = screenVisibleBounds(200, 300, 16);
     assert.deepEqual([s.minX, s.minY, s.maxX, s.maxY], [-16, -16, 216, 316]);
-    assert.equal(visibleInBounds(250, 10, s), false);
+    assert.equal(visibleInBounds(250, 10, 0, s), false);
   });
 });
 
@@ -121,6 +124,67 @@ describe('T15-RF4 sprite RSXform scale and pivot', () => {
     assert.throws(
       () => assertUniformParticleSpriteRatio(24, 48, 32, 32),
       /does not match source frame/,
+    );
+  });
+});
+
+describe('GS-PARTICLE-02 no-camera visibility and conservative extents', () => {
+  it('viewport-only world presentation uses the resolved viewport bounds', async () => {
+    const { viewportWorldBounds } = await import('../src/react/particles/culling');
+    const bounds = viewportWorldBounds(VIEW_REF, 16)!;
+    assert.deepEqual([bounds.minX, bounds.minY, bounds.maxX, bounds.maxY], [-16, -16, 336, 496]);
+    assert.equal(viewportWorldBounds(null, 16), undefined, 'nothing to show without a viewport');
+    assert.equal(
+      viewportWorldBounds({ value: {} }, 16),
+      undefined,
+      'missing logical bounds stay hidden',
+    );
+  });
+
+  it('partially crossing shapes stay visible on every edge', async () => {
+    const { visibleInBounds } = await import('../src/react/particles/culling');
+    const bounds = { minX: 0, minY: 0, maxX: 320, maxY: 480 };
+    // Radius-50 circle centered 20 units outside each edge still overlaps.
+    assert.equal(visibleInBounds(-20, 240, 50, bounds), true, 'left edge');
+    assert.equal(visibleInBounds(340, 240, 50, bounds), true, 'right edge');
+    assert.equal(visibleInBounds(160, -20, 50, bounds), true, 'top edge');
+    assert.equal(visibleInBounds(160, 500, 50, bounds), true, 'bottom edge');
+    // Fully outside by more than the extent culls on every edge.
+    assert.equal(visibleInBounds(-51, 240, 50, bounds), false, 'left culled');
+    assert.equal(visibleInBounds(371, 240, 50, bounds), false, 'right culled');
+    assert.equal(visibleInBounds(160, -51, 50, bounds), false, 'top culled');
+    assert.equal(visibleInBounds(160, 531, 50, bounds), false, 'bottom culled');
+    // Zero extent preserves the old point semantics.
+    assert.equal(visibleInBounds(0, 0, 0, bounds), true);
+    assert.equal(visibleInBounds(-1, 0, 0, bounds), false);
+    assert.equal(visibleInBounds(1, 1, 0, undefined), false, 'missing bounds stay hidden');
+  });
+
+  it('effect extents derive from geometry and scale endpoints', async () => {
+    const { maxParticleExtent } = await import('../src/react/particles/culling');
+    const circle = (particle: unknown) =>
+      maxParticleExtent({ particle } as never);
+    assert.equal(circle({ kind: 'shape', shape: 'circle', radius: 4 }), 4, 'unit scale by default');
+    assert.equal(
+      circle({ kind: 'shape', shape: 'circle', radius: 4 }),
+      4,
+      'stable across calls',
+    );
+    assert.equal(
+      maxParticleExtent({
+        particle: { kind: 'shape', shape: 'rectangle', width: 8, height: 4 },
+        scale: { start: { min: 1, max: 1 }, end: { min: 0.5, max: 2 } },
+      } as never),
+      (Math.hypot(8, 4) / 2) * 2,
+      'rotated rectangles use the bounding radius times max end scale',
+    );
+    assert.equal(
+      maxParticleExtent({
+        particle: { kind: 'sprite', sheet: 's', frame: 'f', size: { width: 16, height: 16 } },
+        scaleOverLife: { min: 0.5, max: 3 },
+      } as never),
+      (Math.hypot(16, 16) / 2) * 3,
+      'legacy scale ranges contribute their maximum',
     );
   });
 });

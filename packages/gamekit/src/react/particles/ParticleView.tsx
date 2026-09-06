@@ -15,7 +15,9 @@ import type {
 import {
   PARTICLE_CULL_PADDING,
   cameraVisibleWorldBounds,
+  maxParticleExtent,
   screenVisibleBounds,
+  viewportWorldBounds,
   visibleInBounds,
 } from './culling';
 import { assertUniformParticleSpriteRatio, particleSpriteXform } from './spriteXForm';
@@ -54,6 +56,13 @@ export interface ParticleViewProps {
  * UI-runtime derived worklet that walks the effect's emission records and
  * computes analytic transforms from the scalar active-time clock. No per-slot
  * data crosses the runtime boundary per frame (T15-SF1).
+ *
+ * Coordinate ownership (GS-PARTICLE-02): `space: 'world'` effects sample in
+ * world units and must mount inside world space (no parent transform);
+ * `space: 'screen'` effects sample in surface pixels and must mount inside
+ * screen space. World culling uses the presented camera when one exists
+ * and the resolved viewport bounds otherwise; zoom applies through the
+ * camera, and there is no parallax factor on particles by design.
  */
 export function ParticleView({
   system,
@@ -67,6 +76,10 @@ export function ParticleView({
     () => system.bindPresentation().definition(effect),
     [system, effect],
   );
+  // GS-PARTICLE-02: conservative cull extent from authored geometry and
+  // scale endpoints (bounding radius, rotation-proof); overscan stays in
+  // the bounds padding, never in this extent.
+  const cullExtent = useMemo(() => maxParticleExtent(definition), [definition]);
   const world = useContext(GameWorldContext);
   const camera = (world?.camera ?? null) as never;
   const viewport = (world?.viewport ?? null) as never;
@@ -93,6 +106,7 @@ export function ParticleView({
         frameRect={spriteSource.frame}
         drawWidth={definition.particle.size.width}
         drawHeight={definition.particle.size.height}
+        cullExtent={cullExtent}
         fadeOut={definition.fadeOut}
         gravityX={definition.gravity.x}
         gravityY={definition.gravity.y}
@@ -115,6 +129,7 @@ export function ParticleView({
       radius={definition.particle.radius ?? 3}
       rectWidth={definition.particle.width ?? 6}
       rectHeight={definition.particle.height ?? 6}
+      cullExtent={cullExtent}
       color={definition.particle.color ?? '#ffffff'}
       fadeOut={definition.fadeOut}
       gravityX={definition.gravity.x}
@@ -178,10 +193,11 @@ function ShapeBatch(props: {
   readonly width: number;
   readonly height: number;
   readonly space: 'world' | 'screen';
+  readonly cullExtent: number;
   readonly camera: unknown;
   readonly viewport: unknown;
 }) {
-  const { clock, registry, effect, capacity, shape, radius, rectWidth, rectHeight, color, fadeOut, gravityX, gravityY, width, height, space, camera, viewport } =
+  const { clock, registry, effect, capacity, shape, radius, rectWidth, rectHeight, color, fadeOut, gravityX, gravityY, width, height, space, cullExtent, camera, viewport } =
     props;
 
   const picture = useDerivedValue(() => {
@@ -189,10 +205,14 @@ function ShapeBatch(props: {
     const reg = registry.value;
     const entry = reg.effects[effect];
     const now = clock.value;
-    // Culling bounds computed ONCE per revision from the presented camera.
+    // Culling bounds computed ONCE per revision. World space without a
+    // presented camera falls back to the resolved viewport bounds (never
+    // fail-closed hide); the particle extent keeps crossings visible.
     const bounds =
       space === 'world'
-        ? cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
+        ? (camera as { value?: { camera?: unknown } } | null)?.value?.camera === undefined
+          ? viewportWorldBounds(viewport as never, PARTICLE_CULL_PADDING)
+          : cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
         : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
 
     const recorder = Skia.PictureRecorder();
@@ -207,7 +227,7 @@ function ShapeBatch(props: {
       const e = particles[i]!;
       const s = sampleEmission(e, now, gravityX, gravityY, fadeOut);
       if (!s.alive || s.opacity <= 0) continue;
-      if (!visibleInBounds(s.x, s.y, bounds)) continue;
+      if (!visibleInBounds(s.x, s.y, cullExtent, bounds)) continue;
       paint.setAlphaf(Math.max(0, Math.min(1, s.opacity)));
       if (shape === 'circle') {
         canvas.drawCircle(s.x, s.y, radius * s.scale, paint);
@@ -246,10 +266,11 @@ function SpriteSlots(props: {
   readonly width: number;
   readonly height: number;
   readonly space: 'world' | 'screen';
+  readonly cullExtent: number;
   readonly camera: unknown;
   readonly viewport: unknown;
 }) {
-  const { clock, registry, effect, capacity, image, frameRect, drawWidth, drawHeight, fadeOut, gravityX, gravityY, width, height, space, camera, viewport } =
+  const { clock, registry, effect, capacity, image, frameRect, drawWidth, drawHeight, fadeOut, gravityX, gravityY, width, height, space, cullExtent, camera, viewport } =
     props;
 
   // UI-owned buffers created once per mount (T15-SF1). Colors use the
@@ -278,7 +299,9 @@ function SpriteSlots(props: {
     const now = clock.value;
     const bounds =
       space === 'world'
-        ? cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
+        ? (camera as { value?: { camera?: unknown } } | null)?.value?.camera === undefined
+          ? viewportWorldBounds(viewport as never, PARTICLE_CULL_PADDING)
+          : cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
         : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
 
     for (let i = 0; i < capacity; i++) {
@@ -295,7 +318,7 @@ function SpriteSlots(props: {
           const t = age / e.lifetime;
           const x = e.originX + e.vx * age + 0.5 * gravityX * age * age;
           const y = e.originY + e.vy * age + 0.5 * gravityY * age * age;
-          if (visibleInBounds(x, y, bounds)) {
+          if (visibleInBounds(x, y, cullExtent, bounds)) {
             const op = fadeOut ? 1 - t : 1;
             const xf = particleSpriteXform({
               x,
