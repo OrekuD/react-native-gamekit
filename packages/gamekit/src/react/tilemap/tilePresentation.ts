@@ -72,6 +72,14 @@ export interface TileWindowSnapshot {
   readonly ids: readonly number[];
   /** Flat frame lookup shared by all windows of one binding. */
   readonly frameFlat: readonly number[];
+  /**
+   * Binding generation that published this window (GS-TILE-01). Stamp
+   * applied by the binding when it publishes; snapshots built directly
+   * (tests, initial empty) carry no generation and never satisfy a bound
+   * update. A generation mismatch means a same-size replacement or a
+   * remount happened: the window is ignored, never displayed.
+   */
+  readonly gen?: number;
 }
 
 export const EMPTY_TILE_WINDOW: TileWindowSnapshot = Object.freeze({
@@ -309,4 +317,175 @@ function hideRange(rects: readonly (SlotRect | undefined)[], from: number, to: n
   for (let i = from; i < to; i++) {
     rects[i]?.setXYWH(0, 0, 0, 0);
   }
+}
+
+/** Stable per-binding generation from object identity (GS-TILE-01). */
+const bindingGenerations = new WeakMap<object, number>();
+let nextBindingGeneration = 1;
+
+/**
+ * Mint (or recall) the generation for one binding identity object. The
+ * component creates a fresh identity per binding-affecting prop change, so
+ * each binding gets a distinct generation with no counters in React state.
+ */
+export function bindingGeneration(binding: object): number {
+  let gen = bindingGenerations.get(binding);
+  if (gen === undefined) {
+    gen = nextBindingGeneration;
+    nextBindingGeneration += 1;
+    bindingGenerations.set(binding, gen);
+  }
+  return gen;
+}
+
+/** Shared-value mirrors kept structural so headless fakes can drive updates. */
+export interface TileWindowShared {
+  value: TileWindowSnapshot;
+}
+export interface TileNumberShared {
+  value: number;
+}
+export interface TileBooleanShared {
+  value: boolean;
+}
+
+/**
+ * Inputs for one tile-layer UI update (GS-TILE-01).
+ *
+ * Everything the update may touch is listed here: scalars, shared values,
+ * buffers, and callbacks. Map, layer, and frame-table objects are
+ * deliberately absent — the UI closure provably cannot capture layer data
+ * because it is never passed (scalar layer dims travel in `layerWidth` /
+ * `layerHeight`). The binding `generation` gates every window and request.
+ */
+export interface TileLayerUIParams {
+  readonly camera: SharedCameraRef | null;
+  readonly viewport: SharedViewportRef | null;
+  readonly window: TileWindowShared;
+  /** Generation of the in-flight request, or -1 when none is pending. */
+  readonly pendingGen: TileNumberShared;
+  readonly warnedCapacity: TileBooleanShared;
+  readonly capacityWarnPending: TileBooleanShared;
+  readonly rects: { value: readonly (SlotRect | undefined)[] };
+  readonly xforms: { value: readonly (SlotXform | undefined)[] };
+  /**
+   * Publish a window for `gen` (JS side). Stale deliveries whose `gen`
+   * predates the publisher's binding are rejected before publishing; the
+   * update additionally refuses to display any window whose stamp differs
+   * from the live generation.
+   */
+  readonly requestWindow: (gen: number, x0: number, y0: number, x1: number, y1: number) => void;
+  /** Bridge crossing to the JS side (scheduleOnRN in production). */
+  readonly scheduleOnRN: (fn: () => void) => void;
+  readonly onBeyondCapacity: () => void;
+  readonly generation: number;
+  readonly capacity: number;
+  readonly originX: number;
+  readonly originY: number;
+  readonly cw: number;
+  readonly ch: number;
+  readonly layerWidth: number;
+  readonly layerHeight: number;
+  readonly padWorld: number;
+  readonly px: number;
+  readonly py: number;
+  readonly minZoom: number;
+}
+
+/**
+ * One tile-layer UI update: the body of the layer's derived value,
+ * extracted so binding identity, stale-request rejection, and capacity
+ * policy execute identically in tests and on the UI runtime (GS-TILE-01).
+ *
+ * Returns the filled slot count; -1 when a window was requested, -2 when
+ * the span exceeds capacity or zoom left the declared bounds, 0 when
+ * nothing is visible. A window whose generation stamp differs from the
+ * live binding is treated exactly like a missing window.
+ */
+export function updateTileLayerUI(params: TileLayerUIParams): number {
+  'worklet';
+  const {
+    camera,
+    viewport,
+    window,
+    pendingGen,
+    warnedCapacity,
+    capacityWarnPending,
+    rects,
+    xforms,
+    requestWindow,
+    scheduleOnRN,
+    onBeyondCapacity,
+    generation,
+    capacity,
+    originX,
+    originY,
+    cw,
+    ch,
+    layerWidth,
+    layerHeight,
+    padWorld,
+    px,
+    py,
+    minZoom,
+  } = params;
+  // Rejected camera state: zoomed out beyond the declared capacity.
+  const camZoom = camera?.value?.camera?.zoom;
+  if (camZoom !== undefined && camZoom < minZoom * (1 - 1e-3)) {
+    for (let i = 0; i < capacity; i++) {
+      rects.value[i]?.setXYWH(0, 0, 0, 0);
+    }
+    if (!warnedCapacity.value && !capacityWarnPending.value) {
+      capacityWarnPending.value = true;
+      scheduleOnRN(onBeyondCapacity);
+    }
+    return -2;
+  }
+  const bounds = writeLayerVisibleBounds(camera, viewport, px, py, padWorld);
+  if (bounds === null) {
+    return 0;
+  }
+  const cx0 = Math.max(0, Math.floor((bounds.minX - originX) / cw));
+  const cy0 = Math.max(0, Math.floor((bounds.minY - originY) / ch));
+  const cx1 = Math.min(layerWidth - 1, Math.floor((bounds.maxX - originX) / cw));
+  const cy1 = Math.min(layerHeight - 1, Math.floor((bounds.maxY - originY) / ch));
+  if (cx0 > cx1 || cy0 > cy1) {
+    // Off-map view: hide everything.
+    for (let i = 0; i < capacity; i++) {
+      rects.value[i]?.setXYWH(0, 0, 0, 0);
+    }
+    return 0;
+  }
+  const snap = window.value;
+  // GS-TILE-01: the generation stamp decides before coordinates do. A stale
+  // window (same-size replacement, remount, late delivery) takes the
+  // request path exactly like a missing window.
+  if (snap.gen !== generation) {
+    if (pendingGen.value !== generation) {
+      pendingGen.value = generation;
+      scheduleOnRN(() => requestWindow(generation, cx0, cy0, cx1, cy1));
+    }
+    return -1;
+  }
+  const filled = fillTileSlots(
+    snap,
+    bounds,
+    rects.value,
+    xforms.value,
+    { cw, ch, originX, originY, layerWidth, layerHeight, capacity },
+  );
+  if (filled === -1 && pendingGen.value !== generation) {
+    pendingGen.value = generation;
+    scheduleOnRN(() => requestWindow(generation, cx0, cy0, cx1, cy1));
+    return -1;
+  }
+  if (filled === -2) {
+    // Capacity insufficient even at a valid zoom (e.g. extreme rotation
+    // on a fully occupied span) — hide everything, never partial.
+    for (let i = 0; i < capacity; i++) {
+      rects.value[i]?.setXYWH(0, 0, 0, 0);
+    }
+    return -2;
+  }
+  return filled;
 }

@@ -16,8 +16,8 @@ import type { TileMap2D } from '../../tilemap/types';
 import {
   buildFrameTable,
   buildTileWindowSnapshot,
-  writeLayerVisibleBounds,
-  fillTileSlots,
+  bindingGeneration,
+  updateTileLayerUI,
   EMPTY_TILE_WINDOW,
   type TileFrameTable,
   type TileWindowSnapshot,
@@ -156,35 +156,55 @@ export function TileMapLayer2D({
   // bounds object is written by the worklet every frame — one stable
   // allocation, never per-frame objects (T16-RF2).
   const windowSV = useSharedValue<TileWindowSnapshot>(EMPTY_TILE_WINDOW);
-  const pendingSV = useSharedValue(false);
+  // GS-TILE-01: one pending request per BINDING (not per component): the
+  // stored generation lets a new binding request even when an old binding
+  // left its mark behind.
+  const pendingGenSV = useSharedValue(-1);
   const warnedCapacitySV = useSharedValue(false);
   const capacityWarnPendingSV = useSharedValue(false);
 
-  // Stable fill params: built once per binding, never per frame.
-  const fillParams = useMemo(
-    () => ({
-      cw,
-      ch,
-      originX: map.origin.x,
-      originY: map.origin.y,
-      layerWidth: layerData.width,
-      layerHeight: layerData.height,
-      capacity,
-    }),
-    [cw, ch, map.origin.x, map.origin.y, layerData.width, layerData.height, capacity],
+  // GS-TILE-01: binding identity from everything that defines what a
+  // window shows — map, layer, frame source, cell size, and
+  // capacity-affecting configuration. A fresh identity mints a fresh
+  // generation; windows and requests stamped with older generations are
+  // ignored, never displayed.
+  // Binding-affecting inputs enumerated deliberately: equivalent values
+  // must not remint the identity (no reload churn), and any omitted input
+  // would reuse a stale window.
+  const bindingKey = useMemo(
+    () => ({}),
+    [map, layer, source.frames, cw, ch, overscan, capacity, px, py],
   );
+  const generation = bindingGeneration(bindingKey);
 
   // JS handler (React-owned): builds the next bounded snapshot for the
   // requested range. Delivered via scheduleOnRN from the worklet (RF1).
-  const requestWindow = useCallback((x0: number, y0: number, x1: number, y1: number) => {
-    // Pad by the overscan so small camera motions don't re-request.
-    windowSV.value = buildTileWindowSnapshot(
-      map, layerData.id,
-      x0 - overscan, y0 - overscan, x1 + overscan, y1 + overscan,
-      frameTable,
-    );
-    pendingSV.value = false;
-  }, [map, layerData.id, overscan, frameTable]);
+  // GS-TILE-01: the scheduled generation is checked before publishing, and
+  // the published window is stamped — the update refuses windows whose
+  // stamp differs from the live binding, so late deliveries converge by
+  // re-requesting instead of displaying stale tiles.
+  const requestWindow = useCallback(
+    (gen: number, x0: number, y0: number, x1: number, y1: number) => {
+      if (gen !== generation) {
+        return;
+      }
+      // Pad by the overscan so small camera motions don't re-request.
+      const snapshot = buildTileWindowSnapshot(
+        map,
+        layerData.id,
+        x0 - overscan,
+        y0 - overscan,
+        x1 + overscan,
+        y1 + overscan,
+        frameTable,
+      );
+      windowSV.value = Object.freeze({ ...snapshot, gen });
+      if (pendingGenSV.value === gen) {
+        pendingGenSV.value = -1;
+      }
+    },
+    [map, layerData.id, overscan, frameTable, generation, windowSV, pendingGenSV],
+  );
 
   // One-shot RN-side diagnostic when a presented camera zooms beyond the
   // declared capacity (T16-RF2): the layer hides instead of under-filling.
@@ -202,59 +222,37 @@ export function TileMapLayer2D({
 
   // originX/Y and padWorld already defined above for capacity sizing
 
+  // GS-TILE-01: the update body lives in `updateTileLayerUI` with an
+  // explicit scalar-only parameter list — the worklet closure provably
+  // carries no map, layer, or frame-table objects (only layer dims and the
+  // binding generation). requestWindow's closure stays on the JS side.
   useDerivedValue(() => {
     'worklet';
-    // Rejected camera state: zoomed out beyond the declared capacity.
-    const camZoom = camera?.value?.camera?.zoom;
-    if (camZoom !== undefined && camZoom < minZoom * (1 - 1e-3)) {
-      for (let i = 0; i < capacity; i++) {
-        rects.value[i]?.setXYWH(0, 0, 0, 0);
-      }
-      if (!warnedCapacitySV.value && !capacityWarnPendingSV.value) {
-        capacityWarnPendingSV.value = true;
-        scheduleOnRN(onBeyondCapacity);
-      }
-      return -2;
-    }
-    // Whole-value assignment: the bounds object is created ON the UI runtime
-    // and replaces the shared value in one step. Mutating the keys of a
-    // JS-originated shared-value object from a worklet is rejected by the
-    // worklets runtime (serializable protection), so the previous out-param
-    // scratch pattern silently dropped its writes.
-    const bounds = writeLayerVisibleBounds(camera as never, viewportSV as never, px, py, padWorld);
-    if (bounds === null) {
-      return 0;
-    }
-    const cx0 = Math.max(0, Math.floor((bounds.minX - originX) / cw));
-    const cy0 = Math.max(0, Math.floor((bounds.minY - originY) / ch));
-    const cx1 = Math.min(layerData.width - 1, Math.floor((bounds.maxX - originX) / cw));
-    const cy1 = Math.min(layerData.height - 1, Math.floor((bounds.maxY - originY) / ch));
-    if (cx0 > cx1 || cy0 > cy1) {
-      // Off-map view: hide everything.
-      for (let i = 0; i < capacity; i++) {
-        rects.value[i]?.setXYWH(0, 0, 0, 0);
-      }
-      return 0;
-    }
-    // Fill from the transferred window when it covers the visible span.
-    // fillTileSlots returns -1 for a missing window (request it) and -2
-    // for insufficient capacity (hide, never claim success) — T16-SF2.
-    const snap = windowSV.value;
-    const filled = fillTileSlots(snap, bounds, rects.value, xforms.value, fillParams);
-    if (filled === -1 && !pendingSV.value) {
-      pendingSV.value = true;
-      scheduleOnRN(requestWindow, cx0, cy0, cx1, cy1);
-      return -1;
-    }
-    if (filled === -2) {
-      // Capacity insufficient even at a valid zoom (e.g. extreme rotation
-      // on a fully occupied span) — hide everything, never partial.
-      for (let i = 0; i < capacity; i++) {
-        rects.value[i]?.setXYWH(0, 0, 0, 0);
-      }
-      return -2;
-    }
-    return filled;
+    return updateTileLayerUI({
+      camera: camera as never,
+      viewport: viewportSV as never,
+      window: windowSV,
+      pendingGen: pendingGenSV,
+      warnedCapacity: warnedCapacitySV,
+      capacityWarnPending: capacityWarnPendingSV,
+      rects,
+      xforms,
+      requestWindow,
+      scheduleOnRN: (fn) => scheduleOnRN(fn),
+      onBeyondCapacity,
+      generation,
+      capacity,
+      originX,
+      originY,
+      cw,
+      ch,
+      layerWidth: layerData.width,
+      layerHeight: layerData.height,
+      padWorld,
+      px,
+      py,
+      minZoom,
+    });
   });
 
   // Coherent parallax: the visual correction uses the SAME factor as the

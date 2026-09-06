@@ -476,10 +476,10 @@ describe('tilemap layer mounted contract', () => {
     });
     // The mount-time evaluation finds an uncovered window and schedules the
     // RN request; the synchronous mock delivers it, binding the snapshot.
-    // One request carrying the uncovered cell range (minified builds strip
-    // function names, so match on shape: exactly four cell scalars).
+    // The bridge carries one generation-stamped closure (GS-TILE-01): the
+    // range travels inside, so late deliveries are rejected by stamp.
     assert.equal(scheduleOnRNCalls.length, 1);
-    assert.equal(scheduleOnRNCalls[0]!.args.length, 4);
+    assert.equal(scheduleOnRNCalls[0]!.args.length, 0, 'range travels inside the closure');
     // The next evaluation fills from the transferred bounded snapshot.
     const second = lastDerived()();
     assert.ok(second > 0, `expected filled slots after transfer (${second})`);
@@ -676,5 +676,55 @@ describe('tilemap layer mounted contract', () => {
       }
       assert.equal(threw, true, 'parallax.x NaN must throw');
     }
+  });
+
+  it('GS-TILE-01 replacing the map resets the window instead of reusing stale tiles', async () => {
+    const World = GameWorld2D;
+    const diagonal = makeMap(48, 48);
+    const empty = Core.defineTileMap2D({
+      cellSize: { width: 16, height: 16 },
+      tileset: Core.defineTileSet2D({ tiles: { grass: { frame: 'g', collision: 'solid' } } }),
+      layers: [{ id: 't', width: 48, height: 48, data: new Array(48 * 48).fill(0) }],
+    });
+    const cam = cameraAt(400, 400);
+    const vp = viewportAt();
+    const tree = (map: typeof diagonal) =>
+      createElement(
+        World as never,
+        { viewport: vp, camera: cam } as never,
+        createElement(TileMapLib.TileMapLayer2D as never, {
+          map,
+          layer: 't',
+          source: { image: { __image: true } as never, frames: FRAMES },
+          width: 320,
+          height: 480,
+          overscan: 1,
+        } as never),
+      );
+    let renderer: ReturnType<typeof create> | null = null;
+    await act(async () => {
+      renderer = create(tree(diagonal));
+    });
+    // Fresh fill closure = last pair's first (fill, then visual-transform).
+    const freshFill = (): number =>
+      (derivedClosures[derivedClosures.length - 2] as () => number)();
+    assert.ok(freshFill() > 0, 'the diagonal map fills');
+
+    // Same-size replacement with an empty map: the new binding must reset.
+    // (The synchronous mock delivers the re-request during render, so the
+    // observable proof is the fill count: stale reuse would fill > 0.)
+    await act(async () => {
+      renderer!.update(tree(empty));
+    });
+    assert.equal(freshFill(), 0, 'the empty map fills nothing — no stale tiles');
+
+    // And back: new tiles appear under the latest binding.
+    await act(async () => {
+      renderer!.update(tree(diagonal));
+    });
+    assert.ok(freshFill() > 0, 'the diagonal tiles reappear');
+    await act(async () => {
+      renderer!.unmount();
+    });
   });
 });
