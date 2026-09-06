@@ -32,7 +32,7 @@ export type LoadedAudioApi = {
       cb: (event: unknown) => void,
     ): { remove(): void; subscriptionId?: string };
     observeAudioInterruptions(param: unknown): void;
-  };
+  } | undefined;
 };
 
 let loader: (() => Promise<LoadedAudioApi>) | null = null;
@@ -57,20 +57,18 @@ export async function loadAudioApi(): Promise<LoadedAudioApi> {
     (mod as unknown as { AudioContext?: LoadedAudioApi['AudioContext'] }).AudioContext ??
     (mod as unknown as { default?: { AudioContext?: LoadedAudioApi['AudioContext'] } }).default?.AudioContext ??
     (mod as unknown as LoadedAudioApi).AudioContext;
-  const AudioManager =
-    (mod as unknown as { default?: { AudioManager?: LoadedAudioApi['AudioManager'] } }).default?.AudioManager ??
-    (mod as unknown as { AudioManager?: LoadedAudioApi['AudioManager'] }).AudioManager ??
-    (mod as unknown as { AudioManager?: LoadedAudioApi['AudioManager'] }).AudioManager;
-
   if (!AudioContext) {
     throw new Error('AudioContext not found in react-native-audio-api — linking may have failed');
   }
+  // GS-AUDIO-03: no synthesized no-op AudioManager. Interruption
+  // observation is an explicit optional capability: createGameAudio warns
+  // once and runs without it, so silence can never masquerade as support.
+  const AudioManager =
+    (mod as unknown as { default?: { AudioManager?: LoadedAudioApi['AudioManager'] } }).default?.AudioManager ??
+    (mod as unknown as { AudioManager?: LoadedAudioApi['AudioManager'] }).AudioManager ??
+    undefined;
   return {
     AudioContext: AudioContext as LoadedAudioApi['AudioContext'],
-    AudioManager: (AudioManager ?? {
-      getDevicePreferredSampleRate: () => 44100,
-      addSystemEventListener: () => ({ remove() {} }),
-      observeAudioInterruptions: () => {},
-    }) as LoadedAudioApi['AudioManager'],
+    AudioManager: AudioManager as LoadedAudioApi['AudioManager'],
   };
 }

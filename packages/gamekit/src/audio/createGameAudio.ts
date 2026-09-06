@@ -85,46 +85,6 @@ export async function createGameAudio<T extends AudioSoundRecord>(
 
   const volumes: Record<AudioCategory, number> = { master: 1, music: 1, sfx: 1, ui: 1 };
 
-  // Gain setup — master -> destination, categories -> master (F1)
-  try {
-    const mg = (context as unknown as { createGain: ()=> GainLike }).createGain?.();
-    if (mg) {
-      masterGain = mg;
-      try { (mg as unknown as { connect: (d: unknown)=>void }).connect((context as unknown as { destination: unknown }).destination); } catch {}
-      for (const cat of CATEGORIES) {
-        if (cat === 'master') { categoryGains[cat] = mg; continue; }
-        try {
-          const cg = (context as unknown as { createGain: ()=> GainLike }).createGain();
-          if (cg) {
-            categoryGains[cat] = cg;
-            try { (cg as unknown as { connect: (d: unknown)=>void }).connect(mg); } catch {}
-          }
-        } catch {}
-      }
-    }
-  } catch {}
-
-  function applyGain(category: AudioCategory): void {
-    const gain = categoryGains[category];
-    if (!gain) return;
-    // F1: write only own volume; composition happens in graph (master * category)
-    const value = volumes[category];
-    try {
-      const param = gain.gain as unknown as { value: number; cancelScheduledValues?: (t:number)=>void; setValueAtTime?: (v:number,t:number)=>void; linearRampToValueAtTime?: (v:number,t:number)=>void };
-      const now = (context as unknown as { currentTime: number }).currentTime ?? 0;
-      if (param.cancelScheduledValues) param.cancelScheduledValues(now);
-      if (param.setValueAtTime) param.setValueAtTime(param.value, now);
-      if (param.linearRampToValueAtTime) param.linearRampToValueAtTime(value, now + 0.02);
-      else param.value = value;
-    } catch {
-      try { (gain.gain as unknown as { value: number }).value = value; } catch {}
-    }
-  }
-
-  function applyAllGains(): void {
-    for (const c of CATEGORIES) applyGain(c);
-  }
-
   let muted = false;
   let disposed = false;
   let userPaused = false;
@@ -174,8 +134,64 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     try { return await promise; } catch (e) { pendingDecodes.delete(id); throw e; }
   }
 
-  // Transaction: eager decode with cleanup on failure (F3)
+  function applyGain(category: AudioCategory): void {
+    const gain = categoryGains[category];
+    if (!gain) return;
+    // F1: write only own volume; composition happens in graph (master * category)
+    const value = volumes[category];
+    try {
+      const param = gain.gain as unknown as { value: number; cancelScheduledValues?: (t:number)=>void; setValueAtTime?: (v:number,t:number)=>void; linearRampToValueAtTime?: (v:number,t:number)=>void };
+      const now = (context as unknown as { currentTime: number }).currentTime ?? 0;
+      if (param.cancelScheduledValues) param.cancelScheduledValues(now);
+      if (param.setValueAtTime) param.setValueAtTime(param.value, now);
+      if (param.linearRampToValueAtTime) param.linearRampToValueAtTime(value, now + 0.02);
+      else param.value = value;
+    } catch {
+      try { (gain.gain as unknown as { value: number }).value = value; } catch {}
+    }
+  }
+
+  function applyAllGains(): void {
+    for (const c of CATEGORIES) applyGain(c);
+  }
+
+  // Transaction: gain graph plus eager decode, with cleanup on failure
+  // (F3, GS-AUDIO-03). Any failure closes the half-built context before
+  // rethrowing — init never returns a silent partial object.
   try {
+  // Gain setup — master -> destination, categories -> master (F1).
+  // GS-AUDIO-03: the gain graph is REQUIRED setup. A failure throws
+  // transactionally (the init boundary closes the context and rethrows)
+  // instead of returning an apparently usable but silent object.
+  const mg = (context as unknown as { createGain?: () => GainLike }).createGain?.();
+  if (!mg) {
+    throw new GameAudioError('createGameAudio requires a working channel gain graph (master createGain failed)');
+  }
+  masterGain = mg;
+  try {
+    (mg as unknown as { connect: (d: unknown) => void }).connect(
+      (context as unknown as { destination: unknown }).destination,
+    );
+  } catch (e) {
+    throw new GameAudioError(`createGameAudio requires a working channel gain graph (master connect failed: ${(e as Error).message})`);
+  }
+  for (const cat of CATEGORIES) {
+    if (cat === 'master') {
+      categoryGains[cat] = mg;
+      continue;
+    }
+    const cg = (context as unknown as { createGain?: () => GainLike }).createGain?.();
+    if (!cg) {
+      throw new GameAudioError(`createGameAudio requires a working channel gain graph (category ${cat} createGain failed)`);
+    }
+    categoryGains[cat] = cg;
+    try {
+      (cg as unknown as { connect: (d: unknown) => void }).connect(mg);
+    } catch (e) {
+      throw new GameAudioError(`createGameAudio requires a working channel gain graph (category ${cat} connect failed: ${(e as Error).message})`);
+    }
+  }
+
     await Promise.all(soundIds.map((id) => getBuffer(id)));
   } catch (e) {
     // Close context exactly once before rethrowing
@@ -290,9 +306,16 @@ export async function createGameAudio<T extends AudioSoundRecord>(
     }
   }
   try {
-    AudioManager.observeAudioInterruptions(true);
-    interruptionEnabled = true;
-    interruptionSub = AudioManager.addSystemEventListener('interruption', handleInterruption as never);
+    // GS-AUDIO-03: interruption observation is explicitly optional. Without
+    // an AudioManager the service still plays, but warns once so the gap
+    // is visible instead of silently disappearing behind a no-op fallback.
+    if (AudioManager) {
+      AudioManager.observeAudioInterruptions(true);
+      interruptionEnabled = true;
+      interruptionSub = AudioManager.addSystemEventListener('interruption', handleInterruption as never);
+    } else {
+      console.warn('[GameAudio] AudioManager unavailable — interruption observation disabled');
+    }
   } catch { interruptionSub = null; }
 
   try {
@@ -622,7 +645,7 @@ export async function createGameAudio<T extends AudioSoundRecord>(
       bufferCache.clear();
       if (idleSuspendTimer) { clearTimeout(idleSuspendTimer); idleSuspendTimer=null; }
       if (interruptionSub) { try { interruptionSub.remove(); } catch {} interruptionSub=null; }
-      if (interruptionEnabled) { try { AudioManager.observeAudioInterruptions(false); } catch {} interruptionEnabled=false; }
+      if (interruptionEnabled) { try { AudioManager?.observeAudioInterruptions(false); } catch {} interruptionEnabled=false; }
       if (appStateSub) { try { appStateSub.remove(); } catch {} appStateSub=null; }
       if (context) void (context as InstanceType<typeof AudioContext>).close().catch(()=>{});
     },

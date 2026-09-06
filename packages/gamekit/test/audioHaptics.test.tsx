@@ -11,7 +11,7 @@ mock.module('react-native-audio-api', {
       sampleRate = 44100;
       async decodeAudioData() { return { length: 0, duration: 0 } as never; }
       createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
-      createGain() { return {} as never; }
+      createGain() { return { gain: { value: 1 }, connect() {} } as never; }
       async suspend() {}
       async resume() {}
       async close() {}
@@ -30,7 +30,7 @@ mock.module('react-native-audio-api', {
       sampleRate = 44100;
       async decodeAudioData() { return { length: 0, duration: 0 } as never; }
       createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
-      createGain() { return {} as never; }
+      createGain() { return { gain: { value: 1 }, connect() {} } as never; }
       async suspend() {}
       async resume() {}
       async close() {}
@@ -285,7 +285,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
         createBufferSource() {
           return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never;
         }
-        createGain() { return {} as never; }
+        createGain() { return { gain: { value: 1 }, connect() {} } as never; }
         async suspend() {}
         async resume() {}
         async close() {}
@@ -323,7 +323,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
           return { length: 2, duration: 0.02 } as never;
         }
         createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
-        createGain() { return {} as never; }
+        createGain() { return { gain: { value: 1 }, connect() {} } as never; }
         async suspend() {}
         async resume() {}
         async close() {}
@@ -358,7 +358,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
         sampleRate = 44100;
         async decodeAudioData() { return { length: 0, duration: 0 } as never; }
         createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
-        createGain() { return {} as never; }
+        createGain() { return { gain: { value: 1 }, connect() {} } as never; }
         async suspend() {}
         async resume() {}
         async close() {}
@@ -381,7 +381,7 @@ describe('T14-RF3 asset loader seam and file:// handling', () => {
         sampleRate = 44100;
         async decodeAudioData() { throw new Error('decode boom'); }
         createBufferSource() { return { buffer: null, loop: false, connect() {}, start() {}, stop() {}, addEventListener() {} } as never; }
-        createGain() { return {} as never; }
+        createGain() { return { gain: { value: 1 }, connect() {} } as never; }
         async suspend() {}
         async resume() {}
         async close() {}
@@ -1423,6 +1423,86 @@ describe('GS-AUDIO-02 stop-oldest collection bounds', () => {
     assert.ok(counts.concurrencyKeys <= 2, `concurrency keys bounded (got ${counts.concurrencyKeys})`);
     assert.ok(counts.activeVoices <= 1, `live voices bounded by the limit (got ${counts.activeVoices})`);
     audio.dispose();
+    __setAudioApiLoader(null);
+  });
+});
+
+describe('GS-AUDIO-03 required setup honesty and explicit capabilities', () => {
+  function backendWith(options: { gain?: 'throw' | 'missing'; manager?: 'missing' }) {
+    let closed = false;
+    const api: Record<string, unknown> = {
+      AudioContext: class {
+        state = 'running';
+        currentTime = 0;
+        destination = {};
+        sampleRate = 44100;
+        async decodeAudioData() {
+          return { length: 1, duration: 0.01 } as never;
+        }
+        createBufferSource() {
+          return { buffer: null, loop: false, connect() {}, start() {}, stop() {} } as never;
+        }
+        createGain() {
+          if (options.gain === 'throw') throw new Error('no gain');
+          if (options.gain === 'missing') return null;
+          return { gain: { value: 1 }, connect() {} } as never;
+        }
+        async suspend() {}
+        async resume() {}
+        async close() {
+          closed = true;
+        }
+      },
+    };
+    if (options.manager !== 'missing') {
+      api.AudioManager = {
+        getDevicePreferredSampleRate: () => 44100,
+        addSystemEventListener: () => ({ remove() {} }),
+        observeAudioInterruptions: () => {},
+      };
+    }
+    return { api, wasClosed: () => closed };
+  }
+
+  it('failed gain setup rejects transactionally and closes the context', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    for (const gain of ['throw', 'missing'] as const) {
+      const { api, wasClosed } = backendWith({ gain });
+      __setAudioApiLoader(async () => api as never);
+      await assert.rejects(() => createGameAudio({ sounds: { a: 1 } }), /gain/i);
+      assert.equal(wasClosed(), true, 'the half-built context is closed');
+    }
+    __setAudioApiLoader(null);
+  });
+
+  it('a missing AudioManager warns once and audio still works', async () => {
+    const { __setAudioApiLoader } = await import('../src/audio/resolver.ts');
+    const { createGameAudio } = await import('../src/audio/createGameAudio.ts');
+    const { api } = backendWith({ manager: 'missing' });
+    __setAudioApiLoader(async () => api as never);
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+    try {
+      const audio = await createGameAudio({ sounds: { a: 1 } });
+      (audio as unknown as { play(id: string): void }).play('a');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      assert.ok(
+        warnings.some((args) => /interruption/i.test(String(args[0]))),
+        'capability absence is reported explicitly',
+      );
+      assert.equal(
+        warnings.filter((args) => /interruption/i.test(String(args[0]))).length,
+        1,
+        'reported once, not per call',
+      );
+      audio.dispose();
+    } finally {
+      console.warn = originalWarn;
+    }
     __setAudioApiLoader(null);
   });
 });
