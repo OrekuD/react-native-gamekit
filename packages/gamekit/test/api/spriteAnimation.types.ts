@@ -8,6 +8,7 @@
  */
 import {
   advanceSpriteAnimation,
+  playSpriteAnimation,
   startSpriteAnimation,
   type SpriteAnimationState,
 } from '../../src/index';
@@ -40,5 +41,12 @@ void completed;
 // (GS-ANIMATION-02); untyped callers still hit the runtime ASSET_UNKNOWN_CLIP.
 // @ts-expect-error 'idel' is not a clip of the player sheet
 startSpriteAnimation(player, 'idel');
-// @ts-expect-error 'run' is not a clip of the player sheet
-playSpriteAnimation(player, running, 'run');
+// @ts-expect-error 'rnu' is not a clip of the player sheet
+playSpriteAnimation(player, running, 'rnu');
+
+// A state widened to string no longer carries the descriptor's clip tie,
+// so it cannot advance against the sheet (the sprites subpath fixture
+// keeps the narrow ClipNames alias for the same reason).
+const widened: SpriteAnimationState<string> = running;
+// @ts-expect-error a widened string state is not tied to the descriptor's clips
+advanceSpriteAnimation(player, widened, 1 / 60);
