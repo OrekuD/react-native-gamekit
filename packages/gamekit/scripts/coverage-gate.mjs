@@ -56,6 +56,7 @@ try {
   output = execFileSync(
     process.execPath,
     [
+      '--expose-gc',
       '--import',
       'tsx',
       '--experimental-test-module-mocks',

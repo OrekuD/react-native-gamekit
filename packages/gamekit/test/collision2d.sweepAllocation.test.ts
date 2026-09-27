@@ -45,7 +45,13 @@ describe('circle sweep miss-path allocation (T11-SF3)', () => {
     assert.ok(!code.includes('[') && !code.includes(']'), 'no array literals');
   });
 
-  it('keeps the miss path within GC noise across 100k calls', () => {
+  it('retains no meaningful heap across 100k miss calls', () => {
+    assert.equal(
+      typeof globalThis.gc,
+      'function',
+      'allocation test must run with node --expose-gc',
+    );
+    const collectGarbage = globalThis.gc as () => void;
     // The circle at x=60 never reaches the target's right edge (36 + 4),
     // so every call is a true miss.
     const miss = (index: number) =>
@@ -59,15 +65,17 @@ describe('circle sweep miss-path allocation (T11-SF3)', () => {
     for (let index = 0; index < 50_000; index += 1) {
       assert.equal(miss(index), undefined);
     }
+    collectGarbage();
     const before = process.memoryUsage().heapUsed;
     const start = performance.now();
     for (let index = 0; index < 100_000; index += 1) {
       assert.equal(miss(index), undefined);
     }
     const elapsed = performance.now() - start;
+    collectGarbage();
     const after = process.memoryUsage().heapUsed;
     const delta = (after - before) / 1024;
     console.log(`sweep misses: 100k calls in ${elapsed.toFixed(1)}ms, heap delta ${delta.toFixed(1)} KiB`);
-    assert.ok(delta < 512, `miss path allocates nothing (heap delta ${delta.toFixed(1)} KiB)`);
+    assert.ok(delta < 512, `miss path retains heap (delta ${delta.toFixed(1)} KiB)`);
   });
 });

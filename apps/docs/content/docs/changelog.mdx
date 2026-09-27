@@ -1,11 +1,14 @@
 ---
 title: Changelog
-description: What shipped in each release of rn-gamekit, and where the unreleased work stands.
+description: What shipped in each release of rn-gamekit.
 ---
 
 The changelog lives with the package: [`packages/gamekit/CHANGELOG.md`](https://github.com/OrekuD/react-native-gamekit/blob/main/packages/gamekit/CHANGELOG.md). This page is the short version.
 
-## Unreleased (current main)
+## 0.2.0 — September 27, 2026
+
+This release expands the initial engine foundation into a broader 2D toolkit
+while preserving one package, one version, and opt-in system entry points.
 
 - Package entry points: `rn-gamekit/geometry`, `rn-gamekit/collision2d`, `rn-gamekit/camera2d`, `rn-gamekit/events`, `rn-gamekit/assets`, and `rn-gamekit/sprites` are now explicit subpaths of the single `rn-gamekit` package — one `npm install`, one version, one `exports` map. Existing root imports remain valid (same symbols, no duplicate state); the new subpaths are the preferred organization.
 - Camera2D: one authoritative presented camera shared by rendering and pointer input, with follow, world bounds, cuts, deterministic shake, parallax layers, and visibility culling.
@@ -17,6 +20,20 @@ The changelog lives with the package: [`packages/gamekit/CHANGELOG.md`](https://
 - Observable pause/resume lifecycle: `GameSession.addStatusListener()` and `useGameSessionStatus()`.
 - Paused-input policy: gameplay input is cancelled on pause and rejected while paused.
 - Collision2D: geometry primitives, contacts, exact Minkowski sweeps, colliders, filters, broad phase, and headless debug projection.
+- Multi-touch controls: `GameButtonPad` and `GameButton` feed semantic button
+  actions through the shared input boundary.
+- Runtime hardening: stricter snapshot values, transactional lifecycle cleanup,
+  and fail-closed ownership across assets, sprites, sessions, and system
+  adapters.
+
+### Dependency changes
+
+- Audio uses the optional `react-native-audio-api` peer.
+- Haptics uses the optional `react-native-pulsar` peer.
+- Persistent storage uses the optional
+  `@react-native-async-storage/async-storage` peer.
+- `expo-audio`, `expo-haptics`, and `react-native-safe-area-context` are no
+  longer package peer requirements.
 
 ## 0.1.0
 

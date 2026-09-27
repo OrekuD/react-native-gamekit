@@ -12,6 +12,12 @@ This is the direction of travel, not a schedule. Every system below lands only w
 - **Game events** (see [Events](../engine-systems/events)): declared event names, typed envelopes with payload limits, deterministic seeding, and update-scoped emitters.
 - **Particles** (see [Particles](../engine-systems/particles)): headless effect definitions and simulation with presentation-only Skia rendering and camera-aware culling.
 - **Audio and haptics** (see [Audio](../engine-systems/audio) and [Haptics](../engine-systems/haptics)): opt-in subpath entries with lifecycle-aware playback and bounded haptic presets.
+- **Tilemaps** (see [Tilemaps](../engine-systems/tilemaps)): chunked authored
+  maps, bounded queries, Atlas rendering, Tiled imports, and platformer
+  movement helpers.
+- **Storage** (see [Storage](../engine-systems/storage)): versioned save
+  projections, bounded serialization, migrations, ordered writes, and an
+  optional persistent adapter.
 
 ## Next up
 
@@ -20,9 +26,11 @@ This is the direction of travel, not a schedule. Every system below lands only w
 
 ## Further out
 
-- **Tilemaps.** Authored tile data with an atlas-backed renderer; the broad phase and the batch already assume the shapes this would need.
-- **Storage.** A small, headless save/load API for high scores and settings, kept out of the simulation loop.
-- **Physics.** A real solver on top of Collision2D's geometry. Detection stays yours until this exists.
+- **Physics.** Optional rigid-body integration remains deferred. Collision2D
+  continues to provide deterministic detection without defining the game's
+  world model.
+- **3D rendering.** The architecture keeps future seams open, but the public
+  package remains focused on 2D.
 
 ## Infrastructure
 

@@ -73,6 +73,7 @@ function GameScreen() {
 | `rn-gamekit/events` | `defineGameEvents` / `gameEvent`, envelopes, `PAYLOAD_LIMITS`, `seedGameEvent`, `GameEventError` | React / native |
 | `rn-gamekit/assets` | `defineAssets` / `image` / `spriteSheet`, descriptor types, `GameAssetError` | React / Skia |
 | `rn-gamekit/sprites` | `sampleSpriteClip*`, `start/advance/…SpriteAnimation` | React components / Atlas |
+| `rn-gamekit/storage` | Versioned saves, migrations, ordered stores, memory and optional persistent adapters | React / Skia |
 | `rn-gamekit/react` | `GameView`, `GameWorld2D`, `Sprite`, hooks, asset/particle/tilemap rendering | — |
 | `rn-gamekit/audio` · `haptics` · `particles` · `tilemap` | Opt-in or existing system subpaths | — |
 | `rn-gamekit/testing` | Deterministic frame driver (test-only) | — |
@@ -103,9 +104,13 @@ import { GameView, GameWorld2D } from 'rn-gamekit/react';
 - A `Camera2D` system with follow, shake, bounds, culling, and parallax layers
 - 2D collision detection with shapes, sweeps, manifolds, and a spatial hash
 - Headless particle effects with presentation-only Skia rendering
+- Chunked tilemaps, Atlas rendering, Tiled imports, and platformer movement
+- Versioned save projections with migrations and ordered persistence
 - Audio playback and haptic patterns through opt-in subpath entries
 - A `testing` entry with a manual frame driver for deterministic tests
 
 ## What it isn't yet
 
-There's no physics simulation or ECS layer, and tilemaps and 3D are future work. Input beyond buttons and pointers (keyboard, gamepad, virtual sticks) is not covered yet; see the [Roadmap](./roadmap) for what's coming and what order it lands in.
+There's no physics simulation, ECS layer, or 3D renderer. Input beyond buttons
+and pointers, such as keyboard and gamepad input, isn't covered yet. See the
+[Roadmap](./roadmap) for what's coming and what order it lands in.

@@ -21,9 +21,14 @@ Gamekit renders with Skia and drives input through Gesture Handler. Your app ins
 | `react-native-reanimated` | 4.x | Shared values, derived worklets, the alpha clock |
 | `react-native-worklets` | 0.10 | The worklet runtime the renderers run on |
 | `react-native-gesture-handler` | 3.x | Pointer and gesture adapters |
-| `react-native-safe-area-context` | latest | Safe-area insets for HUDs and headers |
 
 Keep exactly one copy of each in the app's `dependencies`. The native singleton rule is the one rule that breaks builds silently: two copies of Skia or Reanimated in the tree and the app links whichever one it finds first.
+
+Audio, haptics, and persistent storage have separate optional native peers.
+Install them only when you import `rn-gamekit/audio`, `rn-gamekit/haptics`, or
+use the persistent adapter from `rn-gamekit/storage`. The
+[Installation](../getting-started/installation) page lists their validated
+versions.
 
 ## Platform
 
