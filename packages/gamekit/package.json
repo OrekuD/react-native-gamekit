@@ -1,6 +1,6 @@
 {
   "name": "rn-gamekit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A headless-first 2D game toolkit for React Native and Expo, built for mobile and tablet.",
   "license": "MIT",
   "keywords": [
