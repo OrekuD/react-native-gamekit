@@ -478,11 +478,14 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
 
     // Completion order must equal acceptance order. The manual-save projection
     // may legitimately capture the pre-crossing snapshot (getRenderFrame lag).
+    // GS-STORAGE-01 heritage deletion: reset removes the v2 record and its
+    // legacy key, so one accepted reset completes as two adapter removes.
     const ordered = ops.filter((o) => o.startsWith('write:') || o === 'remove');
-    assert.equal(ordered.length, 3, `three completions (got ${JSON.stringify(ops)})`);
+    assert.equal(ordered.length, 4, `four completions (got ${JSON.stringify(ops)})`);
     assert.match(ordered[0]!, /^write:\d+$/, 'first completion is the checkpoint save');
     assert.match(ordered[1]!, /^write:/, 'second completion is the manual save');
-    assert.equal(ordered[2], 'remove', 'last completion is the reset');
+    assert.equal(ordered[2], 'remove', 'reset removes the versioned record');
+    assert.equal(ordered[3], 'remove', 'reset removes the legacy heritage key');
     await act(async () => {
       renderer!.unmount();
     });
