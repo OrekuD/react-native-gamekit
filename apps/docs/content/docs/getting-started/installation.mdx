@@ -11,14 +11,14 @@ React Native Gamekit is validated against one compatibility line, and the playgr
 
 | Dependency | Version |
 | --- | --- |
-| Expo | SDK 57 (`~57.0.10`) |
-| React Native | `0.86.2` |
+| Expo | SDK 57 (`~57.0.25`) |
+| React Native | `0.86.3` |
 | React | `19.2.3` |
 | React Native Skia | `2.11.0` |
 | React Native Gesture Handler | `~3.1.0` |
 | React Native Reanimated | `4.5.3` |
 | React Native Worklets | `0.10.3` |
-| Expo Asset | `~57.0.8` |
+| Expo Asset | `~57.0.18` |
 
 ## Install the package
 
@@ -51,30 +51,32 @@ The package is called `rn-gamekit`.
 
 Gamekit doesn't ship native code. Skia, Gesture Handler, Reanimated, Worklets, and Expo Asset are native modules that your app owns, and Gamekit declares the exact version line it was validated against. Your app ends up with exactly one copy of each native module, which is what native modules want.
 
-Use `expo install` so the versions match your SDK:
+Pin the validated line so you don't drift to the SDK template versions:
 
 <Tabs items={['npm', 'yarn', 'pnpm', 'bun']} groupId="package-manager" persist>
   <Tab value="npm">
     ```sh
-    npx expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    npx expo install @shopify/react-native-skia@2.11.0 react-native-gesture-handler@~3.1.0 react-native-reanimated@4.5.3 react-native-worklets@0.10.3 expo-asset@~57.0.18
     ```
   </Tab>
   <Tab value="yarn">
     ```sh
-    yarn expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    yarn expo install @shopify/react-native-skia@2.11.0 react-native-gesture-handler@~3.1.0 react-native-reanimated@4.5.3 react-native-worklets@0.10.3 expo-asset@~57.0.18
     ```
   </Tab>
   <Tab value="pnpm">
     ```sh
-    pnpm expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    pnpm expo install @shopify/react-native-skia@2.11.0 react-native-gesture-handler@~3.1.0 react-native-reanimated@4.5.3 react-native-worklets@0.10.3 expo-asset@~57.0.18
     ```
   </Tab>
   <Tab value="bun">
     ```sh
-    bunx expo install @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets expo-asset
+    bunx expo install @shopify/react-native-skia@2.11.0 react-native-gesture-handler@~3.1.0 react-native-reanimated@4.5.3 react-native-worklets@0.10.3 expo-asset@~57.0.18
     ```
   </Tab>
 </Tabs>
+
+Skia, Gesture Handler, Reanimated, and Worklets are intentionally ahead of the SDK 57 template, so exclude them from Expo's version check in your `package.json`. Don't run `npx expo install --fix` without this exclude — it downgrades them to the template line and breaks input and rendering. See the [Expo package.json reference](https://docs.expo.dev/versions/latest/config/package-json/#installexclude) for the `expo.install.exclude` field.
 
 ### Optional audio and haptics peers
 
@@ -104,6 +106,15 @@ Audio and haptics are optional. Only add them if you use `rn-gamekit/audio` or `
 </Tabs>
 
 Importing `rn-gamekit` does not load these backends. Calling `createGameAudio()` or `createGameHaptics()` without the peer throws `is not installed — run npx expo install ...`.
+
+### Optional persistent storage peer
+
+The memory storage adapter has no native dependency. Install AsyncStorage only
+if you use `createGameStorageAdapter()` for persistent saves:
+
+```sh
+npx expo install @react-native-async-storage/async-storage@2.2.0
+```
 
 {/* prettier-ignore */}
 > [!IMPORTANT]

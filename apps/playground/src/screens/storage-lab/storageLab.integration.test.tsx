@@ -734,6 +734,6 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
     const pkg = JSON.parse(await fs.readFile(new URL('../../../package.json', import.meta.url), 'utf8')) as {
       dependencies: Record<string, string>;
     };
-    assert.equal(pkg.dependencies['@react-native-async-storage/async-storage'], '2.1.2');
+    assert.equal(pkg.dependencies['@react-native-async-storage/async-storage'], '2.2.0');
   });
 });

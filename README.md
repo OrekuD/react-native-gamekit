@@ -10,7 +10,7 @@ This repository is a pnpm + Turborepo monorepo containing three projects:
 
 | Path | Package | Purpose |
 | --- | --- | --- |
-| `packages/gamekit` | `rn-gamekit` | The publishable TypeScript library: fixed-step headless session, named scenes and transitions, button/pointer input, viewport math, and a React/Skia adapter. |
+| `packages/gamekit` | `rn-gamekit` | The publishable TypeScript library: fixed-step sessions, 2D game systems, and React/Skia presentation. |
 | `apps/playground` | `@react-native-gamekit/playground` | Expo development-build playground for iOS, iPadOS, and Android with shape, Brick Breaker, sprite, and performance examples. |
 | `apps/docs` | `@react-native-gamekit/docs` | Fumadocs (Next.js) documentation site. |
 
@@ -83,6 +83,9 @@ Node for deterministic tests:
   filters.
 - Typed game events via `defineGameEvents` / `gameEvent` with typed
   envelopes, payload limits, and deterministic seeding.
+- Bounded particle effects, chunked tilemaps, platformer movement helpers,
+  versioned saves, migrations, and ordered storage adapters.
+- Opt-in audio and haptics through dedicated package subpaths.
 
 The React entry (`rn-gamekit/react`) adds:
 
@@ -90,6 +93,7 @@ The React entry (`rn-gamekit/react`) adds:
   surface, binds `AppState`, and never renders per-frame React state.
 - `GamePointerInput` — Gesture Handler adapter that feeds logical coordinates
   through the shared viewport.
+- `GameButtonPad` and `GameButton` — multi-touch-safe semantic button input.
 - `useGameSession` and `useGameSessionStatus` — React bindings for observing
   and driving a session without owning the frame loop.
 - `useGameAssets`, `Sprite`, `GameSprite`, and `SpriteBatch` — reference-counted
@@ -100,13 +104,13 @@ The React entry (`rn-gamekit/react`) adds:
   rendering and pointer input through the same generation.
 - `ParticleView` and `useParticlePresentation` — presentation-only Skia
   rendering of headless particle systems.
+- `TileMapLayer2D` — bounded Atlas presentation for chunked tilemap layers.
 
-The playground includes a moving-shape bootstrap, Brick Breaker, Paddle,
-Sprite Field, Collision Lab, Camera Lab, Particle Lab, and the Performance
-Lab. See the docs for walkthroughs.
+The playground includes reference games and labs for sessions, sprites,
+collision, cameras, particles, tilemaps, audio, haptics, storage, and
+performance. See the docs for walkthroughs.
 
-Physics simulation, broader input adapters, tilemaps, and 3D remain future
-work.
+Physics simulation, broader input adapters, and 3D remain future work.
 
 ## Compatibility
 
@@ -114,16 +118,17 @@ The first supported line (validated in the playground):
 
 | Dependency | Version |
 | --- | --- |
-| Expo | SDK 57 (`~57.0.10`) |
-| React Native | `0.86.2` |
+| Expo | SDK 57 (`~57.0.25`) |
+| React Native | `0.86.3` |
 | React | `19.2.3` |
 | React Native Skia | `2.11.0` |
 | React Native Gesture Handler | `~3.1.0` |
 | React Native Reanimated | `4.5.3` |
 | React Native Worklets | `0.10.3` |
-| Expo Asset | `~57.0.8` |
+| Expo Asset | `~57.0.18` |
 
-See `apps/docs/content/docs/compatibility.mdx` for the documented compatibility page.
+See `apps/docs/content/docs/introduction/supported-platforms.mdx` for the
+documented compatibility page.
 
 ## Credits
 

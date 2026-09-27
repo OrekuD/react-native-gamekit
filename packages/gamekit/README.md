@@ -3,7 +3,7 @@
 A headless-first 2D game toolkit for React Native and Expo, built for phones
 and tablets.
 
-> **0.1 preview:** React Native GameKit is usable for small 2D games and
+> **0.2 preview:** React Native GameKit is usable for small 2D games and
 > prototypes, but its API may change before 1.0.
 
 ## What is included
@@ -15,17 +15,20 @@ and tablets.
 - React Native Skia rendering with Reanimated interpolation;
 - typed local images, sprite sheets, animation clips, and asset loading;
 - retained sprites and Atlas-backed sprite batching;
+- geometry, Collision2D, Camera2D, and deterministic game events;
+- bounded particles, tilemaps, and platformer movement helpers;
+- opt-in audio, haptics, and versioned storage;
 - a native-free root entry for headless tests.
 
 ## Requirements
 
-Version 0.1 targets the Expo SDK 57 compatibility set:
+Version 0.2 targets the Expo SDK 57 compatibility set:
 
 | Package | Supported version |
 | --- | --- |
-| React Native | `~0.86.2` |
+| React Native | `~0.86.3` |
 | React | `^19.2.3` |
-| Expo | `~57.0.10` |
+| Expo | `~57.0.25` |
 | React Native Skia | `2.11.0` |
 | Gesture Handler | `~3.1.0` |
 | Reanimated | `4.5.3` |
@@ -40,6 +43,19 @@ Expo Go is not required or supported. Use an Expo development build and
 npm install rn-gamekit
 npx expo install expo-asset @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets
 npx expo prebuild
+```
+
+Install optional native peers only for the systems you use:
+
+```sh
+# rn-gamekit/audio
+npx expo install react-native-audio-api@0.13.3
+
+# rn-gamekit/haptics
+npx expo install react-native-pulsar@1.7.0
+
+# Persistent rn-gamekit/storage adapter
+npx expo install @react-native-async-storage/async-storage@2.2.0
 ```
 
 Wrap the application with Gesture Handler's root view:
@@ -134,7 +150,9 @@ fresh clock baseline, gameplay input is cancelled and rejected while paused,
 and `useGameSessionStatus(session)` drives pause UI without a second state
 source.
 
-`rn-gamekit` is one npm package. Paths like `rn-gamekit/collision2d` are package export subpaths — they are not separately versioned or published, they share the same `rn-gamekit` version, peer policy, and `exports` map, and they ship in the same tarball.
+`rn-gamekit` is one npm package. Paths like `rn-gamekit/collision2d` are
+package export subpaths. They aren't separately versioned or published; they
+share the same version, peer policy, exports map, and tarball.
 
 ### Entry points (one package, one install)
 
@@ -169,18 +187,16 @@ import { GameView, GameWorld2D, Sprite } from 'rn-gamekit/react';
 
 **Compatibility:** `import { collideCircleAabb2D } from 'rn-gamekit'` and other existing root imports continue to work. Root and subpath exports reference the same underlying symbols (`===` and `instanceof` preserved, no duplicate state). No deprecation or removal is announced in this release — the new subpaths are the preferred organization, not a breaking change.
 
-See the [repository documentation](https://github.com/OrekuD/rn-gamekit/tree/main/apps/docs/content/docs)
-and [Expo playground](https://github.com/OrekuD/rn-gamekit/tree/main/apps/playground)
-for complete examples.
-
-See the [repository documentation](https://github.com/OrekuD/rn-gamekit/tree/main/apps/docs/content/docs)
-and [Expo playground](https://github.com/OrekuD/rn-gamekit/tree/main/apps/playground)
+See the [repository documentation](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/docs/content/docs)
+and [Expo playground](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground)
 for complete examples.
 
 ## Current scope
 
-The 0.1 release focuses on performant 2D foundations. Physics and 3D rendering are not yet
-part of the public package; tilemaps, audio, haptics, events, particles, and versioned storage are now included.
+The 0.2 release focuses on performant 2D foundations and the core systems
+needed by small games. Physics simulation and 3D rendering aren't part of the
+public package. Tilemaps, audio, haptics, events, particles, and versioned
+storage are included.
 
 ## License
 
