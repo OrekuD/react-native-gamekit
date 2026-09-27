@@ -33,7 +33,7 @@ void sampleSpriteClipFrame(clip, 150);
 void sampleSpriteClipFrameName(clip, 150);
 void spriteClipDurationMs(clip);
 
-const state: SpriteAnimationState<string> = startSpriteAnimation(sheet, 'idle' as const);
+const state: SpriteAnimationState<ClipNames> = startSpriteAnimation(sheet, 'idle' as const);
 void advanceSpriteAnimation(sheet, state, 1 / 60);
 void playSpriteAnimation(sheet, state, 'idle' as const);
 void pauseSpriteAnimation(state);
