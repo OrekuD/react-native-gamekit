@@ -1,5 +1,10 @@
 # Game systems review
 
+The renewed implementation review starts with
+[system 01 — session review, 2026-10-20](01-session-review-2026-10-20.md).
+That record contains current fixes, measurements, API before/after proposals
+and remaining gates. The September briefs below remain historical evidence.
+
 Reviewed **2026-09-05**. These are implementation briefs for the existing 2D library: what each system must do, what is already sound, concrete defects, things to delete or simplify, and how to verify each proposed change. The review itself changes documentation and the explicitly authorized performance skill; it does not implement runtime fixes.
 
 ## Baseline and status

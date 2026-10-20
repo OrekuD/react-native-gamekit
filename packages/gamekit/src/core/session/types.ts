@@ -118,10 +118,11 @@ export interface GameSession<
   /**
    * Transition to a declared scene.
    *
-   * While running, the transition commits at the next frame-driver callback
-   * — even when no fixed step is due — without advancing simulation tick or
-   * time. The target scene first updates at the next due fixed step. While
-   * idle or paused, it commits synchronously and publishes the new frame.
+   * While running, the transition applies at the next frame-driver callback,
+   * even when no fixed step is due. The transition itself advances no time;
+   * any due steps update the target in that same callback. One hard cut
+   * publishes the latest completed target snapshot (previous === current).
+   * While idle or paused, it commits synchronously and publishes the new frame.
    * Setting the current scene is an idempotent no-op.
    */
   setScene(name: keyof TScenes): void;
@@ -146,7 +147,12 @@ export interface GameSession<
    * event. Put the data an effect needs into its small payload.
    */
   getRenderFrame(): GameRenderFrame<TScenes>;
-  /** Observe simulation commits at commit frequency (never per display frame). */
+  /**
+   * Observe commits: one per driver callback containing steps or a transition,
+   * plus the initial baseline and synchronous idle/paused transitions. A
+   * transition callback publishes its final snapshot as a hard cut. Ordinary
+   * zero-step callbacks do not notify.
+   */
   addCommitListener(listener: (frame: CommitFrame<TScenes>) => void): GameSubscription;
   /**
    * Observe deterministic game events after they commit (T13).

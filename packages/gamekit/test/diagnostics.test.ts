@@ -175,4 +175,39 @@ describe('session diagnostics sink (T1)', () => {
     assert.ok(events.includes('fixed-step'), 'the transition step ran a fixed step');
     assert.ok(!events.includes('zero-step'), 'a step that transitions early is not zero-step');
   });
+
+  it('counts a transition on the second fixed step as catch-up work', () => {
+    const { events, sink } = createRecordingSink();
+    const driver = new ManualFrameDriver();
+    const session = createGameSessionWithDriver(defineGame({
+      viewport,
+      input: {},
+      scenes: {
+        a: defineScene({
+          actions: [],
+          transitions: ['b'],
+          create: () => ({}),
+          update: ({ state, sceneTick, transition }) => {
+            if (sceneTick === 2) transition.setScene('b');
+            return state;
+          },
+          snapshot: ({ state }) => state,
+        }),
+        b: defineScene({
+          actions: [],
+          create: () => ({}),
+          update: ({ state }) => state,
+          snapshot: ({ state }) => state,
+        }),
+      },
+      initialScene: 'a',
+    }), { frameDriver: driver, fixedStepMs: 10, diagnostics: sink });
+    session.start();
+    driver.fireNext(0);
+    driver.fireNext(25);
+    assert.equal(events.filter((event) => event === 'fixed-step').length, 2);
+    assert.equal(events.filter((event) => event === 'catch-up').length, 1);
+    assert.equal(session.getRenderFrame().tick, 2);
+    session.dispose();
+  });
 });
