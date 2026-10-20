@@ -69,12 +69,13 @@ const [settingsRes, saveRes] = await Promise.all([
 ]);
 
 // saveRes.status is 'default' | 'stored' | 'migrated' — all are validated and frozen
-const session = createGameSession(game, {
-  // seed your scene from saveRes.data — never JSON.stringify(session)
-});
+// An application-owned factory closes over validated data in the scene's create().
+const game = createGameDefinition(saveRes.data, settingsRes.data);
+const session = createGameSession(game);
 ```
 
 Do this at your app root or before the surface mounts. Pause never auto-saves; you decide when a boundary commits.
+`createGameDefinition` above is your own factory, not a GameKit API. `createGameSession` accepts only the definition; it has no seed-data options argument. Save domain data rather than serializing the session.
 
 ## Save after a checkpoint commits
 

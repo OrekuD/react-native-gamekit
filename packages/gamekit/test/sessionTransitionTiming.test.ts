@@ -2,11 +2,11 @@
  * GS-SESSION-01 — external transition timing contract.
  *
  * While running, a queued `setScene` commits at the next frame-driver
- * callback — even when no fixed step is due — without advancing simulation
- * tick or time, and the target scene's update first runs at the next due
- * fixed step. At 120 Hz display with a 60 Hz simulation the transition may
- * publish on a zero-step callback; it never runs a target update early and
- * never discards timing debt.
+ * callback, even when no fixed step is due. The transition itself advances
+ * no time; any steps already due run in the target in that same callback.
+ * One hard cut publishes its latest completed snapshot. At 120 Hz display
+ * with a 60 Hz simulation a zero-step transition publishes the initial target;
+ * it never runs a target update early and never discards timing debt.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';

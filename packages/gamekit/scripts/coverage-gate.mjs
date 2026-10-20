@@ -24,6 +24,8 @@ const MIN_LINE_COVERAGE = 80;
 
 // Targeted modules by repository-relative path (see scope note above).
 const TRACKED_MODULES = [
+  'src/core/session/createGameSession.ts',
+  'src/definition/defineGame.ts',
   'src/react/alphaClock.ts',
   'src/react/pointerCoalescer.ts',
   'src/react/pointerContainment.ts',

@@ -1,6 +1,6 @@
 ---
 title: Game loop & time
-description: A fixed-step simulation running headless, with deterministic time. No delta-time accumulation, no wall clocks in game logic.
+description: A headless fixed-step simulation with bounded catch-up and simulation time independent of display refresh.
 ---
 
 Gamekit runs a fixed-step loop, and that choice is the reason the same game behaves identically on a 120 Hz phone and a 60 Hz tablet.
@@ -23,18 +23,23 @@ Physics-style code uses `deltaSeconds` explicitly: `x += vx * deltaSeconds`. Wal
 
 ## Frames versus ticks
 
-A tick is a simulation step; a display frame is a presentation opportunity. On a 60 Hz screen they usually line up one to one, but a 120 Hz screen presents two frames per tick and a slow frame presents none. Renderers interpolate between the previous and current snapshot with the `alpha` fraction from the UI clock, so smooth motion survives the mismatch. The [Renderer guide](../engine-systems/rendering) covers interpolation in practice.
+A tick is a simulation step; a display frame is a presentation opportunity. On a 60 Hz screen they usually line up one to one. A 120 Hz display offers two callbacks per simulation tick; a delayed callback may run several catch-up ticks. The default session caps both accepted frame delta and catch-up work at five steps, discarding excess wall time after a stall. Renderers interpolate between the previous and current snapshot with the `alpha` fraction from the UI clock. The [Renderer guide](../engine-systems/rendering) covers interpolation in practice.
+
+Ordinary zero-step callbacks publish nothing. A callback with updates publishes the final adjacent snapshot pair once. An external `setScene()` or `restartScene()` applies at the next driver callback, including a zero-step callback. If steps are due, they run in the target scene before one hard cut publishes its latest snapshot with `previous === current`. The transition itself consumes no simulation time.
 
 ## Determinism and the frame driver
 
-The loop is headless: it asks a frame driver for timestamps and advances ticks from them. In the app, a `useFrameCallback` drives the session. In Node, the same session runs against a manual driver:
+The loop is headless: it asks a frame driver for timestamps and advances ticks from them. Live sessions use the platform `requestAnimationFrame` on the RN JavaScript runtime. The renderer's UI-runtime `useFrameCallback` drives interpolation, not simulation. In Node, the same session runs against a manual driver:
 
 ```ts
 import { createGameSessionWithDriver, ManualFrameDriver } from 'rn-gamekit/testing';
 
 const driver = new ManualFrameDriver();
 const session = createGameSessionWithDriver(definition, { frameDriver: driver });
-driver.fireNext(16.7); // exactly one tick, at a timestamp you chose
+session.start();
+driver.fireNext(0); // establish the baseline, no tick
+driver.fireNext(1000 / 60); // one fixed step
+session.dispose();
 ```
 
 Same definition, same driver schedule, same state. That is what makes [headless tests](../guides/test-your-game-headlessly) deterministic: the test owns time.

@@ -1,5 +1,8 @@
 # Game definition and fixed-step session
 
+For the current implementation review, see
+[2026-10-20 follow-up](01-session-review-2026-10-20.md).
+
 Reviewed 2026-09-05 against working tree based on `a27f78b`. This records the original review, not verification of subsequent implementation commits. Priority, evidence, and implementation status conventions are in [README](README.md).
 
 ## Purpose and verdict

@@ -52,6 +52,17 @@ function throwFailure(record: FailureRecord): void {
   }
 }
 
+/** Finish every lifecycle stage before surfacing its failures in order. */
+function throwFailures(...records: readonly FailureRecord[]): void {
+  const errors = records.flatMap((record) => record.failed ? [record.value] : []);
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'Lifecycle operation failed with multiple errors');
+  }
+}
+
 /**
  * Immutably compose two failures into one lossless error: an AggregateError
  * with a stable message and ordered `errors`. Neither thrown value is
@@ -207,7 +218,7 @@ export function createGameSessionWithDriver<
       );
     }
   }
-  const erasedSceneMap: Record<string, ErasedScene> = {};
+  const erasedSceneMap: Record<string, ErasedScene> = Object.create(null);
   for (const [name, scene] of Object.entries(definition.scenes)) {
     const erased = scene as unknown as ErasedScene;
     for (const action of erased.actions) {
@@ -283,7 +294,10 @@ export function createGameSessionWithDriver<
     hardCut: false,
     stepMs: fixedStepMs,
   }) as unknown as CommitFrame<TScenes>;
-  const listeners = new Set<(frame: CommitFrame<TScenes>) => void>();
+  // Membership changes at control frequency. Each publication traverses the
+  // current immutable array, so reentrant subscription changes affect only
+  // later passes without allocating a listener snapshot on every commit.
+  let listeners: readonly ((frame: CommitFrame<TScenes>) => void)[] = [];
   const statusListeners = new Set<(status: GameSessionStatus) => void>();
   let deliveringStatus = false;
   const queuedStatuses: GameSessionStatus[] = [];
@@ -420,12 +434,16 @@ export function createGameSessionWithDriver<
 
   // Simulation commits are the only presentation updates (T5): a commit
   // happens on the initial baseline, after every presentation callback that
-  // ran at least one fixed step (one commit per callback, carrying the final
-  // adjacent snapshot pair), and on every transition/restart. Zero-step
+  // ran at least one fixed step (one commit carrying the final adjacent pair),
+  // and on every transition/restart. A callback containing a transition
+  // publishes one hard cut at its final snapshot. Ordinary zero-step
   // callbacks allocate nothing beyond scheduling their successor.
   const commit = () => {
     const hardCut = hardCutPending;
     hardCutPending = false;
+    if (hardCut) {
+      previousSnapshot = currentSnapshot;
+    }
     publishedThisCallback = true;
     const publishStart = diagnostics === undefined ? 0 : now();
     const frame = Object.freeze({
@@ -439,14 +457,22 @@ export function createGameSessionWithDriver<
       stepMs: fixedStepMs,
     }) as unknown as CommitFrame<TScenes>;
     commitFrame = frame;
-    for (const listener of [...listeners]) {
+    for (const listener of listeners) {
       listener(frame);
     }
     if (diagnostics !== undefined) {
       diagnostics.onPublish(now() - publishStart);
       diagnostics.onCommitNotification();
-      diagnostics.onListenerCount(listeners.size);
+      diagnostics.onListenerCount(listeners.length);
     }
+  };
+
+  const cancelPendingFrame = (): FailureRecord => {
+    const handle = frameHandle;
+    frameHandle = undefined;
+    return captureFailure(() => {
+      if (handle !== undefined) options.frameDriver.cancelFrame(handle);
+    });
   };
 
   const pauseInternal = () => {
@@ -454,14 +480,12 @@ export function createGameSessionWithDriver<
       return;
     }
     generation += 1;
-    if (frameHandle !== undefined) {
-      options.frameDriver.cancelFrame(frameHandle);
-      frameHandle = undefined;
-    }
+    const cancellationFailure = cancelPendingFrame();
     previousTimestampMs = undefined;
     accumulatorMs = 0;
     inputBuffer.reset();
-    setStatus('paused');
+    const notificationFailure = captureFailure(() => setStatus('paused'));
+    throwFailures(cancellationFailure, notificationFailure);
   };
 
   const commitOrPause = () => {
@@ -664,10 +688,9 @@ export function createGameSessionWithDriver<
         diagnostics.onDisplayCallback();
       }
 
-      // A pending external transition commits at the next frame-driver
-      // callback — a zero-step callback may carry it — without advancing
-      // simulation tick/time. The target scene first updates at the next
-      // due fixed step; accumulated timing debt is preserved.
+      // Apply an external transition without advancing time. Due steps below
+      // update the target in this callback, then one hard cut publishes its
+      // latest snapshot. Zero-step callbacks publish the initial target.
       if (pendingTransition !== undefined) {
         const pending = pendingTransition;
         pendingTransition = undefined;
@@ -676,7 +699,6 @@ export function createGameSessionWithDriver<
         } catch (error) {
           pauseAndRethrow(error);
         }
-        commitOrPause();
         if (status !== 'running' || generation !== activeGeneration) {
           return;
         }
@@ -805,11 +827,15 @@ export function createGameSessionWithDriver<
               deliverEvents(stagedThisTick);
             }
             accumulatorMs = Math.max(0, accumulatorMs - fixedStepMs);
+            catchUpSteps += 1;
             // F4: the transition consumed one fixed step; report it as such
             // and never as a zero-step callback (zero-step fires only when
             // no step ran at all).
             if (diagnostics !== undefined) {
               diagnostics.onFixedStep();
+              if (catchUpSteps > 1) {
+                diagnostics.onCatchUpStep();
+              }
             }
             break;
           }
@@ -859,6 +885,12 @@ export function createGameSessionWithDriver<
       } catch (error) {
         activeUpdateScope = undefined;
         updateInProgress = false;
+        // A prepared external target is already authoritative even if its
+        // first update fails. Publish its last successful snapshot as a cut
+        // before pausing; preserve the simulation error if a listener fails.
+        if (hardCutPending && !isDisposed()) {
+          captureFailure(commit);
+        }
         pauseAndRethrow(error);
       }
 
@@ -876,11 +908,12 @@ export function createGameSessionWithDriver<
         }
       }
 
-      if (stepsRan && !publishedThisCallback) {
-        // One commit per presentation callback, with the final adjacent pair:
-        // `previous`/`current` already hold the last two committed snapshots.
-        // A transition inside the loop also counts as a run step: its hard
-        // cut commits here (zero-step callbacks never reach this branch).
+      if (isDisposed()) {
+        return;
+      }
+      if ((stepsRan || hardCutPending) && !publishedThisCallback) {
+        // Coalesce due updates with a pending external transition. The cut
+        // uses the latest target snapshot, never an earlier initial snapshot.
         commitOrPause();
       }
       if (status === 'running' && generation === activeGeneration) {
@@ -936,11 +969,7 @@ export function createGameSessionWithDriver<
           commitOrPause();
         }
       });
-      if (pauseFailure.failed && transitionFailure.failed) {
-        throw composeFailures(pauseFailure.value, transitionFailure.value);
-      }
-      throwFailure(pauseFailure);
-      throwFailure(transitionFailure);
+      throwFailures(pauseFailure, transitionFailure);
     },
     setScene(name: keyof TScenes) {
       assertLive();
@@ -981,11 +1010,8 @@ export function createGameSessionWithDriver<
       if (status === 'disposed') {
         return;
       }
-      if (frameHandle !== undefined) {
-        options.frameDriver.cancelFrame(frameHandle);
-        frameHandle = undefined;
-      }
       generation += 1;
+      const cancellationFailure = cancelPendingFrame();
       previousTimestampMs = undefined;
       accumulatorMs = 0;
       pendingTransition = undefined;
@@ -1000,14 +1026,10 @@ export function createGameSessionWithDriver<
       releaseStatusListeners = true;
       const notificationFailure = captureFailure(() => setStatus('disposed'));
       const cleanupFailure = captureFailure(() => {
-        listeners.clear();
+        listeners = [];
         disposeSceneInstance(activeScene, activeScene.state);
       });
-      if (notificationFailure.failed && cleanupFailure.failed) {
-        throw composeFailures(notificationFailure.value, cleanupFailure.value);
-      }
-      throwFailure(notificationFailure);
-      throwFailure(cleanupFailure);
+      throwFailures(cancellationFailure, notificationFailure, cleanupFailure);
     },
     getRenderFrame() {
       const alpha = commitFrame.hardCut
@@ -1017,7 +1039,9 @@ export function createGameSessionWithDriver<
     },
     addCommitListener(listener) {
       assertLive();
-      listeners.add(listener);
+      if (!listeners.includes(listener)) {
+        listeners = [...listeners, listener];
+      }
       let removed = false;
       return Object.freeze({
         remove() {
@@ -1025,7 +1049,7 @@ export function createGameSessionWithDriver<
             return;
           }
           removed = true;
-          listeners.delete(listener);
+          listeners = listeners.filter((entry) => entry !== listener);
         },
       });
     },

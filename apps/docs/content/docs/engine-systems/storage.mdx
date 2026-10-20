@@ -138,7 +138,8 @@ if (loaded.status === 'migrated') {
   // fromVersion -> toVersion was migrated sequentially and re-validated
   console.log(`migrated ${loaded.fromVersion} -> ${loaded.toVersion}`);
 }
-const session = createGameSession(game, { /* use loaded.data to seed initial scene */ });
+// Your own definition factory seeds the scene's create() from validated data.
+const session = createGameSession(createGameDefinition(loaded.data));
 
 await saves.save('profile-1', projectSave(session.getRenderFrame().current));
 await saves.flush();
