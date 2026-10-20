@@ -190,6 +190,14 @@ Do not present this argument as a general seed/save-data container.
 - Library, docs and iOS playground export builds passed. Turbopack needed a
   rerun outside the sandbox because its local worker port was initially denied.
 - Independent correctness and security review found no patch-introduced issue.
+- GitHub CI for commit `2ed8411` passed lint, typechecks, API fixtures, tests,
+  coverage and the docs build. It failed at Expo dependency validation, also
+  reproduced locally: `expo` 57.0.25 expects ~57.0.30, `@expo/ui` 57.0.20
+  expects ~57.0.25, `expo-asset` 57.0.18 expects ~57.0.20, and
+  `expo-dev-client` 57.0.19 expects ~57.0.20. These pins are unchanged from
+  the base branch. CI skipped its later export/prebuild/autolinking steps.
+  Dependency alignment is an additional merge blocker; do not disable the
+  check to make this system review pass.
 - `pnpm audit --audit-level high` failed on the unchanged dependency graph:
   48 advisories (4 critical, 34 high, 9 moderate, 1 low). Critical paths include
   Next.js in the docs app and shell-quote through Expo/React Native tooling.
