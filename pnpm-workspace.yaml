@@ -10,8 +10,34 @@ saveWorkspaceProtocol: '*'
 catalog:
   typescript: ~6.0.3
 
+catalogs:
+  # Exact installed native test set; public peer ranges remain in the library manifest.
+  native:
+    '@expo/ui': 57.0.20
+    '@react-native-async-storage/async-storage': 2.2.0
+    '@shopify/react-native-skia': 2.11.0
+    '@types/react': 19.2.18
+    'eslint-config-expo': 57.0.2
+    'expo': 57.0.25
+    'expo-asset': 57.0.18
+    'expo-audio': 57.0.5
+    'expo-dev-client': 57.0.19
+    'expo-haptics': 57.0.3
+    'expo-status-bar': 57.0.1
+    'react': 19.2.3
+    'react-dom': 19.2.3
+    'react-native': 0.86.3
+    'react-native-audio-api': 0.13.3
+    'react-native-gesture-handler': 3.1.0
+    'react-native-pulsar': 1.7.0
+    'react-native-reanimated': 4.5.3
+    'react-native-safe-area-context': 5.7.0
+    'react-native-worklets': 0.10.3
+    'react-test-renderer': 19.2.3
+
 overrides:
-  # Security floor for docs/build tooling transitive dependencies.
+  # Existing security pins, not minimum-version floors. Review parent upgrades
+  # and removal conditions per the contributing guide before changing these.
   postcss: 8.5.25
   sharp: 0.35.3
   uuid: 11.1.1
