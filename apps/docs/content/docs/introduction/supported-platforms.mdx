@@ -16,18 +16,26 @@ Expo Go can't run this. The toolkit needs the Skia, Gesture Handler, and Reanima
 
 ## The validated compatibility line
 
-One line of versions is validated in the playground, and it's the line the package declares as its peer dependencies:
+The exact native workspace pins and the library's supported peer ranges are
+separate. Audio, haptics, and persistent storage peers are optional. Upgrades
+require native builds and smoke checks; this table alone is not a device
+validation report.
 
-| Dependency | Version |
-| --- | --- |
-| Expo | SDK 57 (`~57.0.25`) |
-| React Native | `0.86.3` |
-| React | `19.2.3` |
-| React Native Skia | `2.11.0` |
-| React Native Gesture Handler | `~3.1.0` |
-| React Native Reanimated | `4.5.3` |
-| React Native Worklets | `0.10.3` |
-| Expo Asset | `~57.0.18` |
+{/* deps:table:start */}
+| Package | Workspace version | Supported peer range |
+| --- | --- | --- |
+| `@react-native-async-storage/async-storage` | `2.2.0` | `^2.2.0` |
+| `@shopify/react-native-skia` | `2.11.0` | `2.11.0` |
+| `expo` | `57.0.25` | `~57.0.25` |
+| `expo-asset` | `57.0.18` | `~57.0.18` |
+| `react` | `19.2.3` | `^19.2.3` |
+| `react-native` | `0.86.3` | `~0.86.3` |
+| `react-native-audio-api` | `0.13.3` | `^0.13.3` |
+| `react-native-gesture-handler` | `3.1.0` | `~3.1.0` |
+| `react-native-pulsar` | `1.7.0` | `^1.7.0` |
+| `react-native-reanimated` | `4.5.3` | `4.5.3` |
+| `react-native-worklets` | `0.10.3` | `0.10.3` |
+{/* deps:table:end */}
 
 ## Native singletons
 

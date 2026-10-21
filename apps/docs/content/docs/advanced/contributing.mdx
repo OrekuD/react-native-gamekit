@@ -31,6 +31,11 @@ pnpm typecheck           # type-check all workspaces
 pnpm test                # run all workspace tests
 pnpm test:coverage       # tests with coverage where supported
 pnpm check               # lint -> typecheck -> test -> build, in that order
+pnpm deps:check          # manifest policy and installed native dependency checks
+pnpm deps:test           # dependency policy and documentation regression tests
+pnpm deps:test:coverage  # dependency tooling tests with an 80% coverage gate
+pnpm deps:docs           # refresh generated consumer version/install blocks
+pnpm deps:autolinking    # inspect Expo's native autolinking duplicates
 ```
 
 `ios`, `android`, and `expo:prebuild*` alter or compile native projects and
@@ -51,3 +56,125 @@ are intentionally not cached by Turborepo.
 5. **One lockfile.** `apps/*` and `packages/*` share the root pnpm workspace.
 
 See `AGENTS.md` at the repository root for the full invariants.
+
+## Dependency ownership
+
+`pnpm-workspace.yaml` owns the exact native development versions in its
+`native` catalog. The playground dependencies and the library development
+dependencies use `catalog:native`, so they cannot drift through independent
+manifest edits. The default catalog owns shared TypeScript. Keep the single
+root lockfile committed and use `pnpm install --frozen-lockfile` when
+reproducing a checkout. [pnpm catalogs](https://pnpm.io/catalogs) centralize
+declared versions; the lockfile records the resolved dependency graph.
+
+The library's explicit `peerDependencies` describe the support promised to
+consumers. They remain separate from the exact versions used for development.
+Changing the catalog does not authorize widening a peer range. Review the
+consumer contract when upgrading, and verify the packed manifest before
+publishing. Native singleton packages remain peers plus development dependencies
+in the library, and application dependencies in the playground.
+
+The docs application owns its web dependencies independently, including React.
+It need not use the native React version. The native app must resolve one copy
+of each native singleton; multiple versions elsewhere in the monorepo alone do
+not prove an application conflict. Use `pnpm deps:check` for repository policy
+and installed resolution checks, then `pnpm deps:autolinking` to inspect the
+native modules Expo would link. Neither substitutes for a native build.
+
+The playground installs every library peer, including optional peers, so its
+audio, haptics, and storage examples exercise the selected versions. Consumers
+still install optional peers only for features they use. The policy check
+recognizes common native package names and checks Node resolution of the managed
+dependencies; it does not discover every possible native module or reproduce
+Metro resolution. Review new packages and inspect autolinking output as well.
+
+## Expo compatibility and exceptions
+
+Use the target Expo SDK's supported versions as the starting point for native
+upgrades. Four packages deliberately differ from the SDK template and remain in
+the playground's `expo.install.exclude` list:
+
+| Package | Why the exception exists |
+| --- | --- |
+| `@shopify/react-native-skia` | The rendering implementation uses the newer Skia API line, including `select()`. |
+| `react-native-gesture-handler` | The input adapter uses the Gesture Handler 3 API line. |
+| `react-native-reanimated` | The selected patch belongs to the rendering/worklet combination maintained with Skia. |
+| `react-native-worklets` | Its selected patch is maintained with Reanimated and the worklet bridge. |
+
+Reconsider every exception at each SDK upgrade and whenever one of these
+packages changes. Remove an exclusion when Expo supports the required version;
+otherwise record why it remains necessary and the iOS/Android validation
+performed. An exclusion opts out of Expo's recommendation check; it is not
+evidence of compatibility. Historical version and device reports in `plans/`
+describe their recorded runs, not certification of every later combination.
+
+`pnpm --filter @react-native-gamekit/playground exec expo install --check`
+asks Expo for its current recommendations. Its online result can change while
+the manifests and lockfile stay identical. `pnpm deps:check` verifies the
+checked-in baseline instead. The GitHub Action's existing Expo check remains
+unchanged, so the known recommendation mismatch can still fail it until a
+separate dependency upgrade is validated.
+
+Do not run `expo install --fix` as an unattended catalog update. Review its
+proposals, preserve justified exclusions, and move accepted exact versions into
+the catalog. Expo's manifest-writing commands may replace catalog references;
+restore those references and inspect the diff before committing. Do not add
+exclusions or use offline mode merely to silence an upgrade recommendation.
+
+## Updating dependencies
+
+1. Choose a coherent target SDK/native set using upstream compatibility notes.
+   Review the four exceptions and the library's published peer ranges.
+2. Edit exact versions in `catalogs.native`, then run `pnpm install` at the
+   repository root. Commit the catalog and lockfile together. Keep docs and
+   tooling upgrades in their own PRs unless a demonstrated dependency requires
+   a coordinated change.
+3. Run `pnpm deps:docs` to refresh consumer installation instructions and version
+   tables. Review any peer changes separately; a passing local version is not
+   evidence that every version in a broader range works.
+4. Run `pnpm check`, `pnpm deps:autolinking`, and `pnpm pack:inspect`. Inspect the
+   package's published peer metadata, and run the Expo recommendation check to
+   explain any remaining divergence.
+5. For native version upgrades, regenerate the CNG projects and build/run both
+   iOS and Android. Smoke-test rendering, gestures, worklet updates, assets, and
+   optional native features affected by the upgrade. Record versions, build
+   mode, device/simulator, results, and any untested platform in the PR.
+
+`pnpm lint` includes the dependency policy and generated documentation checks;
+`pnpm test` includes their regression tests. Headless tests and an Expo export
+alone do not establish native compatibility.
+
+## Automated update proposals
+
+`renovate.json` groups native compatibility candidates, docs dependencies, and
+workspace tooling separately. Native catalog entries are matched by catalog
+name, so React in the docs app stays in the docs group. Renovate also reports
+updates to existing override pins. Normal new proposals are scheduled for
+Monday, 00:00–07:00 Africa/Accra. Native candidates and override updates require
+Dependency Dashboard approval before a branch is created; no update automerges.
+Published peer ranges are excluded from automated edits.
+
+Grouping does not select an Expo-compatible stack. A maintainer must choose the
+compatible candidate versions, complete the upgrade checks above, and adjust
+consumer peers deliberately. Security-fix proposals bypass the normal schedule
+and dashboard approval so they can receive prompt review; they still require
+compatibility validation and manual merging.
+
+The repository config does not install or enable Renovate. A repository owner
+must enable the hosted app (or configure a runner) with access to this repository.
+GitHub's dependency graph and Dependabot alerts, plus Renovate's permission to
+read those alerts, are prerequisites for its GitHub vulnerability-fix proposals.
+See [Renovate's npm/catalog support](https://docs.renovatebot.com/modules/manager/npm/)
+and [configuration reference](https://docs.renovatebot.com/configuration-options/).
+
+## Temporary dependency overrides
+
+The existing `postcss`, `sharp`, and `uuid` overrides are exact pins, not
+minimum-version security floors. They remain unchanged by the catalog
+migration. Before extending or replacing one, identify the affected dependency
+path and advisory, explain why upgrading its parent is insufficient, and record
+an owner and a concrete removal condition in the PR and next to the override.
+Prefer a parent-package update or a narrowly scoped override when possible.
+Review these pins during dependency maintenance; a fixed version can itself
+become outdated. Do not infer an advisory or a security guarantee from the
+existing generic comment.

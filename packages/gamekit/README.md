@@ -22,40 +22,77 @@ and tablets.
 
 ## Requirements
 
-Version 0.2 targets the Expo SDK 57 compatibility set:
+Version 0.2 targets Expo SDK 57. Workspace versions are exact development pins;
+supported peer ranges are the library's consumer contract. Audio, haptics, and
+persistent storage peers are optional.
 
-| Package | Supported version |
-| --- | --- |
-| React Native | `~0.86.3` |
-| React | `^19.2.3` |
-| Expo | `~57.0.25` |
-| React Native Skia | `2.11.0` |
-| Gesture Handler | `~3.1.0` |
-| Reanimated | `4.5.3` |
-| Worklets | `0.10.3` |
+<!-- deps:table:start -->
+| Package | Workspace version | Supported peer range |
+| --- | --- | --- |
+| `@react-native-async-storage/async-storage` | `2.2.0` | `^2.2.0` |
+| `@shopify/react-native-skia` | `2.11.0` | `2.11.0` |
+| `expo` | `57.0.25` | `~57.0.25` |
+| `expo-asset` | `57.0.18` | `~57.0.18` |
+| `react` | `19.2.3` | `^19.2.3` |
+| `react-native` | `0.86.3` | `~0.86.3` |
+| `react-native-audio-api` | `0.13.3` | `^0.13.3` |
+| `react-native-gesture-handler` | `3.1.0` | `~3.1.0` |
+| `react-native-pulsar` | `1.7.0` | `^1.7.0` |
+| `react-native-reanimated` | `4.5.3` | `4.5.3` |
+| `react-native-worklets` | `0.10.3` | `0.10.3` |
+<!-- deps:table:end -->
 
 Expo Go is not required or supported. Use an Expo development build and
 `expo prebuild`, or a bare React Native app configured with Expo Modules.
 
 ## Installation
 
+<!-- deps:install:start -->
 ```sh
 npm install rn-gamekit
-npx expo install expo-asset @shopify/react-native-skia react-native-gesture-handler react-native-reanimated react-native-worklets
-npx expo prebuild
+npx expo install @shopify/react-native-skia@2.11.0 expo-asset@57.0.18 react-native-gesture-handler@3.1.0 react-native-reanimated@4.5.3 react-native-worklets@0.10.3
 ```
+<!-- deps:install:end -->
 
-Install optional native peers only for the systems you use:
+Merge these exclusions into your application's `package.json`. These four
+libraries use GameKit's selected native versions rather than Expo's defaults;
+review their compatibility before changing them or running `expo install --fix`.
+
+<!-- deps:excludes:start -->
+```json
+{
+  "expo": {
+    "install": {
+      "exclude": [
+        "@shopify/react-native-skia",
+        "react-native-gesture-handler",
+        "react-native-reanimated",
+        "react-native-worklets"
+      ]
+    }
+  }
+}
+```
+<!-- deps:excludes:end -->
+
+Install optional native peers only for the systems you use: audio uses
+`react-native-audio-api`, haptics uses `react-native-pulsar`, and persistent
+storage uses `@react-native-async-storage/async-storage`.
+
+<!-- deps:optional:start -->
+```sh
+npx expo install @react-native-async-storage/async-storage@2.2.0
+npx expo install react-native-audio-api@0.13.3
+npx expo install react-native-pulsar@1.7.0
+```
+<!-- deps:optional:end -->
+
+Then regenerate and build the native projects:
 
 ```sh
-# rn-gamekit/audio
-npx expo install react-native-audio-api@0.13.3
-
-# rn-gamekit/haptics
-npx expo install react-native-pulsar@1.7.0
-
-# Persistent rn-gamekit/storage adapter
-npx expo install @react-native-async-storage/async-storage@2.2.0
+npx expo prebuild
+npx expo run:ios
+npx expo run:android
 ```
 
 Wrap the application with Gesture Handler's root view:

@@ -732,11 +732,12 @@ describe('StorageLabScreen integration (T17-RF3 + SF1/SF2)', () => {
     assert.equal(strictRecord.created, strictRecord.disposed, 'StrictMode: every created session disposed');
   });
 
-  it('playground declares AsyncStorage directly', async () => {
+  it('playground declares AsyncStorage directly through the native catalog', async () => {
     const fs = await import('node:fs/promises');
     const pkg = JSON.parse(await fs.readFile(new URL('../../../package.json', import.meta.url), 'utf8')) as {
       dependencies: Record<string, string>;
     };
-    assert.equal(pkg.dependencies['@react-native-async-storage/async-storage'], '2.2.0');
+    // deps:check validates the catalog version, lockfile and installed peer.
+    assert.equal(pkg.dependencies['@react-native-async-storage/async-storage'], 'catalog:native');
   });
 });
