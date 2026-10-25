@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   type ComponentType,
-  type MutableRefObject,
   type ReactNode,
 } from 'react';
 import {
@@ -16,7 +15,7 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import { useFrameCallback, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { useFrameCallback, useSharedValue, type FrameInfo, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 
 import type { CameraCut2D } from '../camera2d';
@@ -67,10 +66,8 @@ export interface GameViewProps<
   /** Externally owned headless game session. */
   readonly game: GameSession<TScenes, TInput>;
   /**
-   * Explicit presentation key (RF6): remounts the per-session presentation
-   * when the session changes. The fallback is a stable per-session identity
-   * allocated from a WeakMap (T8.6) — never object stringification, which
-   * maps every session to the same value.
+   * Change this key to reset presentation for the same session. Session
+   * replacement always remounts presentation, even when this key is reused.
    */
   readonly presentationKey?: string | number;
   /** The stable loaded asset lease; shape-only games omit it. */
@@ -151,7 +148,6 @@ function GamePresentation<
   assets,
   renderer,
   viewportValue,
-  instrumentationRef,
   instrumentation,
   cameraDefinition,
   presentedCamera,
@@ -160,15 +156,17 @@ function GamePresentation<
   readonly assets: LoadedAssets<TAssets> | undefined;
   readonly renderer: ComponentType<GameRendererProps<TScenes, TAssets>>;
   readonly viewportValue: SharedValue<ResolvedViewport2D | undefined>;
-  readonly instrumentationRef: MutableRefObject<GameViewInstrumentation | undefined>;
   readonly instrumentation: GameViewInstrumentation | undefined;
   readonly cameraDefinition: GameCamera2DDefinition<CommitFrame<TScenes>> | undefined;
   readonly presentedCamera: SharedValue<CameraCut2D | undefined>;
 }) {
   const Renderer = renderer;
+  const instrumentationRef = useRef(instrumentation);
+  const observationGenerationRef = useRef(0);
   const frame = useSharedValue<CommitFrame<TScenes>>(() => game.getRenderFrame());
   const alpha = useSharedValue(0);
   const cameraBinding = usePresentedCameraBinding(cameraDefinition, presentedCamera);
+  const presentCamera = cameraBinding.present;
   // T10.6: the presentation gate mirrors CORE status, not callback-local
   // state — a direct session.pause() freezes presentation too. Idle holds
   // until the binding starts the session.
@@ -178,10 +176,10 @@ function GamePresentation<
   const epoch = useSharedValue(0);
   const clockEpoch = useSharedValue(0);
   const clockRevision = useSharedValue(-1);
-  // F1: last revision/epoch the UI clock observed, so the instrumentation can
-  // report the FIRST UI frame that saw a new commit.
+  // F1: last revision/observer generation seen by enabled diagnostics.
   const observedRevision = useSharedValue(-1);
-  const observedEpoch = useSharedValue(-1);
+  const observedGeneration = useSharedValue(-1);
+  const observationGeneration = useSharedValue(0);
   // GS-REACT-01: mirror whether the UI-observation diagnostic is enabled so
   // the frame callback branches BEFORE timestamp reads and RN scheduling.
   // Updated alongside the ref (same effect), never read during render.
@@ -194,8 +192,16 @@ function GamePresentation<
   // callback can branch before any timestamp read or RN scheduling.
   useEffect(() => {
     instrumentationRef.current = instrumentation;
+    observationGenerationRef.current += 1;
+    observationGeneration.value = observationGenerationRef.current;
     instrumentationEnabled.value = instrumentation?.onUiRevisionObserved !== undefined;
-  }, [instrumentation, instrumentationEnabled, instrumentationRef]);
+    return () => {
+      // Already queued UI observations belong to this observer and mount.
+      // Invalidate on RN immediately, even before the UI mirror catches up.
+      observationGenerationRef.current += 1;
+      instrumentationEnabled.value = false;
+    };
+  }, [instrumentation, instrumentationEnabled, observationGeneration]);
 
   useEffect(() => {
     // GS-REACT-02: the mount wiring is one transaction. Every acquired
@@ -203,6 +209,7 @@ function GamePresentation<
     // stage unwinds everything before it; unmount releases all stages in
     // reverse order without stopping at the first failure.
     const cleanups = createCleanupList();
+    cleanups.add(() => cameraBinding.dispose());
     try {
       epoch.value += 1;
       // RF6: the frame is seeded at mount from this session; the keyed remount
@@ -237,10 +244,8 @@ function GamePresentation<
         addStatusListener: (listener) => game.addStatusListener(listener),
       });
       cleanups.add(cleanupLifecycle);
-      cleanups.add(() => cameraBinding.dispose());
     } catch (error) {
-      cleanups.releaseAll();
-      throw error;
+      cleanups.releaseAfterFailure(error);
     }
     return () => {
       cleanups.releaseAll();
@@ -250,27 +255,28 @@ function GamePresentation<
   // F1: the first UI frame that sees a new commit revision is reported back
   // to the RN runtime through scheduleOnRN — never by calling the JS hook
   // directly from the UI worklet (cross-runtime calls crash the app).
-  const reportUiObserved = useCallback((revision: number, atMs: number) => {
+  const reportUiObserved = useCallback((generation: number, revision: number, atMs: number) => {
+    if (generation !== observationGenerationRef.current) {
+      return;
+    }
     instrumentationRef.current?.onUiRevisionObserved?.(revision, atMs);
   }, []);
 
 
   // UI-owned alpha clock: advances only while the session is running,
   // resets on every new commit, clamps at 1 and holds (no extrapolation).
-  useFrameCallback((frameInfo) => {
+  const presentFrame = useCallback((frameInfo: FrameInfo) => {
     'worklet';
     if (!running.value) {
       return;
     }
     const envelope = frame.value;
-    if (observedEpoch.value !== epoch.value || observedRevision.value !== envelope.revision) {
-      observedEpoch.value = epoch.value;
-      observedRevision.value = envelope.revision;
-      // GS-REACT-01: without an enabled observer there is no timestamp
-      // read and no RN scheduling — the disabled path performs no timing
-      // reads, packet creation, or cross-runtime calls.
-      if (instrumentationEnabled.value) {
-        scheduleOnRN(reportUiObserved, envelope.revision, Date.now());
+    if (instrumentationEnabled.value) {
+      const generation = observationGeneration.value;
+      if (observedGeneration.value !== generation || observedRevision.value !== envelope.revision) {
+        observedGeneration.value = generation;
+        observedRevision.value = envelope.revision;
+        scheduleOnRN(reportUiObserved, generation, envelope.revision, Date.now());
       }
     }
     const previousState = {
@@ -290,8 +296,10 @@ function GamePresentation<
     clockEpoch.value = nextState.epoch;
     clockRevision.value = nextState.revision;
     alpha.value = nextState.alpha;
-    cameraBinding.present(alpha.value);
-  });
+    presentCamera(alpha.value);
+  }, [alpha, clockEpoch, clockRevision, epoch, frame, instrumentationEnabled, presentCamera,
+    observationGeneration, observedGeneration, observedRevision, reportUiObserved, running]);
+  useFrameCallback(presentFrame);
 
   return (
     <Renderer
@@ -334,7 +342,6 @@ export function GameView<
   instrumentation,
   camera2D,
 }: GameViewProps<TScenes, TInput, TAssets>) {
-  const instrumentationRef = useRef(instrumentation);
   // T12.3: GameView owns the presented camera shared value so renderer and
   // pointer adapter observe the same generation. Camera movement writes
   // only shared values; React never re-renders for it.
@@ -381,17 +388,15 @@ export function GameView<
             }}
           >
           <Canvas style={StyleSheet.absoluteFill}>
-            {/* RF6/T8.6: the per-session presentation is keyed by an explicit
-                presentation key when provided, otherwise by a stable
-                per-session identity — never object stringification — so the
+            {/* RF6/T8.6: both session identity and the optional reset key
+                determine the presentation lifetime, so the
                 frame/alpha/epoch initialize before the renderer can run. */}
             <GamePresentation
-              key={presentationKey ?? sessionPresentationId(game)}
+              key={`${sessionPresentationId(game)}:${typeof presentationKey}:${String(presentationKey)}`}
               game={game}
               assets={assets}
               renderer={Renderer}
               viewportValue={viewportValue}
-              instrumentationRef={instrumentationRef}
               instrumentation={instrumentation}
               cameraDefinition={camera2D}
               presentedCamera={presentedCamera}

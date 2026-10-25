@@ -18,6 +18,9 @@ These briefs record the audit and implementation instructions, not ongoing imple
 Implementation follow-up: [Scenes and snapshots — 2026-10-23](02-scenes-snapshots-review-2026-10-23.md)
 records verified fixes, remaining API proposals, and measured tradeoffs for system 02.
 
+[React lifecycle and presentation — 2026-10-25](03-react-presentation-review-2026-10-25.md)
+records the system 03 follow-up; native batch-buffer notification is tracked separately.
+
 | Order | System | Original verdict / main action |
 | --- | --- | --- |
 | [01](01-game-definition-and-session.md) | Definitions and fixed-step session | Keep ownership and scheduling model; clarify transitions, handle scheduler failure, delete inert types. |

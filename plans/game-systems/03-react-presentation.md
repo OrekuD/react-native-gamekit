@@ -1,5 +1,8 @@
 # React integration and presentation bridge
 
+Implementation follow-up: [2026-10-25 lifecycle and presentation review](03-react-presentation-review-2026-10-25.md).
+Native buffer publication remains a separate investigation; the original findings below are historical.
+
 ## Purpose and verdict
 
 React owns mount/unmount, composition, loading screens, and low-frequency UI. A headless session owns simulation. Shared values carry compact commits to the UI runtime, where one alpha clock interpolates presentation. **Keep this boundary. Remove unconditional diagnostic work and close subscription failure paths.**

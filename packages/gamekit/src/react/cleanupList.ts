@@ -16,24 +16,32 @@ export interface CleanupList {
    * list drains, so releasing twice is a no-op.
    */
   releaseAll(): void;
+  /** Release acquired stages, then rethrow setup and cleanup failures losslessly. */
+  releaseAfterFailure(error: unknown): never;
 }
 
 export function createCleanupList(): CleanupList {
-  const releases: Array<() => void> = [];
+  let releases: Array<() => void> = [];
+  const releaseRegistered = (): unknown[] => {
+    // Detach first: a release may synchronously reenter the cleanup path.
+    const pending = releases;
+    releases = [];
+    const failures: unknown[] = [];
+    for (let index = pending.length - 1; index >= 0; index -= 1) {
+      try {
+        pending[index]?.();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    return failures;
+  };
   return {
     add(release: () => void): void {
       releases.push(release);
     },
     releaseAll(): void {
-      const failures: unknown[] = [];
-      for (let index = releases.length - 1; index >= 0; index -= 1) {
-        try {
-          releases[index]?.();
-        } catch (error) {
-          failures.push(error);
-        }
-      }
-      releases.length = 0;
+      const failures = releaseRegistered();
       if (failures.length === 1) {
         throw failures[0];
       }
@@ -43,6 +51,13 @@ export function createCleanupList(): CleanupList {
           'Cleanup failed with multiple errors',
         );
       }
+    },
+    releaseAfterFailure(error: unknown): never {
+      const failures = releaseRegistered();
+      if (failures.length > 0) {
+        throw new AggregateError([error, ...failures], 'Setup and cleanup failed');
+      }
+      throw error;
     },
   };
 }
