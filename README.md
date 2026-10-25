@@ -59,6 +59,14 @@ pnpm dev:docs   # http://localhost:3000
 pnpm build:docs
 ```
 
+## Dependency maintenance
+
+Native versions live in `catalogs.native` in `pnpm-workspace.yaml`.
+Run `pnpm deps:check` to validate manifests, the lockfile, and installed native
+resolutions; `pnpm deps:docs` updates compatibility tables and installation recipes.
+See the [contributing guide](apps/docs/content/docs/advanced/contributing.mdx)
+for grouped upgrades, Expo exceptions, and native validation.
+
 ## Current API surface (provisional)
 
 The headless entry (`rn-gamekit`) imports nothing native and runs in
@@ -114,18 +122,24 @@ Physics simulation, broader input adapters, and 3D remain future work.
 
 ## Compatibility
 
-The first supported line (validated in the playground):
+The native workspace versions and published support ranges are shown below.
+Audio, haptics, and persistent storage peers are optional.
 
-| Dependency | Version |
-| --- | --- |
-| Expo | SDK 57 (`~57.0.25`) |
-| React Native | `0.86.3` |
-| React | `19.2.3` |
-| React Native Skia | `2.11.0` |
-| React Native Gesture Handler | `~3.1.0` |
-| React Native Reanimated | `4.5.3` |
-| React Native Worklets | `0.10.3` |
-| Expo Asset | `~57.0.18` |
+<!-- deps:table:start -->
+| Package | Workspace version | Supported peer range |
+| --- | --- | --- |
+| `@react-native-async-storage/async-storage` | `2.2.0` | `^2.2.0` |
+| `@shopify/react-native-skia` | `2.11.0` | `2.11.0` |
+| `expo` | `57.0.25` | `~57.0.25` |
+| `expo-asset` | `57.0.18` | `~57.0.18` |
+| `react` | `19.2.3` | `^19.2.3` |
+| `react-native` | `0.86.3` | `~0.86.3` |
+| `react-native-audio-api` | `0.13.3` | `^0.13.3` |
+| `react-native-gesture-handler` | `3.1.0` | `~3.1.0` |
+| `react-native-pulsar` | `1.7.0` | `^1.7.0` |
+| `react-native-reanimated` | `4.5.3` | `4.5.3` |
+| `react-native-worklets` | `0.10.3` | `0.10.3` |
+<!-- deps:table:end -->
 
 See `apps/docs/content/docs/introduction/supported-platforms.mdx` for the
 documented compatibility page.

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": ["npm"],
+  "timezone": "Africa/Accra",
+  "schedule": ["* 0-6 * * 1"],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "packageRules": [
+    {
+      "description": "Group workspace tooling; more specific rules below own native and docs dependencies.",
+      "matchManagers": ["npm"],
+      "groupName": "workspace tooling"
+    },
+    {
+      "description": "Keep the docs application, including its React versions, independent of the native stack.",
+      "matchFileNames": ["apps/docs/package.json"],
+      "groupName": "docs dependencies"
+    },
+    {
+      "description": "Playground runtime additions must join the native compatibility review.",
+      "matchFileNames": ["apps/playground/package.json"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "native compatibility candidates",
+      "dependencyDashboardApproval": true,
+      "separateMajorMinor": false
+    },
+    {
+      "description": "Catalog updates are candidates only: maintainers choose the Expo-compatible set and review native exceptions.",
+      "matchFileNames": ["pnpm-workspace.yaml"],
+      "matchDepTypes": ["pnpm.catalog.native"],
+      "groupName": "native compatibility candidates",
+      "dependencyDashboardApproval": true,
+      "separateMajorMinor": false,
+      "rangeStrategy": "pin"
+    },
+    {
+      "description": "Keep existing override pins visible and require review of their advisory and removal conditions.",
+      "matchFileNames": ["pnpm-workspace.yaml"],
+      "matchDepTypes": ["pnpm-workspace.overrides"],
+      "groupName": "dependency overrides",
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Published support ranges change only after an explicit compatibility review.",
+      "matchFileNames": ["packages/gamekit/package.json"],
+      "matchDepTypes": ["peerDependencies"],
+      "enabled": false
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": false,
+    "dependencyDashboardApproval": false,
+    "groupName": null
+  }
+}
