@@ -34,11 +34,13 @@ Idempotent commands emit nothing, no initial value is emitted on subscribe, and 
 
 | Owner | Starts | Pauses | Disposes |
 | --- | --- | --- | --- |
-| `useGameSession` hook | yes | no | yes, on unmount |
-| `GameView` (mounted) | yes, while mounted | on app background | never |
+| `useGameSession` hook | no; creates an idle session | no | yes, on replacement/unmount |
+| `GameView` (mounted) | yes, while mounted | on app background/unmount | never |
 | `bindAppLifecycle` | guarded | yes | no |
 
 The hook owns creation and terminal disposal. `GameView` borrows the session: it starts it on mount and pauses it when the app backgrounds, but never disposes it. For imperative and headless code, `createGameSession()` with an explicit `try/finally` dispose is the direct path. Never call `dispose()` on a hook-owned session; ownership is single.
+
+When an injected frame driver's cancellation throws, `pause()` still clears input and timing debt and publishes `paused`; `dispose()` still releases listeners and attempts scene cleanup exactly once. The command then throws the cancellation error, or an `AggregateError` if notification or cleanup also failed. A callback retained by the failing driver cannot advance the retired loop.
 
 ## Lifecycle versus game flow
 
