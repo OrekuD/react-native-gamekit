@@ -1,5 +1,8 @@
 # Scene lifecycle and snapshot ownership
 
+Implementation follow-up: [2026-10-23 review and API proposals](02-scenes-snapshots-review-2026-10-23.md).
+The findings below describe the original audit, not the latest implementation status.
+
 ## Purpose and verdict
 
 Scenes should be small synchronous state machines. Enter creates state; update returns new state; snapshot extracts renderer data; exit releases resources. **Keep functional scenes and explicit snapshots. Fix terminal ownership before refactoring the lifecycle machinery.**

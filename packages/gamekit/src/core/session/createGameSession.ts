@@ -240,9 +240,12 @@ export function createGameSessionWithDriver<
   if (initialDefinition === undefined) {
     throw new Error(`Unknown initial scene: ${initialSceneName}`);
   }
-  const initialState = freezeObject(initialDefinition.create());
+  // Ownership starts when create returns, before freezing can invoke a
+  // user-defined proxy trap or reject an unsupported state container.
+  const initialState = initialDefinition.create();
   let initialSnapshot: DeepReadonly<unknown>;
   try {
+    freezeObject(initialState);
     initialSnapshot = deepFreeze(initialDefinition.snapshot({ state: initialState }), {
       scene: initialSceneName,
     });
@@ -283,6 +286,7 @@ export function createGameSessionWithDriver<
   let hardCutPending = false;
   let publishedThisCallback = false;
   let updateInProgress = false;
+  let transitionInProgress = false;
   let revision = 0;
   let commitFrame: CommitFrame<TScenes> = Object.freeze({
     scene: sceneName,
@@ -520,14 +524,16 @@ export function createGameSessionWithDriver<
    *
    * On any preparation or disposal failure the old scene and its state are
    * retained, session tick/time are left unchanged, and the original error is
-   * rethrown after cleaning up any partially created target.
+   * rethrown after cleaning up any partially created target. Disposal of
+   * the session from a lifecycle callback aborts installation and releases
+   * the prepared target; false tells the caller not to publish that transition.
    */
   const commitTransition = (
     intent: TransitionIntent,
     outgoingFinalState: unknown,
     advanceTimeTick: number | undefined,
     preserveActivePointers = false,
-  ) => {
+  ): boolean => {
     const targetName = intent.kind === 'restart' ? activeScene.name : intent.name;
     const targetDefinition = erasedSceneMap[targetName];
     if (targetDefinition === undefined) {
@@ -535,65 +541,93 @@ export function createGameSessionWithDriver<
     }
 
     let targetState: unknown;
-    let targetCreated = false;
-    let targetSnapshot: DeepReadonly<unknown>;
-    try {
-      targetState = freezeObject(targetDefinition.create());
-      targetCreated = true;
-      targetSnapshot = deepFreeze(targetDefinition.snapshot({ state: targetState }), {
-        scene: targetName,
-      });
-    } catch (error) {
-      if (targetCreated) {
-        try {
-          targetDefinition.dispose?.(targetState);
-        } catch {
-          // Cleanup failures during failure handling are best effort.
-        }
+    let ownsTarget = false;
+    const disposeTarget = () => {
+      if (ownsTarget) {
+        // Release ownership before user cleanup: even a throwing disposer
+        // must never be retried by the preparation catch below.
+        ownsTarget = false;
+        targetDefinition.dispose?.(targetState);
       }
-      throw error;
-    }
-
+    };
+    transitionInProgress = true;
     try {
-      disposeSceneInstance(activeScene, outgoingFinalState);
-    } catch (error) {
-      // The outgoing scene's dispose already ran (possibly partially) and
-      // is never retried; the old scene remains active but explicitly
-      // faulted. The prepared target is still cleaned up, and a failing
-      // target cleanup composes losslessly with the outgoing failure.
-      sceneFaulted = true;
-      if (targetCreated) {
-        const targetFailure = captureFailure(() => targetDefinition.dispose?.(targetState));
+      let targetSnapshot: DeepReadonly<unknown>;
+      try {
+        targetState = targetDefinition.create();
+        ownsTarget = true;
+        if (isDisposed()) {
+          disposeTarget();
+          return false;
+        }
+        freezeObject(targetState);
+        if (isDisposed()) {
+          disposeTarget();
+          return false;
+        }
+        const rawSnapshot = targetDefinition.snapshot({ state: targetState });
+        if (isDisposed()) {
+          disposeTarget();
+          return false;
+        }
+        targetSnapshot = deepFreeze(rawSnapshot, { scene: targetName });
+      } catch (error) {
+        const cleanupFailure = captureFailure(disposeTarget);
+        if (cleanupFailure.failed) {
+          throw composeFailures(error, cleanupFailure.value);
+        }
+        throw error;
+      }
+
+      if (isDisposed()) {
+        disposeTarget();
+        return false;
+      }
+      try {
+        disposeSceneInstance(activeScene, outgoingFinalState);
+      } catch (error) {
+        // The outgoing scene's dispose already ran (possibly partially)
+        // and cannot be retried. Keep its state explicitly non-resumable.
+        sceneFaulted = true;
+        const targetFailure = captureFailure(disposeTarget);
         if (targetFailure.failed) {
           throw composeFailures(error, targetFailure.value);
         }
+        throw error;
       }
-      throw error;
-    }
+      if (isDisposed()) {
+        disposeTarget();
+        return false;
+      }
 
-    if (advanceTimeTick !== undefined) {
-      tick = advanceTimeTick;
+      if (advanceTimeTick !== undefined) {
+        tick = advanceTimeTick;
+      }
+      activeScene = {
+        name: targetName,
+        definition: targetDefinition,
+        state: targetState,
+        sceneTick: 0,
+        disposalAttempted: false,
+      };
+      ownsTarget = false;
+      sceneFaulted = false;
+      sceneName = targetName;
+      currentSnapshot = targetSnapshot;
+      previousSnapshot = targetSnapshot;
+      if (preserveActivePointers) {
+        inputBuffer.resetForTransition(targetDefinition.actions);
+      } else {
+        inputBuffer.reset();
+      }
+      // Keep the accumulated timing fraction: discarding it would make the tick
+      // count depend on presentation rate (acceptance criterion 11). The hard cut
+      // is still published with alpha 0 via `hardCutPending`.
+      hardCutPending = true;
+      return true;
+    } finally {
+      transitionInProgress = false;
     }
-    activeScene = {
-      name: targetName,
-      definition: targetDefinition,
-      state: targetState,
-      sceneTick: 0,
-      disposalAttempted: false,
-    };
-    sceneFaulted = false;
-    sceneName = targetName;
-    currentSnapshot = targetSnapshot;
-    previousSnapshot = targetSnapshot;
-    if (preserveActivePointers) {
-      inputBuffer.resetForTransition(targetDefinition.actions);
-    } else {
-      inputBuffer.reset();
-    }
-    // Keep the accumulated timing fraction: discarding it would make the tick
-    // count depend on presentation rate (acceptance criterion 11). The hard cut
-    // is still published with alpha 0 via `hardCutPending`.
-    hardCutPending = true;
   };
 
   const requestPendingTransition = (intent: TransitionIntent) => {
@@ -695,7 +729,9 @@ export function createGameSessionWithDriver<
         const pending = pendingTransition;
         pendingTransition = undefined;
         try {
-          commitTransition(pending, activeScene.state, undefined);
+          if (!commitTransition(pending, activeScene.state, undefined)) {
+            return;
+          }
         } catch (error) {
           pauseAndRethrow(error);
         }
@@ -816,7 +852,9 @@ export function createGameSessionWithDriver<
             // completes successfully. The update consumed one fixed step; the
             // hard-cut frame publishes at the end of this presentation callback.
             try {
-              commitTransition(intent, nextState, nextTick, true);
+              if (!commitTransition(intent, nextState, nextTick, true)) {
+                return;
+              }
             } catch (error) {
               // Transition preparation/disposal failed: discard staged events.
               stagedThisTick = [];
@@ -965,8 +1003,9 @@ export function createGameSessionWithDriver<
         if (pendingTransition !== undefined) {
           const pending = pendingTransition;
           pendingTransition = undefined;
-          commitTransition(pending, activeScene.state, undefined);
-          commitOrPause();
+          if (commitTransition(pending, activeScene.state, undefined)) {
+            commitOrPause();
+          }
         }
       });
       throwFailures(pauseFailure, transitionFailure);
@@ -976,6 +1015,11 @@ export function createGameSessionWithDriver<
       if (updateInProgress) {
         throw new GameSessionLifecycleError(
           'External scene transitions cannot be requested during a scene update',
+        );
+      }
+      if (transitionInProgress) {
+        throw new GameSessionLifecycleError(
+          'External scene transitions cannot be requested during scene preparation or disposal',
         );
       }
       const nameString = String(name);
@@ -989,8 +1033,9 @@ export function createGameSessionWithDriver<
         requestPendingTransition({ kind: 'setScene', name: nameString });
         return;
       }
-      commitTransition({ kind: 'setScene', name: nameString }, activeScene.state, undefined);
-      commitOrPause();
+      if (commitTransition({ kind: 'setScene', name: nameString }, activeScene.state, undefined)) {
+        commitOrPause();
+      }
     },
     restartScene() {
       assertLive();
@@ -999,12 +1044,18 @@ export function createGameSessionWithDriver<
           'External scene transitions cannot be requested during a scene update',
         );
       }
+      if (transitionInProgress) {
+        throw new GameSessionLifecycleError(
+          'External scene transitions cannot be requested during scene preparation or disposal',
+        );
+      }
       if (status === 'running') {
         requestPendingTransition({ kind: 'restart' });
         return;
       }
-      commitTransition({ kind: 'restart' }, activeScene.state, undefined);
-      commitOrPause();
+      if (commitTransition({ kind: 'restart' }, activeScene.state, undefined)) {
+        commitOrPause();
+      }
     },
     dispose() {
       if (status === 'disposed') {

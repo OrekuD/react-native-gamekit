@@ -20,6 +20,7 @@ export type {
   FollowCamera2DOptions2D,
 } from './camera2d';
 export { createGameSession } from './core/session/createGameSession';
+export { SnapshotDomainError } from './core/session/deepFreeze';
 export { GameEventError } from './events/errors';
 export { defineGameEvents, gameEvent } from './events/defineGameEvents';
 export { seedGameEvent } from './events/seed';

@@ -8,7 +8,11 @@ import type { InputController } from '../input/types';
 export type DeepReadonly<T> = T extends (...arguments_: never[]) => unknown
   ? T
   : T extends readonly (infer TItem)[]
-    ? readonly DeepReadonly<TItem>[]
+    ? Exclude<keyof T, keyof unknown[] | `${number}`> extends never
+      ? { readonly [TKey in keyof T]: DeepReadonly<T[TKey]> }
+      : readonly DeepReadonly<TItem>[] & {
+          readonly [TKey in Exclude<keyof T, keyof unknown[]>]: DeepReadonly<T[TKey]>;
+        } & { readonly length: T['length'] }
     : T extends object
       ? { readonly [TKey in keyof T]: DeepReadonly<T[TKey]> }
       : T;
@@ -124,6 +128,8 @@ export interface GameSession<
    * publishes the latest completed target snapshot (previous === current).
    * While idle or paused, it commits synchronously and publishes the new frame.
    * Setting the current scene is an idempotent no-op.
+   * Calls during an update or scene preparation/disposal throw a lifecycle
+   * error. Updates use their scoped transition controller instead.
    */
   setScene(name: keyof TScenes): void;
   /** Recreate the active scene with fresh state. */

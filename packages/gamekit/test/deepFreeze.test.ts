@@ -11,46 +11,27 @@ import { createDeepFreeze } from '../src/core/session/deepFreeze';
  * walked and frozen every time.
  */
 
-interface AccessCounting {
-  readonly getCount: number;
-}
-
-function countAccesses<T extends object>(target: T): T & AccessCounting {
+function countAccesses<T extends object>(target: T): { value: T; getCount: () => number } {
   let gets = 0;
-  const proxy = new Proxy(target, {
+  const value = new Proxy(target, {
     get(object, key, receiver) {
-      // The probe's own accessor must not count as a frozen-subtree read.
-      if (key !== 'getCount') {
-        gets += 1;
-      }
+      gets += 1;
       return Reflect.get(object, key, receiver);
     },
-    ownKeys(object) {
-      return Reflect.ownKeys(object);
-    },
-    getOwnPropertyDescriptor(object, key) {
-      return Reflect.getOwnPropertyDescriptor(object, key);
-    },
-  }) as T & AccessCounting;
-  Object.defineProperty(proxy, 'getCount', {
-    // A getter (not a function-valued property): the frozen graph only ever
-    // carries the numeric read, so domain enforcement never sees a function.
-    get: () => gets,
-    enumerable: false,
-    configurable: true,
   });
-  return proxy;
+  // Keep the observation probe outside the snapshot's data-only graph.
+  return { value, getCount: () => gets };
 }
 
 describe('trusted deep-freeze cache (T3)', () => {
   it('freezes a structurally shared subtree only once across snapshots', () => {
     const freezer = createDeepFreeze();
     const shared = countAccesses({ x: 1, y: 2, alive: true });
-    const first = freezer({ bricks: [shared, { x: 3, y: 4 }] });
-    const afterFirst = shared.getCount;
-    const second = freezer({ bricks: [shared, { x: 5, y: 6 }] });
+    const first = freezer({ bricks: [shared.value, { x: 3, y: 4 }] });
+    const afterFirst = shared.getCount();
+    const second = freezer({ bricks: [shared.value, { x: 5, y: 6 }] });
     assert.ok(afterFirst >= 3, 'first traversal read the shared node and its children');
-    assert.equal(shared.getCount, afterFirst, 'second traversal must not re-read the shared subtree');
+    assert.equal(shared.getCount(), afterFirst, 'second traversal must not re-read the shared subtree');
     assert.equal(Object.isFrozen(first.bricks[0]), true);
     assert.equal(Object.isFrozen(second.bricks[0]), true);
   });
@@ -82,7 +63,7 @@ describe('trusted deep-freeze cache (T3)', () => {
     assert.equal(frame.self, frame, 'the cycle is preserved');
   });
 
-  it('leaves the parent untrusted when a child getter throws, then re-traverses later', () => {
+  it('leaves the parent untrusted when a child proxy read throws, then re-traverses later', () => {
     const freezer = createDeepFreeze();
     let throwNow = true;
     const flaky = countAccesses(
@@ -98,13 +79,13 @@ describe('trusted deep-freeze cache (T3)', () => {
         },
       ),
     );
-    const parent = countAccesses({ child: flaky, boom: 1 });
-    assert.throws(() => freezer(parent), /boom/);
-    const countAfterThrow = parent.getCount;
+    const parent = countAccesses({ child: flaky.value, boom: 1 });
+    assert.throws(() => freezer(parent.value), /boom/);
+    const countAfterThrow = parent.getCount();
     throwNow = false;
-    const frame = freezer(parent);
+    const frame = freezer(parent.value);
     assert.ok(
-      parent.getCount > countAfterThrow,
+      parent.getCount() > countAfterThrow,
       'failed traversal must not mark the parent trusted; it is re-walked',
     );
     assert.equal(Object.isFrozen(frame.child), true);
@@ -127,11 +108,11 @@ describe('trusted deep-freeze cache (T3)', () => {
     const freezerA = createDeepFreeze();
     const freezerB = createDeepFreeze();
     const shared = countAccesses({ x: 1 });
-    freezerA({ bricks: [shared] });
-    const afterA = shared.getCount;
-    freezerB({ bricks: [shared] });
+    freezerA({ bricks: [shared.value] });
+    const afterA = shared.getCount();
+    freezerB({ bricks: [shared.value] });
     assert.ok(
-      shared.getCount > afterA,
+      shared.getCount() > afterA,
       'a second session must not trust subtrees cached by the first',
     );
   });

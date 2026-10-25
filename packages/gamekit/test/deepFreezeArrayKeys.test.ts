@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { createDeepFreeze } from '../src/core/session/deepFreeze';
+import { createDeepFreeze, SnapshotDomainError } from '../src/core/session/deepFreeze';
 
 describe('deep-freeze array-owned values (F5)', () => {
   it('freezes nested objects stored on non-index string properties of arrays', () => {
@@ -70,7 +70,7 @@ describe('deep-freeze array-owned values (F5)', () => {
     assert.ok(Object.isFrozen(meta as object));
   });
 
-  it('leaves the parent untrusted when a string-key getter throws', () => {
+  it('leaves the parent untrusted when a string-key accessor is rejected', () => {
     const freezer = createDeepFreeze();
     const array: unknown[] = [1];
     Object.defineProperty(array, 'explosive', {
@@ -80,7 +80,7 @@ describe('deep-freeze array-owned values (F5)', () => {
         throw new Error('boom');
       },
     });
-    assert.throws(() => freezer(array), /boom/);
+    assert.throws(() => freezer(array), SnapshotDomainError);
     // The failed traversal must not poison the cache: a later snapshot with
     // the property removed re-freezes successfully.
     delete (array as unknown as Record<string, unknown>)['explosive'];

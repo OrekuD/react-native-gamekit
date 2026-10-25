@@ -1,28 +1,23 @@
 /**
- * T3 deep-freeze microbenchmark and regression gate.
+ * Snapshot-freezer CPU microbenchmark; this does not measure native FPS.
  *
- * Compares the trusted-cache freezer at steady state (the realistic tick
- * pattern: the snapshot rebuilds its top levels while unchanged subtrees are
- * reused by reference) against the previous implementation, which allocated a
- * fresh WeakSet and walked `Reflect.ownKeys` on every snapshot.
+ * Run: pnpm bench:deepfreeze [path/to/baseline/deepFreeze.ts]
+ * Or: node --import tsx bench/deepFreeze.bench.ts /tmp/deepFreeze-before.ts
+ * The optional module must export createDeepFreeze. Preserve a source version
+ * before editing to compare equivalent workloads, rather than a weaker legacy
+ * freezer with different validation rules.
  *
- * Gate (V8, node 22): the trusted cache must be ≥2.5× faster at 32 entities
- * and ≥4.5× faster at 1,000 entities. Run with `pnpm bench:deepfreeze`.
- *
- * Floor history, all measured on the same V8/Node 22 bench:
- * - pre-F5 (numeric fast path only): 5.1–6.3× at 32, 15.4–17.5× at 1,000.
- * - F5 for-in scan (incorrect: inherited keys frozen, non-enumerable own
- *   keys missed): 4.1–4.7× / 9.3–10.5×.
- * - F5 corrected (getOwnPropertyNames + symbols: own keys only, canonical
- *   index guard): 3.2–3.7× / 5.0–5.8×.
- * The corrected scan allocates the own-name array once per first-visit
- * array — the unavoidable cost of freezing non-enumerable own values — and
- * the bench's fresh-array-per-tick shape is the worst case for it (shared
- * arrays are trusted and never rescanned). The floors sit above the legacy
- * full-walk class (~1×) with margin, so a material regression of the
- * trusted-cache fast path (including disabling the cache) still fails.
+ * Frame creation and cache priming are outside each timed batch. Every batch
+ * has its own freezer and graph, including separate baseline/current graphs.
+ * Five warmup batches precede nine samples; report median time per snapshot.
+ * Results are observations, never a machine-dependent pass/fail gate.
  */
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { createDeepFreeze } from '../src/core/session/deepFreeze';
+
+type FreezerFactory = typeof createDeepFreeze;
+type Freezer = ReturnType<FreezerFactory>;
 
 interface Brick {
   readonly x: number;
@@ -32,89 +27,125 @@ interface Brick {
   readonly alive: boolean;
 }
 
+interface Scenario {
+  readonly name: string;
+  readonly iterations: number;
+  readonly prepare: (freeze: Freezer, iterations: number) => readonly unknown[];
+}
+
+const warmupBatches = 5;
+const sampleBatches = 9;
+
 function buildBricks(count: number): readonly Brick[] {
-  const bricks: Brick[] = [];
-  for (let index = 0; index < count; index += 1) {
-    bricks.push({ x: index % 10, y: Math.floor(index / 10), w: 4, h: 2, alive: true });
-  }
-  return bricks;
+  return Array.from({ length: count }, (_, index) => ({
+    x: index % 10, y: Math.floor(index / 10), w: 4, h: 2, alive: true,
+  }));
 }
 
-/** Previous implementation: fresh WeakSet per call, Reflect.ownKeys walk. */
-function deepFreezeLegacy<T>(value: T, seen = new WeakSet<object>()): T {
-  if (typeof value !== 'object' || value === null) {
-    return value;
-  }
-  if (seen.has(value)) {
-    return value;
-  }
-  seen.add(value);
-  for (const key of Reflect.ownKeys(value)) {
-    deepFreezeLegacy((value as Record<PropertyKey, unknown>)[key], seen);
-  }
-  return Object.freeze(value);
+function denseScenario(count: number, shared: boolean): Scenario {
+  return {
+    name: `${shared ? 'Shared' : 'Fresh'} dense ${count}`,
+    iterations: shared ? (count === 32 ? 2_048 : 128) : (count === 32 ? 512 : 64),
+    prepare(freeze, iterations) {
+      const bricks = buildBricks(count);
+      if (shared) freeze(bricks);
+      return Array.from({ length: iterations }, (_, tick) => ({
+        tick,
+        bricks: shared
+          ? [...bricks.slice(1), { x: 99, y: 99, w: 4, h: 2, alive: false }]
+          : buildBricks(count),
+        score: tick,
+      }));
+    },
+  };
 }
 
-interface Frame {
-  readonly tick: number;
-  readonly bricks: readonly Brick[];
-  readonly score: number;
-}
+const scenarios: readonly Scenario[] = [
+  denseScenario(32, true),
+  denseScenario(1_000, true),
+  denseScenario(32, false),
+  denseScenario(1_000, false),
+  {
+    name: 'Shared array (1000 bricks)',
+    iterations: 10_000,
+    prepare(freeze, iterations) {
+      const bricks = buildBricks(1_000);
+      freeze(bricks);
+      return Array.from({ length: iterations }, (_, tick) => ({ tick, bricks, score: tick }));
+    },
+  },
+  {
+    name: 'Same root (1000 bricks)',
+    iterations: 100_000,
+    prepare(freeze, iterations) {
+      const root = { tick: 0, bricks: buildBricks(1_000), score: 0 };
+      freeze(root);
+      return Array.from({ length: iterations }, () => root);
+    },
+  },
+  {
+    name: 'Sparse length 1000000',
+    iterations: 4,
+    prepare(_freeze, iterations) {
+      return Array.from({ length: iterations }, () => {
+        const entries = new Array<unknown>(1_000_000);
+        entries[0] = { value: 1 };
+        entries[999_999] = { value: 2 };
+        return entries;
+      });
+    },
+  },
+];
 
-/** Realistic steady-state tick: new frame, new array, one fresh brick. */
-function buildFrame(tick: number, shared: readonly Brick[]): Frame {
-  const fresh: Brick = { x: 99, y: 99, w: 4, h: 2, alive: false };
-  return { tick, bricks: [...shared.slice(1), fresh], score: tick };
-}
-
-function median(values: number[]): number {
+function median(values: readonly number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+  return sorted[Math.floor(sorted.length / 2)]!;
 }
 
-function timeOnce(fn: () => void): number {
+function measureBatch(factory: FreezerFactory, scenario: Scenario): number {
+  const freeze = factory();
+  const frames = scenario.prepare(freeze, scenario.iterations);
   const start = process.hrtime.bigint();
-  fn();
-  return Number(process.hrtime.bigint() - start) / 1e6; // ms
+  for (const frame of frames) freeze(frame);
+  return Number(process.hrtime.bigint() - start) / frames.length / 1_000;
 }
 
-function measure(count: number, _iterations = 400): { legacy: number; cached: number } {
-  const shared = buildBricks(count);
-  const freezer = createDeepFreeze();
-  // Warm-up: one full pass so the cache is populated and JIT is settled.
-  freezer(buildFrame(0, shared));
-  deepFreezeLegacy(buildFrame(0, shared));
-
-  const legacySamples: number[] = [];
-  const cachedSamples: number[] = [];
-  for (let run = 0; run < 7; run += 1) {
-    legacySamples.push(timeOnce(() => deepFreezeLegacy(buildFrame(run, shared))));
-    cachedSamples.push(timeOnce(() => freezer(buildFrame(run, shared))));
+async function main(): Promise<void> {
+  const baselinePath = process.argv[2];
+  const baselineModule = baselinePath === undefined
+    ? undefined
+    : await import(pathToFileURL(resolve(baselinePath)).href) as {
+      createDeepFreeze?: FreezerFactory;
+    };
+  if (baselineModule !== undefined && typeof baselineModule.createDeepFreeze !== 'function') {
+    throw new Error('The baseline module must export createDeepFreeze.');
   }
-  return { legacy: median(legacySamples), cached: median(cachedSamples) };
+  const baseline = baselineModule?.createDeepFreeze;
+  console.log(`Snapshot freezer CPU benchmark: Node ${process.version}, ${process.platform}/${process.arch}`);
+  console.log(`Microseconds/snapshot; median ${sampleBatches} batches after ${warmupBatches} warmup batches.`);
+  console.log('Frame creation and cache priming excluded. Native FPS is not measured.');
+  console.log(`scenario | calls/batch | current (us)${baseline ? ' | baseline (us) | baseline/current' : ''}`);
+  for (const scenario of scenarios) {
+    const currentSamples: number[] = [];
+    const baselineSamples: number[] = [];
+    for (let batch = -warmupBatches; batch < sampleBatches; batch += 1) {
+      // Alternate order so one implementation is not always measured first.
+      const before = baseline && batch % 2 === 0 ? measureBatch(baseline, scenario) : undefined;
+      const current = measureBatch(createDeepFreeze, scenario);
+      const previous = baseline ? (before ?? measureBatch(baseline, scenario)) : undefined;
+      if (batch >= 0) {
+        currentSamples.push(current);
+        if (previous !== undefined) baselineSamples.push(previous);
+      }
+    }
+    const current = median(currentSamples);
+    const previous = baseline ? median(baselineSamples) : undefined;
+    const comparison = previous === undefined ? '' : ` | ${previous.toFixed(3)} | ${(previous / current).toFixed(2)}x`;
+    console.log(`${scenario.name} | ${scenario.iterations} | ${current.toFixed(3)}${comparison}`);
+  }
 }
 
-const sizes = [32, 100, 500, 1_000, 2_000];
-console.log('T3 deep-freeze microbenchmark (median of 7 runs, ms per snapshot tick):');
-console.log('entities | legacy (WeakSet/call) | trusted cache | speedup');
-for (const size of sizes) {
-  const { legacy, cached } = measure(size);
-  const speedup = legacy / cached;
-  console.log(
-    `${String(size).padStart(8)} | ${legacy.toFixed(3).padStart(8)} ms | ${cached.toFixed(3).padStart(10)} ms | ${speedup.toFixed(1)}×`,
-  );
-}
-
-const at32 = measure(32);
-const at1000 = measure(1_000);
-const speedup32 = at32.legacy / at32.cached;
-const speedup1000 = at1000.legacy / at1000.cached;
-
-console.log(`\ngate: 32 entities ≥2.5× (got ${speedup32.toFixed(1)}×), 1,000 entities ≥4.5× (got ${speedup1000.toFixed(1)}×)`);
-if (speedup32 < 2.5) {
-  throw new Error(`T3 gate failed: 32-entity speedup ${speedup32.toFixed(1)}× < 2.5×`);
-}
-if (speedup1000 < 4.5) {
-  throw new Error(`T3 gate failed: 1,000-entity speedup ${speedup1000.toFixed(1)}× < 4.5×`);
-}
-console.log('T3 gate passed.');
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
