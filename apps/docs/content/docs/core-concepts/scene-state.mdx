@@ -1,6 +1,6 @@
 ---
 title: Scene state
-description: "Where the game's data lives: plain serializable state inside a scene, advanced by a pure update function. No ECS, no React state."
+description: "Scene state, pure updates, and the immutable data projected into renderer snapshots."
 ---
 
 A scene owns its state, and that state is ordinary data: numbers, strings, small objects, and arrays. There is no entity-component system, no database, and no React state anywhere in the simulation. This page is the honest stand-in for "entities": in Gamekit, entities are whatever your scene state says they are.
@@ -24,20 +24,60 @@ const playScene = defineScene({
 
 ## What state is allowed
 
-Anything that `create` returns and `update` returns. The supported snapshot
-domain is explicit: plain records, arrays, and scalar values. Returning
-anything else from `snapshot` — functions, symbols, bigints, class instances
-such as `Map`, `Set`, or `Date` — fails with a `SnapshotDomainError` naming
-the key path before anything publishes, so an unsupported value can never
-leave a half-published commit. The runtime deep-freezes snapshots, so
-renderer data must be plain and serializable. Functions in state are a smell:
-behavior belongs in `update`, not in data.
+State is inferred from `create` and returned from `update`. Its root is
+shallow-frozen; the `Readonly<TState>` view does not prevent nested mutation.
+Authors must keep updates pure and replace changed branches. Functions in
+state are a smell: behavior belongs in `update`, not in data.
+
+Snapshots have a stricter runtime domain: plain records (including records
+with a null prototype), arrays, and scalar values (`string`, `number`,
+`boolean`, `null`, and `undefined`). Functions, symbol **values**, bigints,
+and class instances such as `Map`, `Set`, or `Date` are rejected. Cycles,
+shared references, sparse arrays, and own symbol-keyed or non-enumerable
+data properties are supported; this is not a JSON serialization format.
+Only own properties are snapshot data. Inherited values are not traversed
+or frozen. Proxies with behavior-changing traps are outside this data
+contract; snapshots must expose stable own values.
+
+Own getter and setter properties are rejected without invoking them.
+Freezing a getter cannot make future values it returns immutable. Project
+computed values into ordinary data properties instead:
+
+```ts
+// Rejected: the getter remains executable after Object.freeze.
+snapshot: ({ state }) => ({ get player() { return { x: state.playerX }; } }),
+
+// Supported: computed once, then deeply frozen before publication.
+snapshot: ({ state }) => ({ player: { x: state.playerX } }),
+```
+
+Validation throws the publicly exported `SnapshotDomainError` with `path`
+and optional `scene` fields before publishing a frame. For a `session`
+returned by `createGameSession`:
+
+```ts
+import { SnapshotDomainError } from 'rn-gamekit';
+
+try {
+  session.restartScene();
+} catch (error) {
+  if (error instanceof SnapshotDomainError) {
+    console.error(error.scene, error.path);
+  }
+  throw error;
+}
+```
 
 Returning a state reference from `snapshot` transfers it into immutable
 snapshot ownership: the same object is frozen in place, so later updates
 must replace it rather than mutate it. Structural sharing and cycles keep
 working; the frozen snapshot and the next state may share unchanged
 subtrees by reference.
+
+Freezing does not clone or roll back input objects. If validation fails,
+already visited children may be frozen, but no frame is published and no
+part of that failed traversal enters the trusted cache. A later attempt
+validates those objects again, including cycles back to an unfinished root.
 
 ## Where entities come from
 

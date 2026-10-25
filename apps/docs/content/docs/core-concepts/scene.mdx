@@ -61,21 +61,40 @@ At most one different pending external transition is allowed; a conflicting
 second request throws. `setScene(currentScene)` is a no-op, and an external
 transition never advances simulation tick or time itself.
 
+External `setScene` and `restartScene` calls are rejected with
+`GameSessionLifecycleError` inside an update or while a transition is
+preparing or disposing scenes. Use the update's `transition` controller
+for simulation changes. Lifecycle callbacks may call `game.dispose()`;
+that aborts the transition and releases its prepared target without
+publishing another frame or delivering the update's staged events.
+
 ## Commit ordering
 
 A transition requested during a successful update commits in this exact order:
 
 1. sample the current scene's input;
 2. run its update and collect at most one transition intent;
-3. create the target scene and extract its initial snapshot;
-4. on any failure, keep the old scene and its pre-update state, leave session
-   tick/time unchanged, pause the session, clean up the partial target, and
-   rethrow the original error;
-5. on success, advance session tick/time for the successful update;
-6. dispose the outgoing scene exactly once using its candidate final state;
-7. install the new scene with `sceneTick: 0` and `sceneElapsedSeconds: 0`;
-8. clear pending and held input;
-9. commit one hard-cut envelope with `previous === current` and `hardCut === true` (the UI alpha clock resets to zero).
+3. create the target state, shallow-freeze its root, then extract and
+   validate its deeply frozen initial snapshot;
+4. dispose the outgoing scene using its candidate final state;
+5. advance session tick/time for the successful update and install the new
+   scene with `sceneTick: 0` and `sceneElapsedSeconds: 0`;
+6. reset scene input, preserving compatible active physical pointers for
+   an update-scoped transition (external transitions reset all input);
+7. commit one hard-cut envelope with `previous === current` and
+   `hardCut === true` (the UI alpha clock resets to zero).
+
+If preparation or outgoing disposal fails, the transition leaves tick/time
+and the published frame unchanged and cleans up any returned target state
+exactly once. A failure during a running callback pauses the session.
+The original error is rethrown; if target cleanup also fails, an
+`AggregateError` preserves both thrown values in original-then-cleanup
+order, including values such as `undefined`.
+
+An outgoing disposer that throws is never retried. Its scene is faulted
+and cannot resume updates; replace or restart it successfully before
+starting again. A target preparation failure leaves the outgoing scene
+usable, unless a callback has explicitly disposed the session.
 
 The next simulation update receives `sceneTick: 1`. Global `tick` and
 `elapsedSeconds` continue monotonically from the session, so scene-local time
@@ -88,6 +107,11 @@ The lifecycle is intentionally small:
 ```text
 create -> update zero or more times -> dispose exactly once
 ```
+
+Ownership starts as soon as `create` returns, even if freezing that state
+or preparing its first snapshot fails. A `create` that throws must release
+resources it acquired before throwing. When present, `dispose` is attempted
+once per owned scene instance; a throwing disposer is not retried.
 
 There are no `load`, `enter`, `exit`, `pause`, or `resume` hooks yet — they
 arrive when assets and services give them concrete semantics. Session
