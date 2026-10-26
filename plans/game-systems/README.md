@@ -67,6 +67,10 @@ Keep headless fixed-step simulation, compact immutable presentation commits, dir
 
 Delete inert state and duplicate algorithms first. Simplify resource and lifecycle ownership next. Optimize only remaining measured costs. Viewport and geometry mostly need contract precision, not replacement.
 
+System 03 buffer follow-up: [2026-10-26 publication review](03-buffer-publication-review-2026-10-26.md)
+records fixes across three batch renderers, corrected API examples, regression
+evidence, and the outstanding native redraw gate.
+
 ## Validation recorded for this review
 
 | Check | Baseline outcome |

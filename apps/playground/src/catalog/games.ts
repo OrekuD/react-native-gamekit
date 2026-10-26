@@ -76,7 +76,7 @@ export const PLAYGROUND_GAMES = [
   {
     id: 'buffer-probe',
     title: 'Buffer Probe',
-    description: 'GS-REACT-03 reproduction: fixed-count orbiting batch, scrolling tiles, looping emitter.',
+    description: 'Isolated sprite, tile, and particle redraw checks with manual phases.',
     label: 'Run',
   },
   {

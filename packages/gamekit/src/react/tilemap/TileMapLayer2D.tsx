@@ -5,7 +5,7 @@ import {
   useRectBuffer,
   useRSXformBuffer,
 } from '@shopify/react-native-skia';
-import { useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { useAnimatedReaction, useDerivedValue, useSharedValue, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import type { SkImage } from '@shopify/react-native-skia';
 
@@ -22,6 +22,10 @@ import {
   type TileFrameTable,
   type TileWindowSnapshot,
 } from './tilePresentation';
+
+function preserveBuffer(): void {
+  'worklet';
+}
 
 export interface TileMapLayer2DProps {
   /** The normalized immutable map. */
@@ -74,7 +78,8 @@ export interface TileMapLayer2DProps {
  *   and transferred via a shared value ONLY when the visible cell span
  *   outgrows the current window; requests cross to React through
  *   `scheduleOnRN` (Reanimated 4 / react-native-worklets), and camera
- *   interpolation inside the window is allocation-free scalar math.
+ *   interpolation inside the window uses scalar math and constant-size
+ *   preparation/bounds records, with no per-cell allocations.
  * - Culling bounds derive from the presented camera (center/zoom/rotation)
  *   with the SAME parallax factor applied to the visual transform and the
  *   bounds; without a presented camera the viewport-only world path applies.
@@ -143,18 +148,13 @@ export function TileMapLayer2D({
   const slotsY = Math.ceil((diagonal / minZoom + 2 * padWorld) / ch) + 1;
   const capacity = slotsX * slotsY;
 
-  const rects = useRectBuffer(capacity, (rect) => {
-    'worklet';
-    rect.setXYWH(0, 0, 0, 0);
-  });
-  const xforms = useRSXformBuffer(capacity, (xform) => {
-    'worklet';
-    xform.set(1, 0, 0, 0);
-  });
+  const rects = useRectBuffer(capacity, preserveBuffer);
+  const xforms = useRSXformBuffer(capacity, preserveBuffer);
+  const layerWidth = layerData.width;
+  const layerHeight = layerData.height;
 
-  // Bounded transferred window + guards (T16-F4, T16-SF1). The scratch
-  // bounds object is written by the worklet every frame — one stable
-  // allocation, never per-frame objects (T16-RF2).
+  // Bounded transferred window + guards (T16-F4, T16-SF1). Only window
+  // changes are reaction inputs; guard writes cannot invalidate the writer.
   const windowSV = useSharedValue<TileWindowSnapshot>(EMPTY_TILE_WINDOW);
   // GS-TILE-01: one pending request per BINDING (not per component): the
   // stored generation lets a new binding request even when an old binding
@@ -226,12 +226,15 @@ export function TileMapLayer2D({
   // explicit scalar-only parameter list — the worklet closure provably
   // carries no map, layer, or frame-table objects (only layer dims and the
   // binding generation). requestWindow's closure stays on the JS side.
-  useDerivedValue(() => {
+  useAnimatedReaction(() => {
     'worklet';
-    return updateTileLayerUI({
-      camera: camera as never,
-      viewport: viewportSV as never,
-      window: windowSV,
+    return { camera: camera?.value, viewport: viewportSV?.value, window: windowSV.value };
+  }, (input) => {
+    'worklet';
+    const filled = updateTileLayerUI({
+      camera: { value: input.camera },
+      viewport: { value: input.viewport },
+      window: { value: input.window },
       pendingGen: pendingGenSV,
       warnedCapacity: warnedCapacitySV,
       capacityWarnPending: capacityWarnPendingSV,
@@ -246,13 +249,16 @@ export function TileMapLayer2D({
       originY,
       cw,
       ch,
-      layerWidth: layerData.width,
-      layerHeight: layerData.height,
+      layerWidth,
+      layerHeight,
       padWorld,
       px,
       py,
       minZoom,
     });
+    rects.modify(undefined, true);
+    xforms.modify(undefined, true);
+    return filled;
   });
 
   // Coherent parallax: the visual correction uses the SAME factor as the

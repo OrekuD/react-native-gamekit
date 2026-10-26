@@ -48,11 +48,13 @@ mock.module('@shopify/react-native-skia', {
     Path: host('path'),
     Picture: host('picture'),
     useRectBuffer: (capacity: number) => ({
+      modify: () => {},
       value: Array.from({ length: capacity }, () => ({
         setXYWH: (_x: number, _y: number, _w: number, _h: number) => {},
       })),
     }),
     useRSXformBuffer: (capacity: number) => ({
+      modify: () => {},
       value: Array.from({ length: capacity }, () => ({
         set: (a: number, b: number, c: number, d: number) => {
           recordedXforms.push({ a, b, c, d });
@@ -60,6 +62,7 @@ mock.module('@shopify/react-native-skia', {
       })),
     }),
     useColorBuffer: (capacity: number) => ({
+      modify: () => {},
       value: Array.from({ length: capacity }, () => new Float32Array([1, 1, 1, 0])),
     }),
     Skia: {
@@ -101,6 +104,10 @@ mock.module('react-native-reanimated', {
     useDerivedValue: (fn: () => unknown) => {
       derivedCounter.value++;
       return { value: fn() };
+    },
+    useAnimatedReaction: (prepare: () => unknown, react: (value: unknown) => void) => {
+      derivedCounter.value++;
+      react(prepare());
     },
     useFrameCallback: () => {},
   },
@@ -1169,4 +1176,3 @@ describe('T15-TF3 fade policy and opacity rendering', () => {
     system.dispose();
   });
 });
-

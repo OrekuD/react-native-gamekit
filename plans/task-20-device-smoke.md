@@ -109,27 +109,36 @@ risk instead.
 
 ## GS-REACT-03 — Buffer Probe (slot publication)
 
-The Buffer Probe screen (`buffer-probe` in the catalog) is a deterministic
-native-integration reproduction: one lab timer advances a synthetic commit,
-pans the viewport 1px per frame, and emits a 6-particle puff every 30 ticks.
-Three Atlas systems change ONLY their buffer-slot contents per frame — a
-fixed-count (8) orbiting sprite batch, a scrolling 40x12 tile layer, and a
-looping sprite emitter. No session, no camera, no React state per frame, no
-alpha-driven visuals. Installed versions for any run: Skia 2.11.0,
-Reanimated 4.5.3, Worklets 0.10.3 — record the exact versions and build type
-with the result.
+The Buffer Probe screen (`buffer-probe` in the catalog) isolates sprite,
+tile, and particle batches in three separate 320×128 canvases. Manual phase
+buttons change shared inputs without rerendering React. No camera transform,
+timer, or animated sibling can force an incidental redraw. This checks
+native redraw transitions; it is not an animation/FPS benchmark.
+
+Record exact dependencies, platform/device, and build type. The October 2026
+implementation uses Skia 2.11.0, Reanimated 4.5.3, Worklets 0.10.3,
+RN 0.86.3, and Expo 57.0.25. Use the same probe on the baseline and fixed
+renderer revisions for a comparison; the old single-canvas probe could mask
+missing notifications.
 
 1. Open Buffer Probe from the home list.
-2. Watch for 20 seconds without touching anything:
-   a. The 8 orbiters circle smoothly around the center.
-   b. Tiles scroll left with the pan (brick teeth every fourth column make
-      motion obvious); the wraparound jump every ~10 seconds must also draw.
-   c. Puffs rise from the emission point and fade continuously.
-3. Any layer sitting frozen while the others move means that layer's buffer
-   writes are not notifying the native renderer — record which layers move
-   and which freeze, per device, in the matrix notes.
-4. Exit with `buffer-probe-back`, reopen, and confirm the same behavior (no
-   stale slots from the previous mount).
+2. Tap each phase and capture each panel after it settles:
+
+   | Phase | Sprites (top-left x, y=64) | Tiles (top-left x, y=64/96) | Particle (center x, y=64) |
+   | --- | --- | --- | --- |
+   | Initial | Ground: 32, 96, 160 | Ground: 0, 32 | 64, alpha 1 |
+   | Move | Ground: 128, 192, 256 | Ground: 128, 160 | 104, alpha 0.75 |
+   | Hide | Empty | Empty | Empty |
+   | Reappear | Brick: 32, 96, 160 | Brick: 64, 96 | 64, alpha 1 |
+   | Fade | Unchanged | Unchanged | 184, alpha 0.25 |
+
+3. Leave each phase idle for several seconds: pixels must stay stable.
+   Tap Rerender, then Remount; the current phase must remain visible.
+   A frozen panel or erased idle slots fails the check; record which panel
+   and phase failed rather than inferring native behavior from mock tests.
+4. Exit with `buffer-probe-back`, reopen, and confirm Initial resets all
+   panels. Repeat on both iOS and Android. Native results remain pending
+   until actual output is recorded.
 
 ## Coverage note
 
