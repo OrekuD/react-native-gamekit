@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
-import { createElement } from 'react';
+import { createElement, useRef } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 
 type HostProps = Record<string, unknown> & { readonly children?: unknown };
@@ -52,9 +52,9 @@ mock.module('react-native-gesture-handler', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
-    useSharedValue: (initial: unknown) => ({
+    useSharedValue: (initial: unknown) => useRef({
       value: typeof initial === 'function' ? (initial as () => unknown)() : initial,
-    }),
+    }).current,
   },
 });
 mock.module('react-native-worklets', {
@@ -97,7 +97,9 @@ function fakePadSession(): FakePadSession {
         }
         released.push(action);
       },
+      getResetRevision: () => 0,
     },
+    addCommitListener: () => ({ remove: () => {} }),
     pressed,
     released,
     addStatusListener: (listener: (status: string) => void) => {
@@ -167,11 +169,11 @@ async function flushScheduled(): Promise<void> {
 }
 
 function downAt(touches: { id: number; x: number; y: number }[]): void {
-  gestureConfig.onTouchesDown?.({ allTouches: touches });
+  gestureConfig.onTouchesDown?.({ allTouches: touches, changedTouches: touches });
 }
 
 function moveAt(touches: { id: number; x: number; y: number }[]): void {
-  gestureConfig.onTouchesMove?.({ allTouches: touches });
+  gestureConfig.onTouchesMove?.({ allTouches: touches, changedTouches: touches });
 }
 
 function upAt(touches: { id: number; x: number; y: number }[]): void {
@@ -313,6 +315,7 @@ describe('GS-INPUT-03 button zone lifecycle', () => {
       );
     });
     const node = fakeNode(0, 0, 80, 60);
+    attachPadNode();
     buttonRef('jump').current = node;
     await act(async () => {
       fireLayout(renderer!, 'jump', { x: 0, y: 0, width: 80, height: 60 });
@@ -373,9 +376,8 @@ describe('GS-INPUT-03 button zone lifecycle', () => {
   it('duplicate mounted actions are rejected', async () => {
     capturedRefs = [];
     const session = fakePadSession();
-    let renderer: ReactTestRenderer | null = null;
-    await act(async () => {
-      renderer = create(
+    await assert.rejects(async () => { await act(async () => {
+      create(
         createElement(
           GameButtonPad as never,
           { game: session, testID: 'pad' },
@@ -383,24 +385,7 @@ describe('GS-INPUT-03 button zone lifecycle', () => {
           createElement(GameButton as never, { action: 'jump', testID: 'right' }),
         ),
       );
-    });
-    attachPadNode();
-    buttonRef('left').current = fakeNode(0, 0, 80, 60);
-    attachPadNode();
-    buttonRef('right').current = fakeNode(200, 0, 80, 60);
-    await act(async () => {
-      fireLayout(renderer!, 'left', { x: 0, y: 0, width: 80, height: 60 });
-    });
-    let duplicate = '';
-    try {
-      await act(async () => {
-        fireLayout(renderer!, 'right', { x: 200, y: 0, width: 80, height: 60 });
-      });
-    } catch (error) {
-      duplicate = String((error as Error)?.message ?? error);
-    }
-    assert.match(duplicate, /already registered/, 'second owner is rejected');
-    renderer!.unmount();
+    }); }, /already registered/);
   });
 });
 

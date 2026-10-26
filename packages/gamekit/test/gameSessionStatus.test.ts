@@ -12,6 +12,7 @@ import { describe, it } from 'node:test';
 import { defineGame, defineScene, GameSessionDisposedError, type GameSessionStatus } from '../src/index';
 import { createGameSessionWithDriver } from '../src/core/session/createGameSession';
 import { ManualFrameDriver } from './helpers/ManualFrameDriver';
+import { statusCountDiagnostics } from './helpers/statusCountDiagnostics';
 
 const FIXED_STEP_MS = 1000 / 60;
 
@@ -49,6 +50,31 @@ function record(session: ReturnType<typeof createSession>['session']): Events {
 }
 
 describe('observable session status', () => {
+  for (const alreadyRegistered of [false, true]) {
+    it(`rolls back a failed status subscription without dropping an existing owner (${alreadyRegistered})`, () => {
+      const failure = new Error('listener count failed');
+      let fail = false;
+      const { diagnostics } = statusCountDiagnostics();
+      const session = createGameSessionWithDriver(game, {
+        frameDriver: new ManualFrameDriver(),
+        diagnostics: {
+          ...diagnostics,
+          onStatusListenerCount: () => { if (fail) throw failure; },
+        },
+      });
+      const statuses: GameSessionStatus[] = [];
+      const listener = (status: GameSessionStatus) => { statuses.push(status); };
+      const previous = alreadyRegistered ? session.addStatusListener(listener) : undefined;
+      fail = true;
+      assert.throws(() => session.addStatusListener(listener), (error) => error === failure);
+      fail = false;
+      session.start();
+      assert.deepEqual(statuses, alreadyRegistered ? ['running'] : []);
+      previous?.remove();
+      session.dispose();
+    });
+  }
+
   it('covers the full transition table with one event per actual transition', () => {
     const { session } = createSession();
     const events = record(session);

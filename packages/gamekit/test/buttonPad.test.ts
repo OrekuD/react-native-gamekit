@@ -9,6 +9,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { createButtonPadController } from '../src/core/input/buttonPad.ts';
+import { createInputBuffer } from '../src/core/input/createInputBuffer.ts';
+
 function touches(...list: readonly { id: number; x: number; y: number }[]) {
   return list;
 }
@@ -241,5 +244,141 @@ describe('GS-INPUT-04 pad invalidation', () => {
       ['jump'],
       'an unrelated fresh down works immediately',
     );
+  });
+});
+
+describe('button pad physical ownership', () => {
+  for (const location of ['empty down', 'gap after down', 'removed zone'] as const) {
+    it(`requires a fresh down after invalidation while in ${location}`, () => {
+      const pad = createButtonPadController();
+      pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+      pad.touchesDown([{ id: 1, x: location === 'empty down' ? 100 : 10, y: 10 }]);
+      if (location === 'gap after down') pad.touchesMove([{ id: 1, x: 100, y: 10 }]);
+      if (location === 'removed zone') pad.removeZone('jump');
+      pad.invalidateOwnership();
+      pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+
+      assert.deepEqual(pad.touchesMove([{ id: 1, x: 10, y: 10 }]), { pressed: [], released: [] });
+      assert.deepEqual(pad.held(), []);
+      assert.deepEqual(pad.touchesDown([{ id: 1, x: 10, y: 10 }]).pressed, ['jump']);
+    });
+  }
+
+  it('ignores moves without a down and after up, cancel, or releaseAll', () => {
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+    const touch = [{ id: 1, x: 10, y: 10 }];
+    assert.deepEqual(pad.touchesMove(touch), { pressed: [], released: [] });
+    for (const end of [() => pad.touchesUp(touch), () => pad.touchesCancel(touch), () => pad.releaseAll()]) {
+      pad.touchesDown(touch);
+      end();
+      assert.deepEqual(pad.touchesMove(touch), { pressed: [], released: [] });
+      assert.deepEqual(pad.held(), []);
+    }
+  });
+
+  it('retains physical ownership when a zone is removed and reacquires on a later move', () => {
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+    pad.setZone('fire', { x: 100, y: 0, width: 50, height: 50 });
+    pad.touchesDown([{ id: 1, x: 10, y: 10 }]);
+    assert.deepEqual(pad.removeZone('jump'), ['jump']);
+    assert.deepEqual(pad.touchesMove([{ id: 1, x: 110, y: 10 }]), { pressed: ['fire'], released: [] });
+  });
+});
+
+describe('button pad aggregate event edges', () => {
+  it('does not release or retrigger either action when two fingers swap zones in one native move', () => {
+    const pad = createButtonPadController();
+    const buffer = createInputBuffer({ left: { type: 'button' }, right: { type: 'button' } }, () => {});
+    pad.setZone('left', { x: 0, y: 0, width: 50, height: 50 });
+    pad.setZone('right', { x: 100, y: 0, width: 50, height: 50 });
+    for (const action of pad.touchesDown([{ id: 1, x: 10, y: 10 }, { id: 2, x: 110, y: 10 }]).pressed) {
+      buffer.controller.press(action as 'left' | 'right');
+    }
+    buffer.sample();
+    const diff = pad.touchesMove([{ id: 1, x: 110, y: 10 }, { id: 2, x: 10, y: 10 }]);
+    for (const action of diff.released) buffer.controller.release(action as 'left' | 'right');
+    for (const action of diff.pressed) buffer.controller.press(action as 'left' | 'right');
+    assert.deepEqual(diff, { pressed: [], released: [] });
+    const frame = buffer.sample();
+    for (const action of ['left', 'right'] as const) {
+      assert.deepEqual(frame.button(action), { held: true, pressed: false, released: false, cancelled: false });
+    }
+  });
+
+  it('keeps one action held when its old finger leaves and another enters in the same batch', () => {
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+    pad.touchesDown([{ id: 1, x: 10, y: 10 }, { id: 2, x: 100, y: 10 }]);
+    assert.deepEqual(pad.touchesMove([{ id: 1, x: 100, y: 10 }, { id: 2, x: 10, y: 10 }]), {
+      pressed: [], released: [],
+    });
+    assert.deepEqual(pad.touchesUp([{ id: 2, x: 10, y: 10 }]).released, ['jump']);
+  });
+
+  it('keeps overlap resolution in registration order when an existing zone is updated', () => {
+    const pad = createButtonPadController();
+    const rect = { x: 0, y: 0, width: 50, height: 50 };
+    pad.setZone('first', rect);
+    pad.setZone('second', rect);
+    pad.setZone('first', { ...rect, width: 60 });
+    assert.deepEqual(pad.touchesDown([{ id: 1, x: 10, y: 10 }]).pressed, ['first']);
+  });
+});
+
+describe('button pad validation', () => {
+  it('updates hit slop while preserving zones and rejects invalid replacement values atomically', () => {
+    const pad = createButtonPadController();
+    pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+    pad.setHitSlop(10);
+    assert.deepEqual(pad.touchesDown([{ id: 1, x: 55, y: 10 }]).pressed, ['jump']);
+    pad.releaseAll();
+    for (const value of [-1, Number.NaN, Infinity]) assert.throws(() => pad.setHitSlop(value), /hitSlop/);
+    assert.deepEqual(pad.touchesDown([{ id: 2, x: 55, y: 10 }]).pressed, ['jump']);
+    pad.releaseAll();
+    pad.setHitSlop(0);
+    assert.deepEqual(pad.touchesDown([{ id: 3, x: 55, y: 10 }]).pressed, []);
+  });
+
+  it('rejects negative or non-finite hit slop', () => {
+    for (const hitSlop of [-1, Number.NaN, Infinity, -Infinity]) {
+      assert.throws(() => createButtonPadController({ hitSlop }), /hitSlop/);
+    }
+  });
+
+  it('rejects invalid zone bounds without replacing the valid zone', () => {
+    const pad = createButtonPadController();
+    const rect = { x: 0, y: 0, width: 50, height: 50 };
+    pad.setZone('jump', rect);
+    for (const invalid of [
+      { x: Number.NaN }, { y: Infinity }, { width: -1 }, { height: -1 },
+      { width: Infinity }, { height: Number.NaN }, { x: Number.MAX_VALUE, width: Number.MAX_VALUE },
+    ]) {
+      assert.throws(() => pad.setZone('jump', { ...rect, ...invalid }), /rect/);
+    }
+    assert.deepEqual(pad.touchesDown([{ id: 1, x: 10, y: 10 }]).pressed, ['jump']);
+  });
+
+  it('validates a complete down or move batch before changing any ownership', () => {
+    for (const method of ['touchesDown', 'touchesMove'] as const) {
+      const pad = createButtonPadController();
+      pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+      pad.touchesDown([{ id: 1, x: 100, y: 10 }]);
+      assert.throws(() => pad[method]([{ id: 1, x: 10, y: 10 }, { id: 2, x: Number.NaN, y: 10 }]), /finite/);
+      assert.deepEqual(pad.held(), [], `${method} did not partially apply its first touch`);
+      assert.throws(() => pad[method]([{ id: Infinity, x: 10, y: 10 }]), /finite/);
+    }
+  });
+
+  it('validates terminal ids atomically but does not require terminal coordinates', () => {
+    for (const method of ['touchesUp', 'touchesCancel'] as const) {
+      const pad = createButtonPadController();
+      pad.setZone('jump', { x: 0, y: 0, width: 50, height: 50 });
+      pad.touchesDown([{ id: 1, x: 10, y: 10 }]);
+      assert.throws(() => pad[method]([{ id: 1, x: 10, y: 10 }, { id: Number.NaN, x: 10, y: 10 }]), /finite/);
+      assert.deepEqual(pad.held(), ['jump']);
+      assert.deepEqual(pad[method]([{ id: 1, x: Number.NaN, y: Number.NaN }]).released, ['jump']);
+    }
   });
 });

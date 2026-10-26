@@ -1,14 +1,13 @@
 /**
  * GameButtonPad surface contract (T20).
  *
- * The pad is an invisible full-surface overlay: it never blocks touches on
- * empty areas (box-none), renders arbitrary children alongside the button
+ * The pad is an invisible full-surface overlay using box-none. It renders arbitrary children alongside the button
  * zones, and turns touch events into session press/release diffs through the
  * headless controller.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { act, createElement } from 'react';
+import { act, createElement, useRef } from 'react';
 import { create, type ReactTestRenderer } from 'react-test-renderer';
 import { mock } from 'node:test';
 
@@ -27,18 +26,18 @@ let gestureConfig:
 mock.module('react-native', {
   namedExports: {
     // The View mock must RENDER ITS CHILDREN so nested GameButtons mount.
-    View: function View(props: { readonly children?: unknown }) {
-      return (props as { children?: unknown }).children ?? null;
+    View: function View(props: Record<string, unknown>) {
+      return createElement('View', props, props.children as never);
     },
     StyleSheet: { create: (s: Record<string, unknown>) => s, absoluteFill: {} },
-    findNodeHandle: () => null,
+    findNodeHandle: () => 42,
   },
 });
 mock.module('react-native-reanimated', {
   namedExports: {
-    useSharedValue: (initial: unknown) => ({
+    useSharedValue: (initial: unknown) => useRef({
       value: typeof initial === 'function' ? (initial as () => unknown)() : initial,
-    }),
+    }).current,
   },
 });
 mock.module('react-native-worklets', {
@@ -71,7 +70,9 @@ const fakeSession = {
   input: {
     press: (action: string) => pressed.push(action),
     release: (action: string) => released.push(action),
+    getResetRevision: () => 0,
   },
+  addCommitListener: () => ({ remove: () => {} }),
   addStatusListener: () => ({
     remove: () => {},
   }),
@@ -92,13 +93,14 @@ describe('GameButtonPad surface contract', () => {
             testID: 'jump-zone',
           }),
         ),
+        { createNodeMock: () => ({ measureLayout: (_node: unknown, measured: (...rect: number[]) => void) => measured(0, 0, 80, 60) }) },
       );
     });
     const node = renderer!.root;
     const surface = node.find(
       (n: { props?: { pointerEvents?: string } }) => n.props?.pointerEvents === 'box-none',
     );
-    assert.ok(surface, 'the pad container is box-none: empty areas pass touches through');
+    assert.ok(surface, 'the pad container is box-none');
 
     // GameButton renders a mocked View whose element carries onLayout; find
     // the deepest node with the zone's testID and fire a synthetic layout.
@@ -123,7 +125,7 @@ describe('GameButtonPad surface contract', () => {
     // A finger inside the registered zone presses 'jump'.
     const down = gestureConfig?.onTouchesDown as (e: unknown) => void;
     await act(async () => {
-      down({ allTouches: [{ id: 1, x: 40, y: 30 }] });
+      down({ allTouches: [{ id: 1, x: 40, y: 30 }], changedTouches: [{ id: 1, x: 40, y: 30 }] });
     });
     assert.deepEqual(pressed, ['jump'], 'touching the zone presses the declared action');
 

@@ -15,9 +15,11 @@
  *   0-to-1 (press) and 1-to-0 (release) owner transitions — a second owner
  *   never re-presses and an unbalanced release never emits.
  * - Sliding between zones reassigns the pointer: release + press diff.
- * - Moves acquire: a pointer that begins in empty space and slides into a
- *   zone presses it; leaving a zone releases. Every touch in a move list
- *   is hit-tested, mapped or not.
+ * - Moves acquire only after a down: a pointer that begins in empty space
+ *   and slides into a zone presses it; leaving a zone releases. Invalidation
+ *   drops physical ownership, so a fresh down is required afterwards.
+ * - Each touch list is one atomic event. Swapping fingers between held
+ *   zones does not synthesize a release or press for either action.
  * - Zone rects are cloned at registration: later caller mutation of the
  *   passed object cannot alter hit areas invisibly.
  */
@@ -46,7 +48,33 @@ export interface ButtonPadDiff {
   readonly released: readonly string[];
 }
 
-const EMPTY_DIFF: ButtonPadDiff = { pressed: [], released: [] };
+const EMPTY_DIFF: ButtonPadDiff = Object.freeze({ pressed: Object.freeze([]), released: Object.freeze([]) });
+
+function assertHitSlop(hitSlop: number): void {
+  if (!Number.isFinite(hitSlop) || hitSlop < 0) {
+    throw new TypeError('Button pad hitSlop must be finite and non-negative');
+  }
+}
+
+function assertRect(rect: ButtonPadRect, hitSlop: number): void {
+  if (
+    !Number.isFinite(rect.x) || !Number.isFinite(rect.y) ||
+    !Number.isFinite(rect.width) || !Number.isFinite(rect.height) ||
+    rect.width < 0 || rect.height < 0 ||
+    !Number.isFinite(rect.x - hitSlop) || !Number.isFinite(rect.y - hitSlop) ||
+    !Number.isFinite(rect.x + rect.width + hitSlop) || !Number.isFinite(rect.y + rect.height + hitSlop)
+  ) {
+    throw new TypeError('Button pad rect must have finite bounds and non-negative dimensions');
+  }
+}
+
+function assertTouches(touches: readonly ButtonPadTouch[], positions: boolean): void {
+  for (const touch of touches) {
+    if (!Number.isFinite(touch.id) || (positions && (!Number.isFinite(touch.x) || !Number.isFinite(touch.y)))) {
+      throw new TypeError('Button pad touch ids and positions must be finite');
+    }
+  }
+}
 
 function contains(
   rect: ButtonPadRect,
@@ -64,6 +92,7 @@ function contains(
 
 /** Create a controller bound to no particular session (diffs are applied by the caller). */
 export function createButtonPadController(options?: { readonly hitSlop?: number }): {
+  setHitSlop(hitSlop: number): void;
   setZone(action: string, rect: ButtonPadRect): void;
   removeZone(action: string): readonly string[];
   touchesDown(touches: readonly ButtonPadTouch[]): ButtonPadDiff;
@@ -74,27 +103,20 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
   invalidateOwnership(): void;
   held(): readonly string[];
 } {
-  const hitSlop = options?.hitSlop ?? 0;
+  let hitSlop = options?.hitSlop ?? 0;
+  assertHitSlop(hitSlop);
   const zones = new Map<string, ButtonPadRect>();
-  const pointerAction = new Map<number, string>();
+  // A present key records a physical down even while its pointer is in a
+  // gap or its zone is removed. Clearing this map retires all old fingers.
+  const pointerAction = new Map<number, string | undefined>();
   const holdCounts = new Map<string, number>();
-  // GS-INPUT-04: pointers that were active across an invalidation (pause,
-  // session replacement) must produce a fresh down before their moves can
-  // acquire again. A fresh down rehabilitates; lift clears the mark.
-  const stalePointerIds = new Set<number>();
 
-  const apply = (action: string, direction: 1 | -1): 'pressed' | 'released' | undefined => {
-    // GS-INPUT-02: edges fire only on ownership transitions. A second owner
-    // (0 stays > 0) never re-presses; an unbalanced release from zero
-    // count never emits.
+  const applyCount = (action: string, direction: 1 | -1, previousCounts: Map<string, number>): void => {
     const previous = holdCounts.get(action) ?? 0;
+    if (!previousCounts.has(action)) previousCounts.set(action, previous);
     const next = previous + direction;
-    if (next <= 0) {
-      holdCounts.delete(action);
-      return previous > 0 && direction === -1 ? 'released' : undefined;
-    }
-    holdCounts.set(action, next);
-    return previous === 0 && direction === 1 ? 'pressed' : undefined;
+    if (next === 0) holdCounts.delete(action);
+    else holdCounts.set(action, next);
   };
 
   const hitTest = (x: number, y: number): string | undefined => {
@@ -106,61 +128,73 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
     return undefined;
   };
 
-  const retarget = (touchId: number, action: string | undefined): ButtonPadDiff => {
+  const retarget = (
+    touchId: number,
+    action: string | undefined,
+    previousCounts: Map<string, number> | undefined,
+  ): Map<string, number> | undefined => {
     const previous = pointerAction.get(touchId);
-    if (previous === action) {
-      return EMPTY_DIFF;
-    }
+    pointerAction.set(touchId, action);
+    if (previous === action) return previousCounts;
+    const counts = previousCounts ?? new Map<string, number>();
+    if (previous !== undefined) applyCount(previous, -1, counts);
+    if (action !== undefined) applyCount(action, 1, counts);
+    return counts;
+  };
+
+  const finishDiff = (previousCounts: Map<string, number> | undefined): ButtonPadDiff => {
+    if (previousCounts === undefined) return EMPTY_DIFF;
     const pressed: string[] = [];
     const released: string[] = [];
-    if (previous !== undefined) {
-      pointerAction.delete(touchId);
-      const result = apply(previous, -1);
-      if (result === 'released') {
-        released.push(previous);
-      }
-    }
-    if (action !== undefined) {
-      pointerAction.set(touchId, action);
-      const result = apply(action, 1);
-      if (result === 'pressed') {
-        pressed.push(action);
-      }
+    for (const [action, previous] of previousCounts) {
+      const current = holdCounts.get(action) ?? 0;
+      if (previous === 0 && current > 0) pressed.push(action);
+      if (previous > 0 && current === 0) released.push(action);
     }
     return { pressed, released };
   };
 
-  const dropPointers = (changed: readonly ButtonPadTouch[]): ButtonPadDiff => {
-    const released: string[] = [];
-    for (const touch of changed) {
-      stalePointerIds.delete(touch.id);
-      const previous = pointerAction.get(touch.id);
-      if (previous === undefined) {
-        continue;
-      }
-      pointerAction.delete(touch.id);
-      if (apply(previous, -1) === 'released') {
-        released.push(previous);
-      }
+  const updatePointers = (touches: readonly ButtonPadTouch[], down: boolean): ButtonPadDiff => {
+    assertTouches(touches, true);
+    let previousCounts: Map<string, number> | undefined;
+    for (const touch of touches) {
+      if (!down && !pointerAction.has(touch.id)) continue;
+      previousCounts = retarget(touch.id, hitTest(touch.x, touch.y), previousCounts);
     }
-    return { pressed: [], released };
+    return finishDiff(previousCounts);
+  };
+
+  const dropPointers = (changed: readonly ButtonPadTouch[]): ButtonPadDiff => {
+    // Terminal coordinates are irrelevant: an invalid location must not
+    // strand ownership. Validate all ids before applying any terminal edge.
+    assertTouches(changed, false);
+    let previousCounts: Map<string, number> | undefined;
+    for (const touch of changed) {
+      previousCounts = retarget(touch.id, undefined, previousCounts);
+      pointerAction.delete(touch.id);
+    }
+    return finishDiff(previousCounts);
   };
 
   return {
+    setHitSlop(nextHitSlop: number): void {
+      assertHitSlop(nextHitSlop);
+      for (const rect of zones.values()) assertRect(rect, nextHitSlop);
+      hitSlop = nextHitSlop;
+    },
     setZone(action: string, rect: ButtonPadRect): void {
       // GS-INPUT-02: clone the rect so later caller mutation of the passed
       // object cannot alter hit areas invisibly.
-      zones.set(action, { x: rect.x, y: rect.y, width: rect.width, height: rect.height });
+      const registered = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      assertRect(registered, hitSlop);
+      zones.set(action, registered);
     },
     removeZone(action: string): readonly string[] {
       zones.delete(action);
-      // GS-INPUT-02: drop every pointer mapped to the removed zone, then
-      // release and delete the ENTIRE action count — a single decrement
-      // would strand a phantom hold. Pointers stay physically tracked only
-      // through future touch events, which re-acquire via hit test.
-      for (const [pointerId, mapped] of [...pointerAction]) {
+      // Retain physical down ownership independently from the removed zone.
+      for (const [pointerId, mapped] of pointerAction) {
         if (mapped === action) {
-          pointerAction.delete(pointerId);
+          pointerAction.set(pointerId, undefined);
         }
       }
       if ((holdCounts.get(action) ?? 0) > 0) {
@@ -170,31 +204,10 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
       return [];
     },
     touchesDown(touches: readonly ButtonPadTouch[]): ButtonPadDiff {
-      const merged: { pressed: string[]; released: string[] } = { pressed: [], released: [] };
-      for (const touch of touches) {
-        stalePointerIds.delete(touch.id);
-        const diff = retarget(touch.id, hitTest(touch.x, touch.y));
-        merged.pressed.push(...diff.pressed);
-        merged.released.push(...diff.released);
-      }
-      return merged;
+      return updatePointers(touches, true);
     },
     touchesMove(touches: readonly ButtonPadTouch[]): ButtonPadDiff {
-      // GS-INPUT-02: every touch in the move list is hit-tested, mapped or
-      // not — a pointer that left its zone releases, and one that entered
-      // a zone (including from empty space) presses it.
-      // GS-INPUT-04: pointers marked stale by an invalidation wait for a
-      // fresh down first.
-      const merged: { pressed: string[]; released: string[] } = { pressed: [], released: [] };
-      for (const touch of touches) {
-        if (stalePointerIds.has(touch.id)) {
-          continue;
-        }
-        const diff = retarget(touch.id, hitTest(touch.x, touch.y));
-        merged.pressed.push(...diff.pressed);
-        merged.released.push(...diff.released);
-      }
-      return merged;
+      return updatePointers(touches, false);
     },
     touchesUp(changed: readonly ButtonPadTouch[]): ButtonPadDiff {
       return dropPointers(changed);
@@ -203,28 +216,17 @@ export function createButtonPadController(options?: { readonly hitSlop?: number 
       return dropPointers(changed);
     },
     releaseAll(): readonly string[] {
-      const released = new Set<string>();
-      for (const action of pointerAction.values()) {
-        released.add(action);
-      }
+      const released = [...holdCounts.keys()];
       pointerAction.clear();
-      for (const action of holdCounts.keys()) {
-        released.add(action);
-      }
       holdCounts.clear();
-      stalePointerIds.clear();
-      return [...released];
+      return released;
     },
     /**
      * GS-INPUT-04: invalidate ownership without touching zones — pause,
-     * session replacement, or layout teardown snapshot the active pointers
-     * as stale and drop all holds. Stale pointers must produce a fresh down
-     * before their moves can acquire again; a fresh down rehabilitates.
+     * session replacement, or layout teardown drop all physical downs and
+     * holds. Moves cannot acquire again until a fresh down is received.
      */
     invalidateOwnership(): void {
-      for (const pointerId of pointerAction.keys()) {
-        stalePointerIds.add(pointerId);
-      }
       pointerAction.clear();
       holdCounts.clear();
     },

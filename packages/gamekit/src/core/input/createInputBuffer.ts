@@ -6,6 +6,7 @@ type InputActionKind = 'button' | 'pointer';
 
 interface MutableButtonState {
   kind: 'button';
+  resetRevision: number;
   held: boolean;
   pressed: boolean;
   released: boolean;
@@ -14,6 +15,7 @@ interface MutableButtonState {
 
 interface MutablePointerState {
   kind: 'pointer';
+  resetRevision: number;
   /** Whether the pointer owns the action slot (held until the terminal edge is sampled). */
   ownsSlot: boolean;
   /** Whether the owning pointer is currently down (published as `active`). */
@@ -25,17 +27,17 @@ interface MutablePointerState {
   position: Point2D | undefined;
   delta: { x: number; y: number };
   /**
-   * A pointer that arrived before the terminal edge was sampled (GS-INPUT-01).
-   * It carries its own edge/position lifecycle: moves update its position,
-   * a terminal edge marks it released/cancelled instead of transferring, so
-   * an already-lifted pointer can never go live.
+   * The first successor arriving before the terminal edge is sampled.
+   * Capacity is one: later begins are ignored until this slot is promoted.
+   * A completed successor still publishes its pressed/released edges, but
+   * never becomes active. Whole-action cancellation clears it.
    */
   pending:
     | {
         readonly pointerId: number;
         position: Point2D;
+        delta: { x: number; y: number };
         released: boolean;
-        cancelled: boolean;
       }
     | undefined;
 }
@@ -82,6 +84,7 @@ export function createInputBuffer<TInput extends InputMap>(
     if (actionConfig.type === 'pointer') {
       states.set(action, {
         kind: 'pointer',
+        resetRevision: 0,
         ownsSlot: false,
         active: false,
         pressed: false,
@@ -95,6 +98,7 @@ export function createInputBuffer<TInput extends InputMap>(
     } else {
       states.set(action, {
         kind: 'button',
+        resetRevision: 0,
         held: false,
         pressed: false,
         released: false,
@@ -134,13 +138,16 @@ export function createInputBuffer<TInput extends InputMap>(
     get sampledCount() {
       return sampledCount;
     },
+    getResetRevision(action: ActionName) {
+      return getState(action).resetRevision;
+    },
     press(action: ActionName) {
       assertLive();
       if (isRejectingInput()) {
         return;
       }
-      acceptedCount += 1;
       const state = getButton(action);
+      acceptedCount += 1;
       state.pressed ||= !state.held;
       state.held = true;
     },
@@ -149,8 +156,8 @@ export function createInputBuffer<TInput extends InputMap>(
       if (isRejectingInput()) {
         return;
       }
-      acceptedCount += 1;
       const state = getButton(action);
+      acceptedCount += 1;
       state.released ||= state.held;
       state.held = false;
     },
@@ -168,16 +175,16 @@ export function createInputBuffer<TInput extends InputMap>(
       if (state.ownsSlot && !state.active) {
         // The current owner released but the terminal edge has not been
         // sampled yet. Queue the first new pointer and transfer after the
-        // release/cancel frame — unless it lifts first (GS-INPUT-01).
+        // release/cancel frame. Preserve a completed tap's edges too.
         if (state.pending === undefined) {
           state.pending = {
             pointerId,
             position: freezePoint(position.x, position.y),
+            delta: { x: 0, y: 0 },
             released: false,
-            cancelled: false,
           };
+          acceptedCount += 1;
         }
-        acceptedCount += 1;
         return;
       }
       acceptedCount += 1;
@@ -207,10 +214,11 @@ export function createInputBuffer<TInput extends InputMap>(
           !state.active &&
           pending !== undefined &&
           pending.pointerId === pointerId &&
-          !pending.released &&
-          !pending.cancelled
+          !pending.released
         ) {
           acceptedCount += 1;
+          pending.delta.x += position.x - pending.position.x;
+          pending.delta.y += position.y - pending.position.y;
           pending.position = freezePoint(position.x, position.y);
         }
         return;
@@ -243,14 +251,13 @@ export function createInputBuffer<TInput extends InputMap>(
         !state.active &&
         pending !== undefined &&
         pending.pointerId === pointerId &&
-        !pending.released &&
-        !pending.cancelled
+        !pending.released
       ) {
         acceptedCount += 1;
         pending.released = true;
         return;
       }
-      if (state.pointerId !== pointerId) {
+      if (!state.active || state.pointerId !== pointerId) {
         return;
       }
       acceptedCount += 1;
@@ -303,14 +310,16 @@ export function createInputBuffer<TInput extends InputMap>(
     if (sampled.released || sampled.cancelled) {
       const pending = state.pending;
       state.pending = undefined;
-      if (pending !== undefined && !pending.released && !pending.cancelled) {
-        // Transfer to the queued pointer after the terminal frame.
-        state.active = true;
+      if (pending !== undefined) {
+        // Publish the successor after the old terminal frame, including an
+        // already completed tap. Never synthesize a hold for a lifted finger.
+        state.active = !pending.released;
         state.pressed = true;
+        state.released = pending.released;
         state.pointerId = pending.pointerId;
         state.position = pending.position;
-        state.delta.x = 0;
-        state.delta.y = 0;
+        state.delta.x = pending.delta.x;
+        state.delta.y = pending.delta.y;
       } else {
         state.ownsSlot = false;
         state.pointerId = undefined;
@@ -376,6 +385,8 @@ export function createInputBuffer<TInput extends InputMap>(
           state.active &&
           targetActionSet.has(action);
 
+        if (!preservePointer) state.resetRevision += 1;
+
         if (state.kind === 'pointer') {
           if (!preservePointer) {
             state.ownsSlot = false;
@@ -398,6 +409,7 @@ export function createInputBuffer<TInput extends InputMap>(
     },
     reset() {
       for (const state of states.values()) {
+        state.resetRevision += 1;
         if (state.kind === 'pointer') {
           state.ownsSlot = false;
           state.active = false;
