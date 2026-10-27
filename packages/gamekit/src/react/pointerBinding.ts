@@ -116,9 +116,10 @@ export class PointerBinding<TActionName extends string> {
   readonly #action: TActionName;
   readonly #input: InputController<TActionName>;
   readonly #getViewport: () => ResolvedViewport2D | undefined;
-  readonly #onSample: ((sample: PointerSample2D) => void) | undefined;
+  #onSample: ((sample: PointerSample2D) => void) | undefined;
   readonly #generation: number;
   #disposed = false;
+  #lastSequence = -1;
 
   constructor(
     action: TActionName,
@@ -132,6 +133,11 @@ export class PointerBinding<TActionName extends string> {
     this.#getViewport = getViewport;
     this.#onSample = onSample;
     this.#generation = generation;
+  }
+
+  /** Replace optional RN instrumentation without replacing input ownership. */
+  setSampleListener(listener: ((sample: PointerSample2D) => void) | undefined): void {
+    this.#onSample = listener;
   }
 
   /**
@@ -178,13 +184,13 @@ export class PointerBinding<TActionName extends string> {
    * is adapter-owned and never resets, so it cannot desynchronize).
    */
   dispatch(packet: PointerPacket): boolean {
-    if (this.#disposed || packet.generation !== this.#generation) {
+    if (this.#disposed || packet.generation !== this.#generation || packet.seq <= this.#lastSequence) {
       return false;
     }
+    this.#lastSequence = packet.seq;
     switch (packet.kind) {
       case 'begin':
-        this.handleTouchesDown(packet.pointerId, packet.x, packet.y, packet.camera);
-        break;
+        return this.handleTouchesDown(packet.pointerId, packet.x, packet.y, packet.camera);
       case 'move':
         this.handleTouchesMove(packet.pointerId, packet.x, packet.y, packet.camera);
         break;

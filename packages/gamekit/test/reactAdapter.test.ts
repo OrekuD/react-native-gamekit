@@ -19,6 +19,10 @@ class RecordingInputController implements InputController<string> {
   acceptedCount = 0;
   sampledCount = 0;
 
+  getResetRevision(): number {
+    return 0;
+  }
+
   press(action: string): void {
     this.events.push(`press:${action}`);
   }
@@ -42,6 +46,23 @@ class RecordingInputController implements InputController<string> {
 }
 
 describe('PointerBinding', () => {
+  it('replaces and disables sample instrumentation without replacing pointer ownership', () => {
+    const input = new RecordingInputController();
+    const first: number[] = [];
+    const second: number[] = [];
+    const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 1,
+      (sample) => { first.push(sample.world.x); });
+    binding.begin(7, { x: 195, y: 400 });
+    binding.setSampleListener((sample) => { second.push(sample.world.x); });
+    binding.move(7, { x: 195, y: 500 });
+    binding.setSampleListener(undefined);
+    binding.move(7, { x: 195, y: 600 });
+    binding.end(7);
+    assert.deepEqual(first, [160]);
+    assert.deepEqual(second, [160]);
+    assert.deepEqual(input.events.map((event) => event.split(':')[0]), ['begin', 'move', 'move', 'end']);
+  });
+
   it('converts surface coordinates to world coordinates through the viewport', () => {
     const input = new RecordingInputController();
     const binding = new PointerBinding('primary', input, () => resolvedFor(390, 844), 1);

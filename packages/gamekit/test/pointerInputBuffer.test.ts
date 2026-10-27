@@ -355,8 +355,17 @@ describe('GS-INPUT-01 pending pointer lifecycle', () => {
     assert.equal(released.released, true, 'the old owner terminal sample is preserved');
     assert.equal(released.pointerId, 1);
 
-    const neutral = buffer.sample().pointer('primary');
-    assert.deepEqual(neutral, {
+    const pendingTap = buffer.sample().pointer('primary');
+    assert.deepEqual(pendingTap, {
+      active: false,
+      pressed: true,
+      released: true,
+      cancelled: false,
+      pointerId: 2,
+      position: { x: 30, y: 40 },
+      delta: { x: 0, y: 0 },
+    }, 'the accepted second tap is delivered without becoming active');
+    assert.deepEqual(buffer.sample().pointer('primary'), {
       active: false,
       pressed: false,
       released: false,
@@ -417,5 +426,142 @@ describe('GS-INPUT-01 pending pointer lifecycle', () => {
     const neutral = buffer.sample().pointer('primary');
     assert.equal(neutral.active, false);
     assert.equal(neutral.pointerId, undefined);
+  });
+});
+
+describe('input acceptance and bounded pending ownership', () => {
+  it('does not count invalid action names, action kinds, ids, or coordinates', () => {
+    const { controller } = createBuffer();
+    const invalid = [
+      () => controller.press('missing' as 'boost'),
+      () => controller.release('missing' as 'boost'),
+      () => controller.press('primary'),
+      () => controller.release('primary'),
+      () => controller.begin('boost', 1, { x: 0, y: 0 }),
+      () => controller.begin('primary', Number.NaN, { x: 0, y: 0 }),
+      () => controller.begin('primary', 1, { x: Infinity, y: 0 }),
+      () => controller.cancel('missing' as 'boost'),
+    ];
+    for (const event of invalid) {
+      assert.throws(event);
+      assert.equal(controller.acceptedCount, 0, 'invalid events never reach the accepted boundary');
+    }
+  });
+
+  it('counts only the first queued begin and ignores later begins until its sample is delivered', () => {
+    const buffer = createBuffer();
+    const { controller } = buffer;
+    controller.begin('primary', 1, { x: 0, y: 0 });
+    controller.end('primary', 1);
+    controller.begin('primary', 2, { x: 10, y: 20 });
+    controller.end('primary', 2);
+    for (let id = 3; id < 100; id += 1) {
+      controller.begin('primary', id, { x: id, y: 0 });
+      controller.move('primary', id, { x: id + 1, y: 0 });
+      controller.end('primary', id);
+    }
+    assert.equal(controller.acceptedCount, 4);
+    assert.equal(buffer.sample().pointer('primary').pointerId, 1);
+    assert.equal(buffer.sample().pointer('primary').pointerId, 2);
+    assert.equal(buffer.sample().pointer('primary').pointerId, undefined);
+    controller.begin('primary', 100, { x: 100, y: 0 });
+    assert.equal(controller.acceptedCount, 5, 'capacity returns after terminal samples drain');
+    assert.equal(buffer.sample().pointer('primary').active, true);
+  });
+
+  it('does not count repeated ends on an owner or pending pointer', () => {
+    const buffer = createBuffer();
+    const { controller } = buffer;
+    controller.begin('primary', 1, { x: 0, y: 0 });
+    controller.end('primary', 1);
+    controller.end('primary', 1);
+    controller.begin('primary', 2, { x: 0, y: 0 });
+    controller.end('primary', 2);
+    controller.end('primary', 2);
+    assert.equal(controller.acceptedCount, 4);
+  });
+
+  it('retains accepted pending-tap movement without mutating an earlier published frame', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 0, y: 0 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 10, y: 20 });
+    buffer.controller.move('primary', 2, { x: 30, y: 50 });
+    buffer.controller.end('primary', 2);
+    const first = buffer.sample().pointer('primary');
+    const second = buffer.sample().pointer('primary');
+    assert.equal(second.pressed, true);
+    assert.equal(second.released, true);
+    assert.equal(second.active, false);
+    assert.deepEqual(second.position, { x: 30, y: 50 });
+    assert.deepEqual(second.delta, { x: 20, y: 30 });
+    assert.deepEqual(first.position, { x: 0, y: 0 });
+    assert.deepEqual(first.delta, { x: 0, y: 0 });
+  });
+
+  it('clears terminal pending taps at reset and scene-transition boundaries', () => {
+    for (const transition of [false, true]) {
+      const buffer = createBuffer();
+      buffer.controller.begin('primary', 1, { x: 0, y: 0 });
+      buffer.controller.end('primary', 1);
+      buffer.controller.begin('primary', 2, { x: 10, y: 20 });
+      buffer.controller.end('primary', 2);
+      buffer.sample();
+      if (transition) buffer.resetForTransition(['primary']);
+      else buffer.reset();
+      const pointer = buffer.sample().pointer('primary');
+      assert.equal(pointer.active, false);
+      assert.equal(pointer.pressed, false);
+      assert.equal(pointer.released, false);
+      assert.equal(pointer.pointerId, undefined);
+    }
+  });
+});
+
+describe('input ownership reset revisions', () => {
+  it('increments every action on full resets, including neutral actions', () => {
+    const buffer = createBuffer();
+    for (const action of ['boost', 'primary'] as const) assert.equal(buffer.controller.getResetRevision(action), 0);
+    buffer.reset();
+    buffer.controller.press('boost');
+    buffer.controller.begin('primary', 1, { x: 0, y: 0 });
+    buffer.sample();
+    for (const action of ['boost', 'primary'] as const) assert.equal(buffer.controller.getResetRevision(action), 1);
+    buffer.reset();
+    for (const action of ['boost', 'primary'] as const) assert.equal(buffer.controller.getResetRevision(action), 2);
+  });
+
+  it('preserves only the revision of a physically active pointer consumed by the new scene', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 0, y: 0 });
+    buffer.sample();
+    buffer.resetForTransition(['primary', 'boost']);
+    assert.equal(buffer.controller.getResetRevision('primary'), 0);
+    assert.equal(buffer.controller.getResetRevision('boost'), 1);
+    buffer.resetForTransition([]);
+    assert.equal(buffer.controller.getResetRevision('primary'), 1);
+    assert.equal(buffer.controller.getResetRevision('boost'), 2);
+    buffer.resetForTransition(['primary']);
+    assert.equal(buffer.controller.getResetRevision('primary'), 2, 'neutral pointer packets also invalidate');
+  });
+
+  it('increments the revision for a released pointer with a queued successor', () => {
+    const buffer = createBuffer();
+    buffer.controller.begin('primary', 1, { x: 0, y: 0 });
+    buffer.controller.end('primary', 1);
+    buffer.controller.begin('primary', 2, { x: 10, y: 10 });
+    buffer.resetForTransition(['primary']);
+    assert.equal(buffer.controller.getResetRevision('primary'), 1);
+    assert.equal(buffer.sample().pointer('primary').active, false);
+  });
+
+  it('validates the action but remains readable after disposal', () => {
+    let disposed = false;
+    const buffer = createInputBuffer(input, () => { assert.equal(disposed, false); });
+    buffer.reset();
+    disposed = true;
+    assert.equal(buffer.controller.getResetRevision('primary'), 1);
+    assert.throws(() => buffer.controller.getResetRevision('missing' as 'primary'), /Unknown input action/);
+    assert.equal(buffer.controller.acceptedCount, 0);
   });
 });

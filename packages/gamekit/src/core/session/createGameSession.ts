@@ -1106,8 +1106,16 @@ export function createGameSessionWithDriver<
     },
     addStatusListener(listener) {
       assertLive();
+      const alreadyRegistered = statusListeners.has(listener);
       statusListeners.add(listener);
-      diagnostics?.onStatusListenerCount?.(statusListeners.size);
+      try {
+        diagnostics?.onStatusListenerCount?.(statusListeners.size);
+      } catch (error) {
+        // Registration did not return a cleanup handle. Undo only this
+        // acquisition so a failed adapter mount cannot leak a listener.
+        if (!alreadyRegistered) statusListeners.delete(listener);
+        throw error;
+      }
       let removed = false;
       return Object.freeze({
         remove() {

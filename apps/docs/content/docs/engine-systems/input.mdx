@@ -53,8 +53,17 @@ Gesture Handler event objects never enter the simulation API.
 ## Ownership and secondary pointers
 
 The first pointer to begin owns the action until it releases or cancels.
-Secondary pointers are ignored: their begins, moves, and ends have no effect.
-Ownership transfers only after the owner releases or cancels.
+Secondary pointers that begin while that owner is down are ignored. The
+headless buffer retains at most one new pointer that begins after the owner
+lifts but before its terminal sample is consumed. The old owner's terminal
+sample is delivered first. If the queued pointer also lifts between ticks,
+its next sample still contains `pressed` and `released`, with `active: false`;
+the tap is not lost. Further begins while that pending slot is occupied are
+ignored. Whole-action cancellation clears pending acquisition.
+
+The native pointer adapter owns one primary touch per recognizer stream.
+It does not promote a secondary finger that was already down; lift the
+remaining fingers before starting another primary gesture.
 
 ## Declaring button actions
 
@@ -90,10 +99,11 @@ presses again.
 
 ## Mounting the button pad
 
-`GameButtonPad` is the button counterpart to `GamePointerInput`. It is an
-invisible full-surface overlay — it draws nothing and its empty areas let
-touches pass through — so you can position each `GameButton` anywhere on
-screen and render whatever React children you like underneath.
+`GameButtonPad` is the button counterpart to `GamePointerInput`. Its default
+container is an invisible full-surface overlay. A supplied `style` controls
+the container layout instead, for example a bottom control row. It uses
+`pointerEvents="box-none"`; verify touch pass-through and competition with
+other recognizers on your target devices.
 
 ```tsx
 import { GameButton, GameButtonPad } from 'rn-gamekit/react';
@@ -108,8 +118,23 @@ Each `GameButton` measures its own bounds on layout. A finger that lands
 inside a zone presses its action; a finger that slides between zones
 reassigns (release plus press); lifting or cancelling releases. An action
 stays held while any finger covers its zone, so two fingers on `jump` keep
-it held until the last one lifts. Unmount releases every held action so no
-input outlives the pad.
+it held until the last one lifts. Swapping two fingers between held zones in
+one native event does not release and retrigger either action. A tracked
+finger can begin in empty pad space or cross a gap, then acquire a zone;
+a move without a matching down cannot acquire. Unmount releases ownership.
+
+`GamePointerInput` constrains its `action` prop to declared pointer names.
+React context cannot infer a parent's input map into each `GameButton`'s
+string prop. For compile-time button-name checking, use the exported helper:
+
+```ts
+import type { ButtonActionName } from 'rn-gamekit/react';
+
+const buttons = {
+  jump: 'jump',
+} satisfies Record<string, ButtonActionName<typeof definition.input>>;
+// <GameButton action={buttons.jump}>Jump</GameButton>
+```
 
 ## Mounting the adapter
 
@@ -136,16 +161,41 @@ The active pointer is cancelled and neutralized by:
   transform;
 - unmounting `GamePointerInput`;
 - pausing the session;
-- committing a scene transition or restart;
+- restarting the session;
 - disposing the session.
 
-Neutralization guarantees a fresh restart never sees a stuck or phantom
-pointer. Pause, transition, restart, and dispose reset the buffer directly so
-the next tick after any of those events observes neutral input.
+Pause, restart, and dispose reset the core buffer. Adapter invalidation also
+rejects queued packets, removes the trailing sampler, and requires a fresh
+down after resume or a layout change.
 
-## How pointer input flows
+An update-scoped `transition.setScene(...)` preserves a physically held
+pointer when the target scene declares the same action. It clears that
+pointer's one-tick edges, delta, and pending acquisition. If the target does
+not consume the action, it becomes neutral. External `session.setScene(...)`
+and restarts reset all input. Buttons do not carry held state into a new scene.
 
-How pointer input flows and what the latency tradeoffs are.
+## Custom adapter reset detection
+
+`session.input.getResetRevision(action)` returns a per-action reset revision.
+Capture it when queueing input and compare it before delivery. A different
+revision means the action was reset and the queued command is stale:
+
+```ts
+const revision = session.input.getResetRevision('primary');
+const deliver = () => {
+  if (session.status !== 'running') return;
+  if (session.input.getResetRevision('primary') !== revision) return;
+  session.input.begin('primary', pointerId, logicalPosition);
+};
+```
+
+Custom adapters can also compare revisions from a commit listener to release
+their local ownership after a restart. Status listeners still handle pause
+and disposal. The revision starts at zero, increases on resets even when
+input is neutral, and stays unchanged for a pointer preserved by a compatible
+update-scoped transition. It is safe to read after disposal. It does not count
+touches, identify the active pointer, or replace the adapter's layout and
+lifetime checks. The built-in React adapters manage these checks for you.
 
 ## Ownership
 

@@ -6,7 +6,7 @@
  * the analyzer follows each project-owned callee and requires a
  * `'worklet'` directive on every helper body it reaches. Every
  * call-expression shape is classified: approved runtime APIs (GestureStateManager,
- * scheduleOnRN), Math, Date, the instrumentation object, and workletized
+ * scheduleOnRN), Math, Date, UI-only instrumentation callbacks, and workletized
  * project helpers are permitted; unapproved identifier, property-access,
  * element-access, and computed callees are rejected.
  */
@@ -44,7 +44,8 @@ const RUNTIME_CALLEES = new Set([
   'scheduleOnRN',
   'Date',
   'Math',
-  'instrumentation',
+  'onRawTouch',
+  'onForwarded',
 ]);
 
 /** Handler name -> its useCallback type marker. */
@@ -111,21 +112,7 @@ function hasWorkletDirective(body: string): boolean {
 
 /** The trailing flush callback body from the analyzed text (T12-TF1). */
 function flushBody(text: string): string {
-  const start = text.indexOf('useFrameCallback(() => {');
-  assert.ok(start >= 0, 'flush callback found');
-  const open = text.indexOf('{', start);
-  let depth = 0;
-  for (let index = open; index < text.length; index += 1) {
-    if (text[index] === '{') {
-      depth += 1;
-    } else if (text[index] === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        return text.slice(open + 1, index);
-      }
-    }
-  }
-  throw new Error('unterminated flush body');
+  return bodyOf(text, 'const flush = useCallback(');
 }
 
 interface AnalysisResult {
@@ -173,8 +160,8 @@ function analyze(text: string, modules: Record<string, string> = MODULES): Analy
         }
       } else {
         // Property-access, element-access, and computed callees: only
-        // approved runtime receivers may be called. Optional-chaining
-        // receivers (`instrumentation?.onRawTouch`) normalize to the base.
+        // approved runtime receivers may be called. Optional chaining
+        // normalizes to the base receiver.
         const receiver = shape.name.replace('?.', '.').split('.')[0] ?? shape.name;
         if (!RUNTIME_CALLEES.has(receiver)) {
           banned.push(`${owner} -> ${shape.kind} ${shape.name}`);
@@ -251,12 +238,11 @@ describe('GamePointerInput UI worklet call graph (T12-TF1)', () => {
 
   it('detects mutations of the trailing-flush body through the analyzed text', () => {
     const flushMutation = source.replace(
-      "      const batch = advanceSharedCoalescer(coalescerState, {\n        kind: 'flush',",
-      "      const batch = advanceSharedCoalescer(coalescerState, {\n        kind: 'flush',\n        stamp: { captured: true, value: undefined },",
+      '    const nowMs = Date.now();',
+      '    const nowMs = Date.now();\n    instrumentation.onDispatchResult();',
     );
-    // The mutation is inside the flush body; the analyzer must see it
-    // without erroring on the marker (the flush body still exists).
+    assert.notEqual(flushMutation, source, 'mutation is applied inside the flush body');
     const result = analyze(flushMutation);
-    assert.ok(!result.banned.some((entry) => entry.startsWith('trailing-flush')), 'the flush body is analyzed');
+    assert.ok(result.banned.some((entry) => entry.startsWith('trailing-flush')), 'RN instrumentation cannot enter the UI closure');
   });
 });

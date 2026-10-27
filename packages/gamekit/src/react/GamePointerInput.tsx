@@ -17,8 +17,6 @@ import {
   canBeginPrimaryPointer,
   cancelOnActiveFinalize,
   deactivateAfterUp,
-  reduceSamplerMirrorState,
-  samplerMirrorFromBatch,
   type SamplerMirrorState,
 } from './gestureLifecycle';
 import type { GamePointerInstrumentation } from './instrumentation';
@@ -32,6 +30,7 @@ import {
 } from './pointerCoalescer';
 import { packetCameraFor, type PointerCameraCapture2D } from './pointerCamera';
 import { PointerBinding, type PointerPacket } from './pointerBinding';
+import { createCleanupList } from './cleanupList';
 
 /** Declared pointer action names of an input map. */
 type PointerActionName<TInput extends InputMap> = {
@@ -43,6 +42,7 @@ let nextBindingGeneration = 1;
 
 type ManualTouchHandler = NonNullable<ManualGestureConfig['onTouchesDown']>;
 type ManualFinalizeHandler = NonNullable<ManualGestureConfig['onFinalize']>;
+type PointerUiOwner = { readonly generation: number; readonly enabled: boolean };
 
 /** Props for the pointer input adapter that covers the game surface. */
 export interface GamePointerInputProps<TScenes extends SceneMap, TInput extends InputMap> {
@@ -81,6 +81,7 @@ function TrailingFlushSampler({
   forwardSeq,
   generation,
   camera,
+  uiOwner,
 }: {
   readonly coalescerState: SharedValue<PointerCoalescerState>;
   readonly forwardEventOnJS: (packet: PointerPacket) => void;
@@ -88,6 +89,7 @@ function TrailingFlushSampler({
   readonly layoutEpoch: SharedValue<number>;
   readonly forwardSeq: SharedValue<number>;
   readonly generation: number;
+  readonly uiOwner: SharedValue<PointerUiOwner>;
   /** The presented camera shared value, sampled at flush time (T12-F4). */
   readonly camera: SharedValue<CameraCut2D | undefined> | undefined;
 }) {
@@ -102,17 +104,22 @@ function TrailingFlushSampler({
     };
   }, []);
 
-  useFrameCallback(() => {
+  const onForwarded = instrumentation?.onForwarded;
+  const flush = useCallback(() => {
     'worklet';
+    if (uiOwner.value.generation !== generation || !uiOwner.value.enabled) {
+      return;
+    }
+    const nowMs = Date.now();
     const batch = advanceSharedCoalescer(coalescerState, {
       kind: 'flush',
-      nowMs: Date.now(),
+      nowMs,
     });
     for (const forwarded of batch) {
-      instrumentation?.onForwarded?.(
+      onForwarded?.(
         forwarded.kind,
         'pointerId' in forwarded ? forwarded.pointerId : -1,
-        Date.now(),
+        nowMs,
       );
       forwardSeq.value += 1;
       scheduleOnRN(forwardEventOnJS, {
@@ -120,14 +127,15 @@ function TrailingFlushSampler({
         generation,
         layoutEpoch: layoutEpoch.value,
         seq: forwardSeq.value,
-        atMs: Date.now(),
+        atMs: nowMs,
         // The deferred move carries the stamp captured at ITS native
         // sample (T12-RF3, T12-SF1) — never the flush-time camera, and a
         // captured undefined stays undefined.
         camera: packetCameraFor(forwarded, camera?.value),
       });
     }
-  });
+  }, [camera, coalescerState, forwardEventOnJS, forwardSeq, generation, layoutEpoch, onForwarded, uiOwner]);
+  useFrameCallback(flush);
   return null;
 }
 
@@ -170,27 +178,19 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     createPointerCoalescerState(maxMoveIntervalMs),
   );
   const viewportBinding = viewportContext.binding;
-  // F3 follow-up: the binding identity includes the declared action, the
-  // session input controller, and the viewport owner; changing any of them
-  // creates a fresh binding stamped with a NEW monotonic generation that
-  // never resets to zero. The worklet closures created in the same render
-  // stamp packets with that same generation, so the packet producer and
-  // consumer agree by construction — no post-commit synchronization.
-  const binding = useMemo(
-    () =>
-      new PointerBinding(
-        action,
-        game.input,
-        () => viewportBinding.resolved,
-        nextBindingGeneration++,
-      ),
-    [action, game, viewportBinding],
-  );
-  // T12-F4: the presented camera is sampled at EVENT TIME inside the touch
-  // worklets and stamped onto every packet; the binding inverts through
-  // that stamp, never a later JS-side read.
   const cameraShared = presentedCamera;
-  const generation = binding.generation;
+  // A render-stable generation scopes UI callbacks. The binding itself is
+  // created by the committed effect, so StrictMode can release and reacquire
+  // it without reusing an already disposed object.
+  const generation = useMemo(
+    () => nextBindingGeneration++,
+    [action, game, viewportBinding, cameraShared],
+  );
+  const bindingRef = useRef<{
+    readonly binding: PointerBinding<Extract<keyof TInput, string>>;
+    readonly synchronizeReset: () => void;
+  } | undefined>(undefined);
+  const uiOwner = useSharedValue<PointerUiOwner>({ generation: -1, enabled: false });
   // F6/F3: the layout epoch is adapter-owned (ref + UI mirror), bumped only
   // on layout revisions and unmount; it never resets, so replacement cannot
   // desynchronize it. The RN-side dispatch check rejects old-layout packets.
@@ -203,6 +203,15 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // F1: monotonic forward sequence carried with every packet so the RN side
   // can attribute latency causally (never by reading a separate "latest").
   const forwardSeq = useSharedValue(0);
+  // Keep RN-only instrumentation out of serialized worklet closures. The
+  // committed ref also lets instrumentation change without retiring a drag.
+  const onRawTouch = instrumentation?.onRawTouch;
+  const onForwarded = instrumentation?.onForwarded;
+  const instrumentationRef = useRef(instrumentation);
+  useEffect(() => {
+    instrumentationRef.current = instrumentation;
+    bindingRef.current?.binding.setSampleListener(instrumentation?.onPointerSample);
+  }, [instrumentation]);
 
   // F2 follow-up: the sampler mirror is keyed by binding generation, so a
   // replacement binding is inactive by construction and a stale terminal
@@ -212,46 +221,8 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
     generation: -1,
     active: false,
   });
-  const reportSamplerState = useCallback(
-    (next: SamplerMirrorState) => {
-      setSamplerState((previous) =>
-        reduceSamplerMirrorState(generation, previous, next),
-      );
-    },
-    [generation],
-  );
-
-  // T10.4: the pause transition clears the UI-side coalescer queue for the
-  // active stream (the core input buffer already cancelled ownership), so a
-  // pre-pause pointer can never flush stale moves after resume. The gesture
-  // itself is not remounted and its key does not change.
-  // GS-INPUT-04: pause also advances the packet epoch (queued pre-pause
-  // packets die at RN ingress) and clears the React sampler mirror, so the
-  // trailing sampler unmounts even when no coalescer event ever arrives to
-  // finalize it. A fresh down is required after resume.
-  useEffect(() => {
-    if (game.status === 'disposed') {
-      return;
-    }
-    const subscription = game.addStatusListener((status) => {
-      if (status === 'paused') {
-        coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
-        bumpLayoutEpoch();
-        setSamplerState((previous) =>
-          reduceSamplerMirrorState(generation, previous, { generation, active: false }),
-        );
-      }
-    });
-    return () => {
-      subscription.remove();
-    };
-  }, [bumpLayoutEpoch, coalescerState, game, generation, maxMoveIntervalMs]);
-
-    // F2 review: `autostart` is only consulted at creation (changing it later
-  // re-registers but never activates) and `setActive` from an effect proved
-  // unreliable in this stack, so the sampler is a conditionally mounted
-  // component (see TrailingFlushSampler): it mounts with autostart active
-  // exactly while this mirror is true and unmounts when the pointer exits.
+  // Sampler ownership travels with accepted begin/terminal packets. There is
+  // no second queued callback that could revive a retired stream.
 
   // JS-thread handler (never captured by gesture worklets): the binding
   // rejects packets stamped with a stale epoch (layout revision, binding
@@ -259,30 +230,48 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   // into the session input buffer.
   const forwardEventOnJS = useCallback(
     (packet: PointerPacket) => {
-      // F6/F3: adapter-owned layout epoch — packets scheduled under an older
-      // layout die here, before the binding sees them.
+      const current = bindingRef.current;
+      current?.synchronizeReset();
+      const instrumentation = instrumentationRef.current;
+      // Layout, pause, reset, and effect retirement all invalidate queued work.
       if (packet.layoutEpoch !== layoutEpochRef.current) {
         instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, false);
         instrumentation?.onDispatchRejected?.('layout-epoch', packet.seq, packet.atMs);
         return;
       }
-      const accepted = binding.dispatch(packet);
+      const accepted =
+        current !== undefined &&
+        current.binding.generation === generation &&
+        game.status !== 'paused' && game.status !== 'disposed' &&
+        current.binding.dispatch(packet);
+      if (accepted && packet.kind !== 'move') {
+        const active = packet.kind === 'begin';
+        setSamplerState((previous) =>
+          previous.generation === generation && previous.active === active
+            ? previous
+            : { generation, active },
+        );
+      }
       instrumentation?.onDispatchResult?.(packet.seq, packet.atMs, accepted);
       if (!accepted) {
         instrumentation?.onDispatchRejected?.('binding', packet.seq, packet.atMs);
       }
     },
-    [binding, instrumentation],
+    [game, generation],
   );
 
   const handleTouchesDown = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
+      if (uiOwner.value.generation !== generation || !uiOwner.value.enabled) {
+        return;
+      }
       const touch = event.changedTouches[0];
       if (touch === undefined) {
         return;
       }
-      instrumentation?.onRawTouch?.('down', touch.id, Date.now());
+      const nowMs = Date.now();
+      onRawTouch?.('down', touch.id, nowMs);
       // This adapter owns one primary pointer for the whole native gesture.
       // If another touch is already present, it cannot replace a pointer that
       // ended earlier while the manual recognizer is still active.
@@ -300,13 +289,13 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
         pointerId: touch.id,
         x: touch.x,
         y: touch.y,
-        nowMs: Date.now(),
+        nowMs,
       });
       for (const forwarded of batch) {
-        instrumentation?.onForwarded?.(
+        onForwarded?.(
           forwarded.kind,
           'pointerId' in forwarded ? forwarded.pointerId : -1,
-          Date.now(),
+          nowMs,
         );
         forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
@@ -314,154 +303,150 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
           generation,
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
-          atMs: Date.now(),
+          atMs: nowMs,
           camera: cameraShared?.value,
         });
       }
-      const nextActive = samplerMirrorFromBatch(batch);
-      if (nextActive !== undefined) {
-        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
-      }
       GestureStateManager.activate(event.handlerTag);
     },
-    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState, viewportShared],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, onForwarded, onRawTouch, layoutEpoch, forwardSeq, uiOwner, viewportShared],
   );
 
   const handleTouchesMove = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
+      if (uiOwner.value.generation !== generation || !uiOwner.value.enabled) {
+        return;
+      }
+      const nowMs = Date.now();
       for (const touch of event.changedTouches) {
-        instrumentation?.onRawTouch?.('move', touch.id, Date.now());
+        onRawTouch?.('move', touch.id, nowMs);
         const batch = advanceSharedCoalescer(coalescerState, {
           kind: 'move',
           pointerId: touch.id,
           x: touch.x,
           y: touch.y,
-          nowMs: Date.now(),
+          nowMs,
           stamp: { captured: true, value: cameraShared?.value } satisfies PointerCameraCapture2D,
         });
         for (const forwarded of batch) {
-          instrumentation?.onForwarded?.(
+          onForwarded?.(
             forwarded.kind,
             'pointerId' in forwarded ? forwarded.pointerId : -1,
-            Date.now(),
+            nowMs,
           );
           forwardSeq.value += 1;
-        scheduleOnRN(forwardEventOnJS, {
-          ...forwarded,
-          generation,
-          layoutEpoch: layoutEpoch.value,
-          seq: forwardSeq.value,
-          atMs: Date.now(),
-          camera: packetCameraFor(forwarded, cameraShared?.value),
-        });
+          scheduleOnRN(forwardEventOnJS, {
+            ...forwarded,
+            generation,
+            layoutEpoch: layoutEpoch.value,
+            seq: forwardSeq.value,
+            atMs: nowMs,
+            camera: packetCameraFor(forwarded, cameraShared?.value),
+          });
         }
       }
     },
-    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, onForwarded, onRawTouch, layoutEpoch, forwardSeq, uiOwner],
   );
 
   const handleTouchesUp = useCallback<ManualTouchHandler>(
     (event) => {
       'worklet';
-      let nextActive: boolean | undefined;
+      if (uiOwner.value.generation !== generation || !uiOwner.value.enabled) {
+        return;
+      }
+      const nowMs = Date.now();
       for (const touch of event.changedTouches) {
-        instrumentation?.onRawTouch?.('up', touch.id, Date.now());
+        onRawTouch?.('up', touch.id, nowMs);
         const batch = advanceSharedCoalescer(coalescerState, {
           kind: 'up',
           pointerId: touch.id,
           x: touch.x,
           y: touch.y,
-          nowMs: Date.now(),
+          nowMs,
         });
         for (const forwarded of batch) {
-          instrumentation?.onForwarded?.(
+          onForwarded?.(
             forwarded.kind,
             'pointerId' in forwarded ? forwarded.pointerId : -1,
-            Date.now(),
+            nowMs,
           );
           forwardSeq.value += 1;
-        scheduleOnRN(forwardEventOnJS, {
-          ...forwarded,
-          generation,
-          layoutEpoch: layoutEpoch.value,
-          seq: forwardSeq.value,
-          atMs: Date.now(),
-          camera: packetCameraFor(forwarded, cameraShared?.value),
-        });
+          scheduleOnRN(forwardEventOnJS, {
+            ...forwarded,
+            generation,
+            layoutEpoch: layoutEpoch.value,
+            seq: forwardSeq.value,
+            atMs: nowMs,
+            camera: packetCameraFor(forwarded, cameraShared?.value),
+          });
         }
-        const mirror = samplerMirrorFromBatch(batch);
-        if (mirror !== undefined) {
-          nextActive = mirror;
-        }
-      }
-      if (nextActive !== undefined) {
-        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
       }
       if (deactivateAfterUp(event.numberOfTouches)) {
         GestureStateManager.deactivate(event.handlerTag);
       }
     },
-    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, onForwarded, onRawTouch, layoutEpoch, forwardSeq, uiOwner],
   );
 
   const handleTouchesCancel = useCallback<ManualTouchHandler>(
     () => {
       'worklet';
-      instrumentation?.onRawTouch?.('cancel', -1, Date.now());
+      if (uiOwner.value.generation !== generation || !uiOwner.value.enabled) {
+        return;
+      }
+      const nowMs = Date.now();
+      onRawTouch?.('cancel', -1, nowMs);
       const batch = advanceSharedCoalescer(coalescerState, {
         kind: 'cancel',
-        nowMs: Date.now(),
+        nowMs,
       });
       for (const forwarded of batch) {
-        instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
+        onForwarded?.(forwarded.kind, -1, nowMs);
         forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
           generation,
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
-          atMs: Date.now(),
+          atMs: nowMs,
           camera: cameraShared?.value,
         });
       }
-      const nextActive = samplerMirrorFromBatch(batch);
-      if (nextActive !== undefined) {
-        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
-      }
     },
-    [cameraShared, coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, onForwarded, onRawTouch, layoutEpoch, forwardSeq, uiOwner],
   );
 
   const handleFinalize = useCallback<ManualFinalizeHandler>(
     () => {
       'worklet';
+      if (uiOwner.value.generation !== generation || !uiOwner.value.enabled) {
+        return;
+      }
       if (!cancelOnActiveFinalize(coalescerState.value.active?.pointerId)) {
         return;
       }
-      instrumentation?.onRawTouch?.('cancel', -1, Date.now());
+      const nowMs = Date.now();
+      onRawTouch?.('cancel', -1, nowMs);
       const batch = advanceSharedCoalescer(coalescerState, {
         kind: 'cancel',
-        nowMs: Date.now(),
+        nowMs,
       });
       for (const forwarded of batch) {
-        instrumentation?.onForwarded?.(forwarded.kind, -1, Date.now());
+        onForwarded?.(forwarded.kind, -1, nowMs);
         forwardSeq.value += 1;
         scheduleOnRN(forwardEventOnJS, {
           ...forwarded,
           generation,
           layoutEpoch: layoutEpoch.value,
           seq: forwardSeq.value,
-          atMs: Date.now(),
+          atMs: nowMs,
           camera: cameraShared?.value,
         });
       }
-      const nextActive = samplerMirrorFromBatch(batch);
-      if (nextActive !== undefined) {
-        scheduleOnRN(reportSamplerState, { generation, active: nextActive });
-      }
     },
-    [coalescerState, forwardEventOnJS, generation, instrumentation, layoutEpoch, reportSamplerState],
+    [cameraShared, coalescerState, forwardEventOnJS, generation, onForwarded, onRawTouch, layoutEpoch, forwardSeq, uiOwner],
   );
 
   // RNGH 3 re-registers its gesture callbacks whenever this config identity
@@ -487,41 +472,79 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
   const gesture = useManualGesture(gestureConfig);
 
   useEffect(() => {
-    // F6/F3: a layout revision advances the adapter-owned layout epoch so
-    // queued old-layout packets die on arrival, while the active gesture
-    // keeps flowing (the binding reads the viewport lazily and the
-    // coalescer state is preserved). Binding replacement needs no epoch
-    // synchronization: the generation agreement is by construction.
-    const unsubscribeLayout = viewportBinding.subscribe(() => {
+    let live = true;
+    const binding = new PointerBinding(
+      action, game.input, () => viewportBinding.resolved, generation,
+      instrumentationRef.current?.onPointerSample,
+    );
+    let resetRevision = game.input.getResetRevision(action);
+    const clearStream = () => {
       bumpLayoutEpoch();
-    });
-    return () => {
-      unsubscribeLayout();
-      // Unmount or replacement: bump the layout epoch so packets already in
-      // flight become harmless no-ops, neutralize old input ownership exactly
-      // once, reset the coalescer, remove the old sampler (generation
-      // mismatch makes it inactive by construction), and dispose the binding.
-      // The mirror reset bails out when already inactive so cleanup never
-      // schedules redundant renders (GS-INPUT-04).
-      bumpLayoutEpoch();
-      setSamplerState((previous) =>
-        previous.active ? { generation: -1, active: false } : previous,
-      );
-      if (game.status !== 'disposed') {
-        binding.cancel();
-      }
       coalescerState.value = createPointerCoalescerState(maxMoveIntervalMs);
-      binding.dispose();
+      setSamplerState((previous) =>
+        previous.active ? { generation, active: false } : previous,
+      );
     };
-  }, [
-    binding,
-    bumpLayoutEpoch,
-    coalescerState,
-    game,
-    layoutEpoch,
-    maxMoveIntervalMs,
-    viewportBinding,
-  ]);
+    const invalidate = () => {
+      clearStream();
+      if (game.status !== 'disposed') binding.cancel();
+    };
+    const synchronizeReset = () => {
+      if (!live || game.status === 'disposed') return;
+      const next = game.input.getResetRevision(action);
+      if (next !== resetRevision) {
+        resetRevision = next;
+        invalidate();
+      }
+    };
+    bindingRef.current = { binding, synchronizeReset };
+    uiOwner.value = {
+      generation,
+      enabled: game.status !== 'paused' && game.status !== 'disposed',
+    };
+
+    const releases = createCleanupList();
+    releases.add(() => {
+      try {
+        if (game.status !== 'disposed') binding.cancel();
+      } finally {
+        binding.dispose();
+      }
+    });
+    const release = () => {
+      if (!live) return;
+      live = false;
+      bindingRef.current = undefined;
+      uiOwner.value = { generation: -1, enabled: false };
+      clearStream();
+      releases.releaseAll();
+    };
+    try {
+      releases.add(viewportBinding.subscribe(() => {
+        if (live) invalidate();
+      }));
+      if (game.status !== 'disposed') {
+        const statusSubscription = game.addStatusListener((status) => {
+          if (!live) return;
+          const enabled = status !== 'paused' && status !== 'disposed';
+          resetRevision = game.input.getResetRevision(action);
+          uiOwner.value = { generation, enabled };
+          if (!enabled) invalidate();
+        });
+        releases.add(() => { statusSubscription.remove(); });
+        const commitSubscription = game.addCommitListener(synchronizeReset);
+        releases.add(() => { commitSubscription.remove(); });
+      }
+    } catch (error) {
+      try {
+        release();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Pointer input setup and cleanup failed');
+      }
+      throw error;
+    }
+    return release;
+  }, [action, bumpLayoutEpoch, coalescerState, game, generation, maxMoveIntervalMs, uiOwner, viewportBinding]);
 
   return (
     <GestureDetector gesture={gesture}>
@@ -535,6 +558,7 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
             forwardSeq={forwardSeq}
             generation={generation}
             camera={cameraShared}
+            uiOwner={uiOwner}
           />
         ) : null}
       </View>

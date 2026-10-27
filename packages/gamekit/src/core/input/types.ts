@@ -50,7 +50,14 @@ export interface InputController<TActionName extends string> {
   press(action: TActionName): void;
   /** Enqueue a release for a declared button action. */
   release(action: TActionName): void;
-  /** Begin a pointer for a declared pointer action. */
+  /**
+   * Begin a pointer for a declared pointer action. The first pointer owns
+   * the action; secondary begins while it is active are ignored. After
+   * its terminal edge, one successor can wait for the next sample. Further
+   * begins are ignored while that pending slot is occupied. A successor
+   * that lifts before transfer still publishes one pressed/released sample
+   * with `active: false` after the old owner's terminal sample.
+   */
   begin(action: TActionName, pointerId: number, position: Point2D): void;
   /** Move the owning pointer of a declared pointer action. */
   move(action: TActionName, pointerId: number, position: Point2D): void;
@@ -59,9 +66,20 @@ export interface InputController<TActionName extends string> {
   /** Cancel the active button or owning pointer of a declared action. */
   cancel(action: TActionName): void;
   /**
+   * Read the ownership-reset revision for a declared action. Starts at zero
+   * and advances when pause/reset or a scene transition clears that action,
+   * even if it is neutral. A physically active pointer preserved into a
+   * consuming scene retains its revision. Custom adapters can stamp queued
+   * events and reject them if this revision changes before delivery.
+   * Safe to read after disposal; unknown actions throw.
+   */
+  getResetRevision(action: TActionName): number;
+  /**
    * Monotonic count of input events accepted by this controller (F1). The
    * session's commit instrumentation uses it to associate a commit with the
-   * inputs its fixed step actually sampled.
+   * inputs its fixed step actually sampled. Invalid operations and rejected
+   * pointer ownership claims do not increment it. Valid button operations
+   * and accepted pointer moves count even when their values are unchanged.
    */
   readonly acceptedCount: number;
   /**

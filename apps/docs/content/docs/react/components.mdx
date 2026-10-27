@@ -52,10 +52,10 @@ the session's declared button actions. Unlike `Pressable`, simultaneous
 fingers on different buttons all register, so you can hold left and jump at
 the same time.
 
-The pad itself is an invisible full-surface overlay. It draws nothing and
-its empty areas let touches pass through (`pointerEvents="box-none"`), so
-you can render whatever React children you like underneath and position
-each button anywhere on screen with ordinary styles.
+The pad defaults to an invisible full-surface overlay. It uses
+`pointerEvents="box-none"`; test pass-through and gesture competition with
+your surrounding controls on each target platform. A supplied `style`
+controls its layout, such as a bottom row.
 
 ```tsx
 import { GameButton, GameButtonPad } from 'rn-gamekit/react';
@@ -74,13 +74,14 @@ same primitive covers a GameBoy-style d-pad, AB buttons, and system
 buttons: every zone is just a named button.
 
 Props — `GameButtonPad`: `game` (required), `children` (one or more
-`GameButton` elements plus any non-interactive art), `style` (layered over
+`GameButton` elements plus any non-interactive art), `style` (replaces
 the default full-surface overlay), `hitSlop` (extra hit area around every
 zone), `testID`. Props — `GameButton`: `action` (a declared button
 action name), `style`, `children`, `testID`, `accessibilityRole`. Each
 button measures its own bounds on layout; sliding between zones reassigns
-the pointer, release edges always fire, and unmount releases every held
-action so no input outlives the pad. See [Input](../engine-systems/input).
+the pointer, and the final owner leaving releases the action. Unmount
+releases held actions. See [Input](../engine-systems/input) for the ownership
+policy and the `ButtonActionName` helper for typed button-name maps.
 
 ## Sprite components
 
