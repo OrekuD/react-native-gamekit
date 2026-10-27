@@ -4,8 +4,8 @@
  * These callbacks let the Performance Lab attribute results to the real
  * mounted components — GameView presentation, RNGH raw touches, and
  * UI→RN forwarding — instead of headless substitutes. They are optional,
- * cost nothing when absent (a single optional chain at event sites, never
- * per-frame), and are not part of the gameplay API contract: the playground
+ * skip diagnostic writes, timestamps and RN scheduling when absent (the
+ * presentation clock checks an enabled flag), and are not part of the gameplay API contract: the playground
  * lab is their only consumer until the device matrix approves them.
  *
  * Runtime ownership:
@@ -77,6 +77,9 @@ export interface GameViewInstrumentation {
    * `scheduleOnRN`s this callback, so it must run on JS, never as a
    * worklet. Skia GPU presentation is not proven by this hook, so latency
    * consumers must name the stage honestly.
+   * Queued reports are discarded when instrumentation is replaced or the
+   * presentation unmounts. A replacement observer starts with a fresh sample
+   * of the current revision on its next running UI frame.
    */
   readonly onUiRevisionObserved?: (revision: number, atMs: number) => void;
 }

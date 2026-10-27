@@ -150,10 +150,15 @@ function writeJson(path, value) {
   writeFileSync(path, JSON.stringify(value));
 }
 
-function fixture(t) {
+const bundledNativeModules = () => ({
+  react: '19.2.3',
+  'react-dom': '19.2.3',
+  'react-native': '0.86.3',
+});
+
+function fixture(t, policy = withLockfile()) {
   const root = mkdtempSync(join(tmpdir(), 'gamekit-dependencies-'));
   t.after(() => rmSync(root, { force: true, recursive: true }));
-  const policy = withLockfile();
   writeFileSync(join(root, 'pnpm-workspace.yaml'), JSON.stringify(policy.workspace));
   writeFileSync(join(root, 'pnpm-lock.yaml'), JSON.stringify(policy.lockfile));
   writeJson(join(root, 'apps/playground/package.json'), policy.playground);
@@ -161,8 +166,98 @@ function fixture(t) {
   for (const [name, version] of Object.entries(policy.workspace.catalogs.native)) {
     writeJson(join(root, 'node_modules', name, 'package.json'), { name, version });
   }
+  writeJson(join(root, 'node_modules/expo/bundledNativeModules.json'), bundledNativeModules());
   return root;
 }
+
+test('rejects a consistent catalog and lockfile that violate the locked Expo compatibility map', (t) => {
+  const policy = baseline();
+  policy.workspace.catalogs.native['react-native'] = '0.86.4';
+  const root = fixture(t, withLockfile(policy));
+  assert.match(checkRepositoryDependencies(root).join('\n'), /locked Expo 57\.0\.25.*react-native.*0\.86\.4.*0\.86\.3/);
+});
+
+test('uses the compatibility map bundled with the updated locked Expo package', (t) => {
+  const policy = baseline();
+  policy.workspace.catalogs.native.expo = '57.0.30';
+  const root = fixture(t, withLockfile(policy));
+  writeJson(join(root, 'node_modules/expo/bundledNativeModules.json'), {
+    ...bundledNativeModules(), 'react-native': '~0.86.4',
+  });
+  assert.match(checkRepositoryDependencies(root).join('\n'), /locked Expo 57\.0\.30.*react-native.*0\.86\.3.*~0\.86\.4/);
+});
+
+test('resolves Expo metadata from the playground package, not the repository root', (t) => {
+  const root = fixture(t);
+  const expo = join(root, 'apps/playground/node_modules/expo');
+  writeJson(join(expo, 'package.json'), { name: 'expo', version: '57.0.25' });
+  writeJson(join(expo, 'bundledNativeModules.json'), bundledNativeModules());
+  mkdirSync(join(root, 'packages/gamekit/node_modules'), { recursive: true });
+  symlinkSync(expo, join(root, 'packages/gamekit/node_modules/expo'));
+  writeJson(join(root, 'node_modules/expo/bundledNativeModules.json'), { 'react-native': '0.85.0' });
+  assert.deepEqual(checkRepositoryDependencies(root), []);
+  writeJson(join(expo, 'bundledNativeModules.json'), { 'react-native': '0.86.4' });
+  assert.match(checkRepositoryDependencies(root).join('\n'), /locked Expo 57\.0\.25.*react-native.*0\.86\.4/);
+});
+
+for (const [name, metadata] of [
+  ['null', null],
+  ['array', []],
+  ['empty map', {}],
+  ['missing React Native', { react: '19.2.3' }],
+  ['invalid React Native range', { 'react-native': 'latest' }],
+  ['invalid entry range', { ...bundledNativeModules(), 'expo-camera': 57 }],
+  ['invalid unmapped range', { ...bundledNativeModules(), 'expo-camera': 'workspace:*' }],
+]) {
+  test(`fails closed on Expo metadata with ${name}`, (t) => {
+    const root = fixture(t);
+    writeJson(join(root, 'node_modules/expo/bundledNativeModules.json'), metadata);
+    assert.match(checkRepositoryDependencies(root).join('\n'), /bundledNativeModules\.json.*(?:nonempty|react-native|range)/);
+  });
+}
+
+test('fails closed when the installed Expo compatibility file is missing or unreadable JSON', (t) => {
+  const root = fixture(t);
+  const path = join(root, 'node_modules/expo/bundledNativeModules.json');
+  rmSync(path);
+  assert.match(checkRepositoryDependencies(root).join('\n'), /Expo compatibility.*bundledNativeModules\.json/);
+  writeFileSync(path, '{');
+  assert.match(checkRepositoryDependencies(root).join('\n'), /Expo compatibility.*bundledNativeModules\.json/);
+});
+
+test('honors a reviewed Expo exception only while explicitly excluded by the app', (t) => {
+  const policy = baseline();
+  policy.workspace.catalogs.native['react-native-worklets'] = '0.10.3';
+  policy.playground.dependencies['react-native-worklets'] = 'catalog:native';
+  const root = fixture(t, withLockfile(policy));
+  writeJson(join(root, 'node_modules/expo/bundledNativeModules.json'), {
+    ...bundledNativeModules(), 'react-native-worklets': '0.10.1',
+  });
+  assert.match(checkRepositoryDependencies(root).join('\n'), /locked Expo.*react-native-worklets.*0\.10\.3.*0\.10\.1/);
+  writeJson(join(root, 'apps/playground/package.json'), {
+    ...policy.playground, expo: { install: { exclude: ['react-native-worklets'] } },
+  });
+  assert.deepEqual(checkRepositoryDependencies(root), []);
+});
+
+test('cannot bypass locked Expo compatibility with an unreviewed app exclusion', (t) => {
+  const policy = baseline();
+  policy.playground.expo.install.exclude = ['react-native'];
+  const root = fixture(t, withLockfile(policy));
+  assert.match(checkRepositoryDependencies(root).join('\n'), /react-native.*reviewed exception/);
+});
+
+test('leaves unmapped native packages subject to catalog and singleton validation', (t) => {
+  const policy = baseline();
+  policy.workspace.catalogs.native['react-native-example'] = '1.2.3';
+  policy.playground.dependencies['react-native-example'] = 'catalog:native';
+  const root = fixture(t, withLockfile(policy));
+  assert.deepEqual(checkRepositoryDependencies(root), []);
+  writeJson(join(root, 'node_modules/react-native-example/package.json'), {
+    name: 'react-native-example', version: '1.2.4',
+  });
+  assert.match(checkRepositoryDependencies(root).join('\n'), /react-native-example.*1\.2\.4.*1\.2\.3/);
+});
 
 test('checks an installed workspace without comparing the independent docs app', (t) => {
   const root = fixture(t);
@@ -231,7 +326,7 @@ test('reports missing and malformed workspace input without a stack trace', (t) 
 test('CLI reports success and a nonzero exit on invalid policy', (t) => {
   const root = fixture(t);
   const script = fileURLToPath(new URL('./dependencies.mjs', import.meta.url));
-  assert.match(execFileSync(process.execPath, [script, '--root', root], { encoding: 'utf8' }), /passed/);
+  assert.match(execFileSync(process.execPath, [script, '--root', root], { encoding: 'utf8' }), /locked Expo compatibility.*passed/);
   writeFileSync(join(root, 'pnpm-workspace.yaml'), '{}');
   assert.throws(() => execFileSync(process.execPath, [script, '--root', root], { stdio: 'pipe' }),
     (error) => error.status === 1 && /catalogs.native/.test(error.stderr.toString()));

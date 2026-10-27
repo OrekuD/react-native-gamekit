@@ -19,6 +19,21 @@ import { GameView } from 'rn-gamekit/react';
 
 Props: `game` (required), `renderer` (required), `assets` (loaded assets), `camera2D` (an optional presented camera from `defineGameCamera2D`), `presentationKey` (forces a fresh renderer mount), `instrumentation`, `style`, and `children`. The renderer receives `frame`, `alpha`, `viewport`, `assets`, and (when a camera is declared) `camera` as shared values or stable props; see [How Gamekit uses React](./how-gamekit-uses-react).
 
+Session identity always determines presentation ownership. Replacing `game`
+initializes a fresh frame and interpolation clock before the new renderer
+runs, even if `presentationKey` stays the same. Changing `presentationKey`
+resets presentation for the same session; it does not recreate scene state.
+
+Mount setup releases acquired listeners and camera state if a later step
+fails. Unmount attempts every cleanup even when another cleanup throws.
+Multiple failures are reported through `AggregateError`, with the original
+setup error first when setup failed. The view pauses borrowed sessions; their
+creator remains responsible for terminal disposal.
+
+Instrumentation callbacks are diagnostics. Replacing them does not restart
+simulation. Queued UI observations from a retired observer or unmounted
+presentation are discarded instead of reaching a replacement observer.
+
 ## GamePointerInput
 
 The touch adapter. It maps Gesture Handler events for one declared pointer action into the session's semantic input, handling ownership, cancellation, and coalescing. Mount it inside `GameView`, on top of the gameplay surface:

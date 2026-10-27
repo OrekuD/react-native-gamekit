@@ -29,7 +29,20 @@ Many instances of one sprite sheet belong in a `SpriteBatch` (one `Atlas` draw),
 
 ## Threads and worklets
 
-Renderers run on the UI thread. Worklets derived from shared values must only call workletized helpers and Math built-ins; an ordinary imported function called from a derived worklet jumps threads and stalls the UI. The runtime contract is enforced by a source-level test in the Collision Lab; treat it as the rule, not the exception.
+React renderer components configure the tree on the React Native runtime.
+Their worklets project shared values on the UI runtime. Calls from those
+worklets must use workletized helpers or supported runtime APIs; calling an
+ordinary React Native runtime function directly can throw. An intentional
+cross-runtime callback uses `scheduleOnRN` and must target a function defined
+on the React Native runtime.
+
+`GameView` keeps its frame worklet stable across ordinary React renders.
+On each frame with UI-observation instrumentation disabled, the worklet performs no diagnostic
+timestamp reads, diagnostic shared-value writes, or React Native callbacks.
+Enabled observations report once per revision for the current observer;
+replacing the observer starts a new observation lifetime without restarting
+the simulation. This measures UI observation, not GPU presentation or FPS.
+Updating instrumentation still mirrors its enabled flag at control frequency.
 
 ## Where the frame time goes
 

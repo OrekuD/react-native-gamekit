@@ -1,17 +1,27 @@
 import { useEffect, useState } from 'react';
+import type { AssetGroupMap } from '../assets/types';
 import { createGameSession } from '../core/session/createGameSession';
 import type { GameSession } from '../core/session/types';
 import type { GameDefinition, InputMap, SceneMap } from '../definition/types';
+import type { GameEventDescriptor } from '../events/types';
 
-type SessionCreator<TScenes extends SceneMap, TInput extends InputMap> = (
-  definition: GameDefinition<TScenes, TInput>,
-) => GameSession<TScenes, TInput>;
+type SessionCreator<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>>,
+> = (
+  definition: GameDefinition<TScenes, TInput, keyof TScenes, AssetGroupMap, TEventDefs>,
+) => GameSession<TScenes, TInput, TEventDefs>;
 
-interface OwnedSession<TScenes extends SceneMap, TInput extends InputMap> {
+interface OwnedSession<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>>,
+> {
   /** The definition this session was created from, compared by identity. */
-  readonly definition: GameDefinition<TScenes, TInput>;
+  readonly definition: GameDefinition<TScenes, TInput, keyof TScenes, AssetGroupMap, TEventDefs>;
   /** The live session owned by this hook instance. */
-  readonly session: GameSession<TScenes, TInput>;
+  readonly session: GameSession<TScenes, TInput, TEventDefs>;
 }
 
 /**
@@ -46,9 +56,13 @@ interface OwnedSession<TScenes extends SceneMap, TInput extends InputMap> {
  * tests, non-React programs, and custom surface controllers that need to own
  * sessions imperatively.
  */
-export function useGameSession<TScenes extends SceneMap, TInput extends InputMap>(
-  definition: GameDefinition<TScenes, TInput>,
-): GameSession<TScenes, TInput> | undefined {
+export function useGameSession<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
+>(
+  definition: GameDefinition<TScenes, TInput, keyof TScenes, AssetGroupMap, TEventDefs>,
+): GameSession<TScenes, TInput, TEventDefs> | undefined {
   return useOwnedGameSession(definition, createGameSession);
 }
 
@@ -61,11 +75,15 @@ export function useGameSession<TScenes extends SceneMap, TInput extends InputMap
  * `ManualFrameDriver`, since node has no `requestAnimationFrame`) and must
  * pass a stable factory identity across renders.
  */
-export function useOwnedGameSession<TScenes extends SceneMap, TInput extends InputMap>(
-  definition: GameDefinition<TScenes, TInput>,
-  create: SessionCreator<TScenes, TInput>,
-): GameSession<TScenes, TInput> | undefined {
-  const [owned, setOwned] = useState<OwnedSession<TScenes, TInput> | undefined>(undefined);
+export function useOwnedGameSession<
+  TScenes extends SceneMap,
+  TInput extends InputMap,
+  TEventDefs extends Record<string, GameEventDescriptor<unknown>> = Record<string, never>,
+>(
+  definition: GameDefinition<TScenes, TInput, keyof TScenes, AssetGroupMap, TEventDefs>,
+  create: SessionCreator<TScenes, TInput, TEventDefs>,
+): GameSession<TScenes, TInput, TEventDefs> | undefined {
+  const [owned, setOwned] = useState<OwnedSession<TScenes, TInput, TEventDefs> | undefined>(undefined);
 
   // Render-phase selector: publish a session only while its definition is
   // the current prop and its status is not disposed. A replacement render

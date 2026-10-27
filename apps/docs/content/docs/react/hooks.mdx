@@ -7,7 +7,10 @@ The hooks are the React-side handles to the runtime. All three come from `rn-gam
 
 ## useGameSession
 
-Owns a session for one game definition. It creates the session on commit, starts it, and disposes it on unmount, so the component never manages the lifecycle by hand.
+Owns a session for one game definition. It creates an idle session on commit
+and disposes it when the definition changes or the owner unmounts.
+`GameView` starts the borrowed session and pauses it when its surface unmounts;
+the hook itself does not start simulation.
 
 ```tsx
 const session = useGameSession(paddleGame);
@@ -20,6 +23,11 @@ return <GameView game={session} renderer={PaddleRenderer} />;
 
 Returns `GameSession | undefined`. The hook is Strict Mode safe: every development rehearsal session is disposed exactly once, and a disposed session is never returned. The definition must live at module scope; session identity follows definition identity, so a definition created inside a render would churn sessions. Never call `session.dispose()` on a hook-owned session. For imperative or headless ownership, use `createGameSession` with `try/finally` instead.
 
+Scene names, input actions, snapshots, and declared game events are inferred
+from the definition. Event subscriptions on the returned session retain the
+declared event name and readonly payload types, just like a session created
+with `createGameSession`.
+
 ## useGameSessionStatus
 
 Subscribes the component to lifecycle transitions. Powered by `useSyncExternalStore`, so it only re-renders when the status actually changes.
@@ -28,7 +36,12 @@ Subscribes the component to lifecycle transitions. Powered by `useSyncExternalSt
 const status = useGameSessionStatus(session); // 'idle' | 'running' | 'paused' | 'disposed'
 ```
 
-The session argument is required; pass the exact session from `useGameSession` or from the shell. This is the hook behind pause overlays and background handling. See [Lifecycle](../core-concepts/lifecycle) and the [Pause a game](../guides/pause-a-game) guide.
+Pass the exact session from `useGameSession` or from the shell. The argument
+may be `undefined` while the owning hook prepares a session; the status is
+also `undefined` then. Call both hooks unconditionally, before rendering the
+loading fallback. This is the hook behind pause overlays and background
+handling. See [Lifecycle](../core-concepts/lifecycle) and the
+[Pause a game](../guides/pause-a-game) guide.
 
 ## useGameAssets
 
