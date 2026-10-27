@@ -30,6 +30,7 @@
     "pack:inspect": "pnpm --filter ./packages/gamekit pack:inspect",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "deps:check": "node scripts/dependencies.mjs",
+    "deps:recommendations": "pnpm --filter @react-native-gamekit/playground exec expo install --check",
     "deps:test": "node --test scripts/dependencies.test.mjs scripts/dependency-docs.test.mjs",
     "deps:test:coverage": "node --experimental-test-coverage --test-coverage-include=\"scripts/depend*.mjs\" --test-coverage-exclude=\"scripts/*.test.mjs\" --test-coverage-lines=80 --test-coverage-branches=80 --test-coverage-functions=80 --test scripts/dependencies.test.mjs scripts/dependency-docs.test.mjs",
     "deps:docs": "node scripts/dependency-docs.mjs",
