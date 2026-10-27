@@ -49,3 +49,25 @@ describe('GS-VIEWPORT-01 binding disposal contract', () => {
     unsubscribe();
   });
 });
+
+describe('viewport binding resolution failures', () => {
+  it('does not cache a measurement that failed validation or suppress the next failure', () => {
+    const binding = new ViewportBinding({
+      logicalSize: { width: 0, height: 180 },
+      mode: 'fit',
+    });
+    let notifications = 0;
+    binding.subscribe(() => { notifications += 1; });
+
+    assert.throws(() => binding.setSurfaceSize({ width: 640, height: 360 }), RangeError);
+    assert.throws(
+      () => binding.setSurfaceSize({ width: 640, height: 360 }),
+      RangeError,
+      'the same failed measurement must still validate',
+    );
+    assert.equal(binding.surfaceSize, undefined);
+    assert.equal(binding.resolved, undefined);
+    assert.equal(binding.revision, 0);
+    assert.equal(notifications, 0);
+  });
+});

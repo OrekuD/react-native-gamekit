@@ -55,8 +55,9 @@ export class ViewportBinding {
     ) {
       return;
     }
+    const resolved = resolveViewport2D(this.#config, size);
     this.#lastSurfaceSize = Object.freeze({ width: size.width, height: size.height });
-    this.#resolved = resolveViewport2D(this.#config, size);
+    this.#resolved = resolved;
     this.#revision += 1;
     for (const listener of [...this.#listeners]) {
       listener();

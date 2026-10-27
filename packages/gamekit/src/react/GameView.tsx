@@ -383,8 +383,13 @@ export function GameView<
             style={[styles.surface, style]}
             onLayout={(event) => {
               const { width, height } = event.nativeEvent.layout;
+              const previousRevision = binding.revision;
               binding.setSurfaceSize({ width, height });
-              viewportValue.value = binding.resolved;
+              // Check RN-owned revision state: even an unchanged SharedValue
+              // assignment schedules UI work, and reading it here can block RN.
+              if (binding.revision !== previousRevision) {
+                viewportValue.value = binding.resolved;
+              }
             }}
           >
           <Canvas style={StyleSheet.absoluteFill}>

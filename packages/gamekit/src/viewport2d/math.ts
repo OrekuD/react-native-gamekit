@@ -26,10 +26,13 @@ function isUsableSurface(size: SurfaceSize): boolean {
 /**
  * Resolve an authored viewport configuration against an actual surface size.
  *
- * Returns `undefined` until both surface dimensions are positive — a
- * zero-sized layout is normal before the first layout pass. Invalid authored
- * sizes throw a `RangeError` naming the invalid dimension. The result is
- * immutable plain data with no platform dependencies.
+ * Returns `undefined` until both surface dimensions are finite and positive —
+ * a zero-sized layout is normal before the first layout pass. Invalid authored
+ * sizes or modes throw a `RangeError` even before a usable surface exists.
+ * The result is immutable plain data with no platform dependencies.
+ *
+ * Intended for layout-sized values: finite dimensions alone do not prevent
+ * floating-point overflow or underflow at numeric extremes.
  */
 export function resolveViewport2D(
   config: Viewport,
@@ -43,43 +46,44 @@ export function resolveViewport2D(
   if (!(logicalWidth > 0) || !(logicalHeight > 0)) {
     throw new RangeError(invalidLogicalSize(config));
   }
-  if (!isUsableSurface(surfaceSize)) {
-    return undefined;
-  }
-
   if (config.mode !== 'fit' && config.mode !== 'fill' && config.mode !== 'extend-world') {
     throw new RangeError(`Unknown viewport mode: ${String(config.mode)}`);
+  }
+  if (!isUsableSurface(surfaceSize)) {
+    return undefined;
   }
 
   const { width: surfaceWidth, height: surfaceHeight } = surfaceSize;
   const widthScale = surfaceWidth / logicalWidth;
   const heightScale = surfaceHeight / logicalHeight;
 
-  let scale: number;
-  let offsetX: number;
-  let offsetY: number;
+  const scale = config.mode === 'fill'
+    ? Math.max(widthScale, heightScale)
+    : Math.min(widthScale, heightScale);
+  const widthSetsScale = scale === widthScale;
+  const heightSetsScale = scale === heightScale;
+  // The axis setting the scale exactly meets the surface. Recomputing it
+  // through multiplication can create a tiny letterbox and reject edge input.
+  const contentWidth = widthSetsScale ? surfaceWidth : logicalWidth * scale;
+  const contentHeight = heightSetsScale ? surfaceHeight : logicalHeight * scale;
+  const offsetX = widthSetsScale ? 0 : (surfaceWidth - contentWidth) / 2;
+  const offsetY = heightSetsScale ? 0 : (surfaceHeight - contentHeight) / 2;
   let visibleLogicalBounds: Rect;
   let contentBounds: Rect;
 
   if (config.mode === 'fill') {
-    scale = Math.max(widthScale, heightScale);
-    offsetX = (surfaceWidth - logicalWidth * scale) / 2;
-    offsetY = (surfaceHeight - logicalHeight * scale) / 2;
     visibleLogicalBounds = rect(
-      -offsetX / scale,
-      -offsetY / scale,
-      surfaceWidth / scale,
-      surfaceHeight / scale,
+      widthSetsScale ? 0 : -offsetX / scale,
+      heightSetsScale ? 0 : -offsetY / scale,
+      widthSetsScale ? logicalWidth : surfaceWidth / scale,
+      heightSetsScale ? logicalHeight : surfaceHeight / scale,
     );
     contentBounds = rect(0, 0, surfaceWidth, surfaceHeight);
   } else {
     // `fit` and `extend-world` share the fit (minimum uniform) scale.
-    scale = Math.min(widthScale, heightScale);
-    offsetX = (surfaceWidth - logicalWidth * scale) / 2;
-    offsetY = (surfaceHeight - logicalHeight * scale) / 2;
     if (config.mode === 'extend-world') {
-      const worldWidth = surfaceWidth / scale;
-      const worldHeight = surfaceHeight / scale;
+      const worldWidth = widthSetsScale ? logicalWidth : surfaceWidth / scale;
+      const worldHeight = heightSetsScale ? logicalHeight : surfaceHeight / scale;
       visibleLogicalBounds = rect(
         (logicalWidth - worldWidth) / 2,
         (logicalHeight - worldHeight) / 2,
@@ -89,7 +93,7 @@ export function resolveViewport2D(
       contentBounds = rect(0, 0, surfaceWidth, surfaceHeight);
     } else {
       visibleLogicalBounds = rect(0, 0, logicalWidth, logicalHeight);
-      contentBounds = rect(offsetX, offsetY, logicalWidth * scale, logicalHeight * scale);
+      contentBounds = rect(offsetX, offsetY, contentWidth, contentHeight);
     }
   }
 
@@ -104,7 +108,12 @@ export function resolveViewport2D(
   });
 }
 
-/** Convert a logical/world point into surface coordinates. */
+/**
+ * Convert a logical/world point into surface coordinates.
+ *
+ * Expects a resolver-produced viewport and finite point coordinates. Applies
+ * unclamped floating-point arithmetic without revalidating those inputs.
+ */
 export function worldToSurface(viewport: ResolvedViewport2D, point: Point2D): Point2D {
   return Object.freeze({
     x: point.x * viewport.scale + viewport.offsetX,
@@ -112,7 +121,12 @@ export function worldToSurface(viewport: ResolvedViewport2D, point: Point2D): Po
   });
 }
 
-/** Convert a surface point into logical/world coordinates. */
+/**
+ * Convert a surface point into logical/world coordinates.
+ *
+ * Expects a resolver-produced viewport and finite point coordinates. Applies
+ * unclamped floating-point arithmetic without revalidating those inputs.
+ */
 export function surfaceToWorld(viewport: ResolvedViewport2D, point: Point2D): Point2D {
   return Object.freeze({
     x: (point.x - viewport.offsetX) / viewport.scale,

@@ -23,7 +23,11 @@ records the system 03 follow-up; native batch-buffer notification is tracked sep
 
 Implementation follow-up: [Input — 2026-10-26](04-input-review-2026-10-26.md)
 records the system 04 ownership fixes, API changes and proposals, and native
-acceptance procedure. Viewport (05), then Camera2D (06), follow this review.
+acceptance procedure.
+
+Implementation follow-up: [Viewport — 2026-10-27](05-viewport-review-2026-10-27.md)
+records the system 05 edge-coordinate and layout-publication fixes, API
+clarifications, and native acceptance procedure. Camera2D (06) is next.
 
 | Order | System | Original verdict / main action |
 | --- | --- | --- |
