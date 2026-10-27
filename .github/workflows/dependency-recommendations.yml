@@ -1,0 +1,45 @@
+name: Dependency recommendations
+
+on:
+  schedule:
+    - cron: '30 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-recommendations-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  recommendations:
+    name: Check upstream Expo recommendations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.14.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate dependency baseline
+        run: pnpm deps:check
+
+      # A failure here requests a reviewed dependency refresh. It must not
+      # make unrelated game-system PRs fail as upstream metadata changes.
+      - name: Check current Expo recommendations
+        run: pnpm deps:recommendations

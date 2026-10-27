@@ -36,6 +36,7 @@ pnpm deps:test           # dependency policy and documentation regression tests
 pnpm deps:test:coverage  # dependency tooling tests with an 80% coverage gate
 pnpm deps:docs           # refresh generated consumer version/install blocks
 pnpm deps:autolinking    # inspect Expo's native autolinking duplicates
+pnpm deps:recommendations # compare with current upstream Expo recommendations
 ```
 
 `ios`, `android`, and `expo:prebuild*` alter or compile native projects and
@@ -108,12 +109,27 @@ performed. An exclusion opts out of Expo's recommendation check; it is not
 evidence of compatibility. Historical version and device reports in `plans/`
 describe their recorded runs, not certification of every later combination.
 
-`pnpm --filter @react-native-gamekit/playground exec expo install --check`
-asks Expo for its current recommendations. Its online result can change while
-the manifests and lockfile stay identical. `pnpm deps:check` verifies the
-checked-in baseline instead. The GitHub Action's existing Expo check remains
-unchanged, so the known recommendation mismatch can still fail it until a
-separate dependency upgrade is validated.
+PR CI runs `pnpm deps:check`. It validates the exact native catalog, lockfile,
+installed singleton resolutions, peer ranges, and the compatibility ranges in
+`bundledNativeModules.json` shipped with the installed, locked Expo package.
+Missing or invalid compatibility metadata fails the check. The four reviewed
+exclusions above remain explicit. Packages absent from Expo's map still need
+their own compatibility review; matching the map does not certify native
+runtime behavior.
+
+`pnpm deps:recommendations` runs Expo's online `install --check` command. Its
+result can change while the manifests and lockfile stay identical, so it runs
+in the separate **Dependency recommendations** workflow every Monday at
+07:30 UTC and on manual dispatch. A failure there requests a reviewed native
+dependency refresh; it does not block unrelated game-system PRs. This workflow
+becomes active after it is merged into the default branch. It complements the
+Renovate candidate PRs described below and never installs upgrades itself.
+
+Dependency updates must pass the locked compatibility check, the online
+recommendation check (with any remaining divergence explained), and the native
+validation below. The baseline deliberately changes only through a reviewed
+catalog and lockfile update. CI does not turn off Expo validation through an
+environment flag or add exclusions to hide drift.
 
 Do not run `expo install --fix` as an unattended catalog update. Review its
 proposals, preserve justified exclusions, and move accepted exact versions into

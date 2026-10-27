@@ -70,8 +70,10 @@ jobs:
       - name: Validate Expo config
         run: pnpm --filter @react-native-gamekit/playground exec expo config --type public > /dev/null
 
-      - name: Validate Expo dependencies
-        run: pnpm --filter @react-native-gamekit/playground exec expo install --check
+      # Use the compatibility map shipped with the locked Expo package.
+      # Moving upstream recommendations have their own scheduled workflow.
+      - name: Validate locked Expo compatibility
+        run: pnpm deps:check
 
       - name: Export playground (CI bundle)
         run: pnpm --filter @react-native-gamekit/playground build
