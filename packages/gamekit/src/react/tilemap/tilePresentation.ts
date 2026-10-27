@@ -12,9 +12,9 @@ import { rotatedHalfExtents2D } from '../../camera2d/extents';
  * - `buildTileWindowSnapshot` runs on JS whenever the visible cell window
  *   or source binding changes and produces a BOUNDED snapshot sized by the
  *   viewport capacity, never by map dimensions.
- * - `writeLayerVisibleBounds` / `fillTileSlots` are worklet-callable and
- *   allocation-free: camera interpolation inside the transferred window
- *   only reads scalars and pre-transferred arrays.
+ * - `writeLayerVisibleBounds` / `fillTileSlots` are worklet-callable:
+ *   camera interpolation reads scalars and pre-transferred arrays, with
+ *   a constant-size bounds result rather than per-cell allocations.
  *
  * Full map authority stays on the simulation side; the UI runtime never
  * sees `layer.data`, the chunk index, or the map value itself.
@@ -169,9 +169,8 @@ export interface LayerBounds {
  * - WITHOUT a presented camera, GameWorld2D's viewport-only path applies:
  *   the bounds are `viewport.visibleLogicalBounds` expanded by the padding.
  *
- * Worklet-callable and allocation-free on the steady path: scalars only,
- * results written into the caller-owned `out` scratch object. Returns false
- * when no viewport bounds exist yet.
+ * Worklet-callable: computes a constant-size bounds result from scalars.
+ * Returns null when no viewport bounds exist yet.
  */
 export function writeLayerVisibleBounds(
   camera: SharedCameraRef | null,
@@ -393,7 +392,7 @@ export interface TileLayerUIParams {
 }
 
 /**
- * One tile-layer UI update: the body of the layer's derived value,
+ * One tile-layer UI update: the body of the layer's reaction,
  * extracted so binding identity, stale-request rejection, and capacity
  * policy execute identically in tests and on the UI runtime (GS-TILE-01).
  *
@@ -443,6 +442,7 @@ export function updateTileLayerUI(params: TileLayerUIParams): number {
   }
   const bounds = writeLayerVisibleBounds(camera, viewport, px, py, padWorld);
   if (bounds === null) {
+    hideRange(rects.value, 0, capacity);
     return 0;
   }
   const cx0 = Math.max(0, Math.floor((bounds.minX - originX) / cw));
@@ -461,6 +461,7 @@ export function updateTileLayerUI(params: TileLayerUIParams): number {
   // window (same-size replacement, remount, late delivery) takes the
   // request path exactly like a missing window.
   if (snap.gen !== generation) {
+    hideRange(rects.value, 0, capacity);
     if (pendingGen.value !== generation) {
       pendingGen.value = generation;
       scheduleOnRN(() => requestWindow(generation, cx0, cy0, cx1, cy1));
@@ -474,9 +475,12 @@ export function updateTileLayerUI(params: TileLayerUIParams): number {
     xforms.value,
     { cw, ch, originX, originY, layerWidth, layerHeight, capacity },
   );
-  if (filled === -1 && pendingGen.value !== generation) {
-    pendingGen.value = generation;
-    scheduleOnRN(() => requestWindow(generation, cx0, cy0, cx1, cy1));
+  if (filled === -1) {
+    hideRange(rects.value, 0, capacity);
+    if (pendingGen.value !== generation) {
+      pendingGen.value = generation;
+      scheduleOnRN(() => requestWindow(generation, cx0, cy0, cx1, cy1));
+    }
     return -1;
   }
   if (filled === -2) {

@@ -3,11 +3,11 @@
  *
  * Draws many instances of one decoded sprite-sheet image through Skia's
  * `Atlas` with fixed-capacity, UI-owned buffers. The normal path owns all
- * derived-value plumbing: `select` maps the committed snapshot to the item
+ * reaction plumbing: `select` maps the committed snapshot to the item
  * array and `write` is a UI-runtime setter that writes transforms in place —
  * no per-frame React and no author-written `useDerivedValue` side effects.
- * Per commit the select array, one policy object, and one RSXform result
- * per written item are allocated; buffers themselves are never reallocated.
+ * Updates allocate preparation/policy records and one RSXform result per
+ * written item; selection may allocate its result. Buffers stay at capacity.
  *
  * Contract:
  * - `capacity` is fixed for the mounted batch; active count is explicit.
@@ -18,7 +18,7 @@
  */
 import { useMemo } from 'react';
 import { Atlas, type SkImage } from '@shopify/react-native-skia';
-import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import { useAnimatedReaction, type SharedValue } from 'react-native-reanimated';
 import { useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
 
 import type { CameraCut2D } from '../../camera2d';
@@ -33,6 +33,12 @@ import type { LoadedImage, LoadedSpriteSheet } from '../../assets/types';
 import { computeSpriteRsxform } from './spriteTransform';
 import { selectSpriteFrameRect } from './spriteSelection';
 import { batchUpdatePolicy } from './spriteBatchPolicy';
+
+// Skia creates zero rects and identity transforms. Its modifier mapper can
+// run again after React renders, so only the presentation writer owns slots.
+function preserveBuffer(): void {
+  'worklet';
+}
 
 /** The per-item write surface handed to the author's `write` mapper. */
 export interface SpriteBatchWrite {
@@ -138,14 +144,10 @@ export function SpriteBatch<
       `SpriteBatch cull.padding must be a finite nonnegative number, got ${String(cullPadding)}`,
     );
   }
-  const rects = useRectBuffer(capacity, (rect) => {
-    'worklet';
-    rect.setXYWH(0, 0, 0, 0);
-  });
-  const xforms = useRSXformBuffer(capacity, (xform) => {
-    'worklet';
-    xform.set(1, 0, 0, 0);
-  });
+  const rects = useRectBuffer(capacity, preserveBuffer);
+  const xforms = useRSXformBuffer(capacity, preserveBuffer);
+  const cullCamera = cull?.camera;
+  const cullViewport = cull?.viewport;
 
   // R7: one stable write coordinator for the batch lifetime; the per-update
   // worklet only calls it (no per-frame coordinator allocation).
@@ -195,15 +197,22 @@ export function SpriteBatch<
     [capacity, rects, xforms, source, anchor.x, anchor.y],
   );
 
-  // The batch's own UI mapper: one derived value reads the committed
-  // snapshot, runs the author's select + write per item, and reports the
-  // active count. Buffers are mutated in place with no per-frame React;
-  // per commit the select array, one policy object, and one RSXform result
-  // per written item are allocated (GS-SPRITE-04: scalar writers stay
+  // The batch's UI reaction prepares only read-only inputs; output buffers
+  // are never subscribed inputs, so publishing cannot schedule itself.
+  // It runs the author's select + write per item. Buffers are mutated in
+  // place with no per-frame React. Preparation/policy records, selection
+  // results, and per-item RSXform results may allocate (GS-SPRITE-04: scalar writers stay
   // unjustified without a benchmark showing this matters).
-  const activeCount = useDerivedValue(() => {
+  useAnimatedReaction(() => {
     'worklet';
-    const envelope = commit.value;
+    return {
+      envelope: commit.value,
+      alpha: alpha.value,
+      camera: cullCamera?.value,
+      viewport: cullViewport?.value,
+    };
+  }, ({ envelope, alpha: presentationAlpha, camera, viewport }) => {
+    'worklet';
     if (envelope.scene !== scene) {
       // RF8: leaving the scene clears every previously active slot so no
       // stale sprite from the old scene stays visible.
@@ -213,11 +222,13 @@ export function SpriteBatch<
           slot.setXYWH(0, 0, 0, 0);
         }
       }
-      return 0;
+      rects.modify(undefined, true);
+      xforms.modify(undefined, true);
+      return;
     }
     const items = select({
       current: envelope.current as never as SceneSnapshot<TScenes[TSceneName]>,
-      alpha: alpha.value,
+      alpha: presentationAlpha,
     });
     const policy = batchUpdatePolicy(items.length, capacity, __DEV__);
     // GS-SPRITE-04: no overflow loop — `policy.activeCount` already clamps
@@ -236,7 +247,7 @@ export function SpriteBatch<
     const visible =
       cull === undefined
         ? undefined
-        : batchVisibleBounds2D(cull.camera.value, cull.viewport.value, cullPadding);
+        : batchVisibleBounds2D(camera, viewport, cullPadding);
     for (let index = 0; index < count; index += 1) {
       const item = items[index];
       if (item === undefined) {
@@ -258,10 +269,10 @@ export function SpriteBatch<
         slot.setXYWH(0, 0, 0, 0);
       }
     }
-    return count;
-  }, [commit, alpha, scene, select, write, writeApi, cull, cullPadding]);
-
-  void activeCount;
+    // Publish only after every slot is coherent across both buffers.
+    rects.modify(undefined, true);
+    xforms.modify(undefined, true);
+  });
 
   // The atlas renders the full buffer; the UI mapper keeps slots aligned.
   const sampling = useMemo(() => 'nearest' as const, []);

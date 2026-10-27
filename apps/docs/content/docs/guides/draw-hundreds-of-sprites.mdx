@@ -14,33 +14,45 @@ The boundary is shared texture plus count. If the sprites share one sheet and th
 
 ## 1. Decode the sheet once
 
-Load the sheet through the asset store and hand it to the batch:
+Load the sheet through the asset store. Wait for readiness before mounting
+the batch; keep the loading branch after your component's hooks:
 
 ```tsx
-const assets = useGameAssets(definition.assets, { groups: ['gameplay'] });
-// ...
-<SpriteBatch
-  source={assets.get(definition.assets.gameplay.coins)}
-  count={64}
-  // ...
-/>
+const assetsState = useGameAssets(definition.assets, { groups: ['gameplay'] });
+if (assetsState.status !== 'ready') return null;
+const coins = assetsState.assets.get(definition.assets.gameplay.coins);
 ```
 
 ## 2. Write instances per frame
 
-The batch takes a fixed-capacity buffer. A `useFrameCallback` fills it from the snapshot on the UI thread:
+Pass the renderer's commit and alpha shared values. The batch calls `select`
+and `write` on the UI runtime, hides unused slots, and publishes the completed
+buffers to Skia:
 
 ```tsx
-const write = useFrameCallback((frameInfo) => {
-  'worklet';
-  const snapshot = frame.value.current;
-  for (let i = 0; i < snapshot.coins.length; i += 1) {
-    buffer.set(i, { rect, anchor, transform, color });
-  }
-}, false);
+<SpriteBatch
+  scene="play"
+  commit={frame}
+  alpha={alpha}
+  source={coins}
+  capacity={64}
+  select={({ current }) => {
+    'worklet';
+    return current.coins;
+  }}
+  write={(slots, coin, index) => {
+    'worklet';
+    slots.set(index, coin.frame, coin.x, coin.y, 0, 1);
+  }}
+/>
 ```
 
-The buffer is UI-owned and fixed-capacity: no per-frame allocations, no React involvement. The scene owns the coin positions; the batch only presents them.
+The scene snapshot in this example contains coins with `frame`, `x`, and `y`
+fields. Capacity is the maximum number of slots, and the selected array sets
+the active count. Keep capacity fixed for a mounted batch. The batch owns
+buffer updates; no additional frame callback is needed. Its buffers are
+reused, though selection and transform calculations can allocate temporary
+values. The scene owns coin positions; the batch only presents them.
 
 ## 3. Keep the topology fixed
 

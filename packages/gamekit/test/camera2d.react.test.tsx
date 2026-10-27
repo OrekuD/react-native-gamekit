@@ -57,6 +57,7 @@ mock.module('react-native-reanimated', {
   namedExports: {
     useSharedValue: (initial: unknown) => ({ value: initial }),
     useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
+    useAnimatedReaction: (prepare: () => unknown, react: (value: unknown) => void) => react(prepare()),
     useFrameCallback: () => {},
     runOnJS:
       (fn: (...args: never[]) => void) =>

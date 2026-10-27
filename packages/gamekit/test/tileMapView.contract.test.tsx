@@ -58,6 +58,7 @@ mock.module('@shopify/react-native-skia', {
       const log: Call[] = [];
       rectCallLog.push(log);
       return {
+        modify: () => {},
         value: Array.from({ length: capacity }, () => ({
           setXYWH: (...args: number[]) => log.push({ args }),
         })),
@@ -67,6 +68,7 @@ mock.module('@shopify/react-native-skia', {
       const log: Call[] = [];
       xformCallLog.push(log);
       return {
+        modify: () => {},
         value: Array.from({ length: capacity }, () => ({
           set: (...args: number[]) => log.push({ args }),
         })),
@@ -85,6 +87,11 @@ mock.module('react-native-reanimated', {
       } catch {
         return { value: 0 };
       }
+    },
+    useAnimatedReaction: (prepare: () => unknown, react: (value: unknown) => number) => {
+      const update = () => react(prepare());
+      derivedClosures.push(update);
+      update();
     },
   },
 });

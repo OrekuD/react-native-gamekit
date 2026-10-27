@@ -1,7 +1,7 @@
 import { useContext, useMemo } from 'react';
 import { Atlas, Picture, Skia } from '@shopify/react-native-skia';
 import { useColorBuffer, useRectBuffer, useRSXformBuffer } from '@shopify/react-native-skia';
-import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import { useAnimatedReaction, useDerivedValue, type SharedValue } from 'react-native-reanimated';
 import type { SkImage, SkColor } from '@shopify/react-native-skia';
 
 import { GameWorldContext } from '../sprites/GameWorld2D';
@@ -21,6 +21,10 @@ import {
   visibleInBounds,
 } from './culling';
 import { assertUniformParticleSpriteRatio, particleSpriteXform } from './spriteXForm';
+
+function preserveBuffer(): void {
+  'worklet';
+}
 
 export interface ParticleViewProps {
   readonly system: ParticleSystem;
@@ -53,7 +57,7 @@ export interface ParticleViewProps {
  *
  * Topology is CONSTANT per effect regardless of capacity (T15-RF5): exactly
  * one React node (`Picture` for shapes, `Atlas` for sprites) plus a single
- * UI-runtime derived worklet that walks the effect's emission records and
+ * UI-runtime worklet that walks the effect's emission records and
  * computes analytic transforms from the scalar active-time clock. No per-slot
  * data crosses the runtime boundary per frame (T15-SF1).
  *
@@ -276,32 +280,23 @@ function SpriteSlots(props: {
   // UI-owned buffers created once per mount (T15-SF1). Colors use the
   // supported Skia color buffer (T15-TF3): each entry is an SkColor
   // Float32Array [r,g,b,a] mutated on the UI runtime.
-  const rects = useRectBuffer(capacity, (rect) => {
-    'worklet';
-    rect.setXYWH(0, 0, 0, 0);
-  });
-  const xforms = useRSXformBuffer(capacity, (xform) => {
-    'worklet';
-    xform.set(1, 0, 0, 0);
-  });
-  const colors = useColorBuffer(capacity, (color: SkColor) => {
-    'worklet';
-    color[0] = 1;
-    color[1] = 1;
-    color[2] = 1;
-    color[3] = 0;
-  });
+  const rects = useRectBuffer(capacity, preserveBuffer);
+  const xforms = useRSXformBuffer(capacity, preserveBuffer);
+  const colors = useColorBuffer(capacity, preserveBuffer);
 
-  useDerivedValue(() => {
+  useAnimatedReaction(() => {
     'worklet';
-    const reg = registry.value;
+    return { reg: registry.value, now: clock.value,
+      camera: (camera as { value?: unknown } | null)?.value,
+      viewport: (viewport as { value?: unknown } | null)?.value };
+  }, ({ reg, now, camera: cameraValue, viewport: viewportValue }) => {
+    'worklet';
     const entry = reg.effects[effect];
-    const now = clock.value;
     const bounds =
       space === 'world'
-        ? (camera as { value?: { camera?: unknown } } | null)?.value?.camera === undefined
-          ? viewportWorldBounds(viewport as never, PARTICLE_CULL_PADDING)
-          : cameraVisibleWorldBounds(camera as never, viewport as never, PARTICLE_CULL_PADDING)
+        ? (cameraValue as { camera?: unknown } | undefined)?.camera === undefined
+          ? viewportWorldBounds({ value: viewportValue } as never, PARTICLE_CULL_PADDING)
+          : cameraVisibleWorldBounds({ value: cameraValue } as never, { value: viewportValue } as never, PARTICLE_CULL_PADDING)
         : screenVisibleBounds(width, height, PARTICLE_CULL_PADDING);
 
     for (let i = 0; i < capacity; i++) {
@@ -351,8 +346,10 @@ function SpriteSlots(props: {
         colorSlot[3] = 0;
       }
     }
-    return colors;
+    rects.modify(undefined, true);
+    xforms.modify(undefined, true);
+    colors.modify(undefined, true);
   });
 
-  return <Atlas image={image} sprites={rects} transforms={xforms} colors={colors} />;
+  return <Atlas image={image} sprites={rects} transforms={xforms} colors={colors} colorBlendMode="modulate" />;
 }

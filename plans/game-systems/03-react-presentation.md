@@ -27,6 +27,10 @@ Sources: [GameView.tsx](../../packages/gamekit/src/react/GameView.tsx), [bindGam
 
 ## GS-REACT-03 — P1 investigation: prove buffer writes notify the native renderer
 
+Implementation follow-up: [2026-10-26 buffer publication review](03-buffer-publication-review-2026-10-26.md).
+Source-backed fixes and isolated probe are implemented; iOS/Android visual
+acceptance remains pending. The finding below records the original audit.
+
 **Evidence: installed-source risk; native failure not demonstrated in this review.** SpriteBatch, tile layers, and sprite particles initialize `useRectBuffer`/`useRSXformBuffer` with constant modifiers, then mutate host objects from a different `useDerivedValue`. Installed Skia **2.11.0**, `src/external/reanimated/buffers.ts`, explicitly calls `notifyChange(values)` after executing its own buffer modifier. The separate GameKit writers do not perform an equivalent publication. Their derived count is discarded or unchanged. A test that inspects a fake rect's fields does not prove Skia redraws it.
 
 **Resolve:** first add a native integration reproduction where only sprite/tile/particle slots change and no other shared value forces a redraw. Inspect Skia's installed renderer subscriptions and supported mutation/publication API. Prefer putting writes inside the supported buffer update path, or a documented atomic notification path; do not import private `_value`/`notifyChange` implementation details into the library. Preserve coherent rect/transform/color generations.
