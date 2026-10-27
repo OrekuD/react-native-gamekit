@@ -170,6 +170,41 @@ function resolvePackage(name, fromManifest) {
   return { path: canonicalPath, manifest: readJson(canonicalPath) };
 }
 
+/** Use the installed, locked Expo release's metadata; never fetch recommendations. */
+function checkLockedExpoCompatibility(root, { workspace, playground }) {
+  let expo;
+  let bundled;
+  try {
+    expo = resolvePackage('expo', join(root, 'apps/playground/package.json'));
+    bundled = readJson(join(dirname(expo.path), 'bundledNativeModules.json'));
+  } catch (error) {
+    return [`Could not check locked Expo compatibility: ${error.message}`];
+  }
+  const label = `locked Expo ${expo.manifest.version} bundledNativeModules.json`;
+  if (!isRecord(bundled) || Object.keys(bundled).length === 0) {
+    return [`${label} must contain a nonempty package-to-semver-range map.`];
+  }
+  const errors = [];
+  if (!Object.hasOwn(bundled, 'react-native')) {
+    errors.push(`${label} must include a react-native compatibility range.`);
+  }
+  for (const [name, range] of Object.entries(bundled)) {
+    if (typeof range !== 'string' || range.trim().length === 0 || !semver.validRange(range)) {
+      errors.push(`${label} has an invalid semver range for ${name}: ${String(range)}.`);
+    }
+  }
+  if (errors.length) return errors;
+  const excluded = new Set((playground.expo?.install?.exclude ?? [])
+    .filter((name) => Object.hasOwn(EXPO_INSTALL_EXCEPTIONS, name)));
+  for (const [name, version] of Object.entries(workspace.catalogs.native)) {
+    if (!Object.hasOwn(bundled, name) || excluded.has(name)) continue;
+    if (!semver.satisfies(version, bundled[name])) {
+      errors.push(`${label}: catalog ${name} ${version} does not satisfy ${bundled[name]}. Update the native baseline together and run native validation.`);
+    }
+  }
+  return errors;
+}
+
 /**
  * Check direct installs and the native dependency/peer edges reachable from app
  * dependencies. This is a Node-resolution check, not a Metro/autolinking solver;
@@ -240,7 +275,10 @@ export function checkRepositoryDependencies(root) {
     return [`Could not read dependency policy files under ${root}: ${error.message}`];
   }
   const errors = validateDependencyPolicy(policy);
-  return errors.length ? errors : checkInstalledDependencies(root, policy);
+  return errors.length ? errors : [
+    ...checkInstalledDependencies(root, policy),
+    ...checkLockedExpoCompatibility(root, policy),
+  ];
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
@@ -252,6 +290,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     console.error(`Dependency policy failed:\n${errors.map((error) => `- ${error}`).join('\n')}`);
     process.exitCode = 1;
   } else {
-    console.log('Dependency policy and installed native resolution checks passed.');
+    console.log('Dependency policy, installed native resolution, and locked Expo compatibility checks passed.');
   }
 }
