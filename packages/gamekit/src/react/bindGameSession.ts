@@ -19,9 +19,10 @@ export function bindGameSession<TScenes extends SceneMap, TInput extends InputMa
   // GS-REACT-02: setup is transactional — the commit listener registered
   // below is released when the subsequent start() throws.
   const cleanups = createCleanupList();
+  let cleanedUp = false;
   let lastRevision = -1;
   const presentIfNewer = (frame: CommitFrame<TScenes>) => {
-    if (frame.revision <= lastRevision) {
+    if (cleanedUp || frame.revision <= lastRevision) {
       return;
     }
     lastRevision = frame.revision;
@@ -29,14 +30,20 @@ export function bindGameSession<TScenes extends SceneMap, TInput extends InputMa
   };
   presentIfNewer(game.getRenderFrame());
   const subscription = game.addCommitListener(presentIfNewer);
+  // Remove the listener before pausing, and attempt both even if either fails.
+  // Register before start: it may change status before an observer throws.
+  cleanups.add(() => {
+    if (game.status !== 'disposed') {
+      game.pause();
+    }
+  });
   cleanups.add(() => subscription.remove());
   try {
     game.start();
   } catch (error) {
-    cleanups.releaseAll();
-    throw error;
+    cleanedUp = true;
+    cleanups.releaseAfterFailure(error);
   }
-  let cleanedUp = false;
 
   return () => {
     if (cleanedUp) {
@@ -44,8 +51,5 @@ export function bindGameSession<TScenes extends SceneMap, TInput extends InputMa
     }
     cleanedUp = true;
     cleanups.releaseAll();
-    if (game.status !== 'disposed') {
-      game.pause();
-    }
   };
 }

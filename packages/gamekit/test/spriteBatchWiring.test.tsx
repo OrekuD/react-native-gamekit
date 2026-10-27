@@ -23,6 +23,7 @@ mock.module('@shopify/react-native-skia', {
   namedExports: {
     Atlas: () => null,
     useRectBuffer: (capacity: number) => ({
+      modify: () => {},
       value: Array.from({ length: capacity }, () => ({
         setXYWH: (x: number, y: number, w: number, h: number) => {
           recordedRects.push([x, y, w, h]);
@@ -30,6 +31,7 @@ mock.module('@shopify/react-native-skia', {
       })),
     }),
     useRSXformBuffer: (capacity: number) => ({
+      modify: () => {},
       value: Array.from({ length: capacity }, () => ({
         set: (a: number, b: number, c: number, d: number) => {
           recordedXforms.push([a, b, c, d]);
@@ -43,6 +45,7 @@ mock.module('react-native-reanimated', {
   namedExports: {
     useSharedValue: (initial: unknown) => ({ value: initial }),
     useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
+    useAnimatedReaction: (prepare: () => unknown, react: (value: unknown) => void) => react(prepare()),
     useFrameCallback: () => {},
   },
 });

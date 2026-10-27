@@ -46,6 +46,7 @@ export function bindAppLifecycle(
   // GS-REACT-02: setup is transactional — every stage registers its release
   // as it completes, so a later failure unwinds everything acquired so far.
   const cleanups = createCleanupList();
+  let cleanedUp = false;
   let pausedByLifecycle = false;
   let currentState = source.currentState ?? 'active';
 
@@ -53,9 +54,14 @@ export function bindAppLifecycle(
     state === 'inactive' || state === 'background';
 
   const pauseForBackground = () => {
-    if (session.getStatus() === 'running') {
-      session.pause();
-      pausedByLifecycle = true;
+    if (!cleanedUp && session.getStatus() === 'running') {
+      try {
+        session.pause();
+      } finally {
+        // A pause may commit before a status observer throws. Retain ownership
+        // only if it actually paused and cleanup did not run during that call.
+        pausedByLifecycle = !cleanedUp && session.getStatus() === 'paused';
+      }
     }
   };
 
@@ -67,9 +73,8 @@ export function bindAppLifecycle(
   try {
     if (session.addStatusListener !== undefined) {
       statusSubscription = session.addStatusListener((status) => {
-        if (status === 'running' && isInactive(currentState)) {
-          session.pause();
-          pausedByLifecycle = true;
+        if (!cleanedUp && status === 'running' && isInactive(currentState)) {
+          pauseForBackground();
         }
       });
       cleanups.add(() => statusSubscription?.remove());
@@ -81,6 +86,9 @@ export function bindAppLifecycle(
     }
 
     const subscription = source.addEventListener('change', (next) => {
+      if (cleanedUp) {
+        return;
+      }
       currentState = next;
       if (next === 'active') {
         if (pausedByLifecycle) {
@@ -99,17 +107,17 @@ export function bindAppLifecycle(
     });
     cleanups.add(() => subscription.remove());
   } catch (error) {
-    cleanups.releaseAll();
-    throw error;
+    cleanedUp = true;
+    pausedByLifecycle = false;
+    cleanups.releaseAfterFailure(error);
   }
 
-  let cleanedUp = false;
   return () => {
     if (cleanedUp) {
       return;
     }
     cleanedUp = true;
-    cleanups.releaseAll();
     pausedByLifecycle = false;
+    cleanups.releaseAll();
   };
 }

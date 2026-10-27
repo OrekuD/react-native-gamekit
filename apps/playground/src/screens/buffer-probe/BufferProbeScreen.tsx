@@ -1,183 +1,139 @@
 /**
- * Buffer Probe screen (GS-REACT-03).
+ * GS-REACT-03: manual native redraw probe, not an animation/FPS benchmark.
+ * Each renderer owns a separate Canvas with no animated transform or sibling.
+ * Phase buttons change shared inputs without rerendering React. The final
+ * picture must remain unchanged until another phase is requested.
  *
- * A deterministic native-integration reproduction: one lab timer advances a
- * synthetic commit, pans the viewport, and emits particles. Three Atlas
- * systems — a fixed-count orbiting sprite batch, a scrolling tile layer, a
- * looping sprite emitter — change ONLY their buffer slots per frame. No
- * session, no camera, no React state per frame, no alpha-driven visuals.
- *
- * On device: watch for 20 seconds. Orbiters must circle smoothly, tiles
- * must scroll with the pan (teeth every fourth column make motion obvious),
- * and puffs must rise and fade continuously. Frozen slots while commits
- * advance (see the headless commit-revision counter in tests) means buffer
- * writes are not notifying the native renderer.
+ * Expected coordinates are local to each 320x128 panel:
+ * Initial: 3 ground sprites at x=32/96/160,y=64; 4 ground tiles at
+ * x=0/32,y=64/96; one particle centered at (64,64), alpha=1.
+ * Move: sprite x=128/192/256; tile x=128/160; particle x=104,alpha=.75.
+ * Hide: all three panels empty.
+ * Reappear: initial sprite positions with brick frames; brick tiles at
+ * x=64/96; particle x=64,alpha=1.
+ * Fade: sprites/tiles unchanged; particle x=184,alpha=.25.
+ * Rerender and Remount must preserve the current phase. Exit/reopen resets it.
+ * Native results remain pending until these pixels are observed on device.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Canvas } from '@shopify/react-native-skia';
-import { useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Canvas, type SkImage } from '@shopify/react-native-skia';
+import { useSharedValue } from 'react-native-reanimated';
 import { createParticleSystem } from 'rn-gamekit/particles';
-import {
-  GameWorld2D,
-  ParticleView,
-  SpriteBatch,
-  TileMapLayer2D,
-  useGameAssets,
-  useParticlePresentation,
-} from 'rn-gamekit/react';
-import type { CommitFrame, ResolvedViewport2D } from 'rn-gamekit';
+import { ParticleView, SpriteBatch, TileMapLayer2D, useGameAssets } from 'rn-gamekit/react';
+import type { ResolvedViewport2D } from 'rn-gamekit';
 
+// Deliberately internal to this development harness: GameWorld2D adds a
+// changing transform, which would mask a missing tile-buffer notification.
+import { GameWorldContext } from '../../../../../packages/gamekit/src/react/sprites/GameWorld2D';
 import { LabHeader } from '../../components/LabHeader';
 import type { PlaygroundGameContentProps } from '../../shell/PlaygroundGameContentProps';
 import {
-  BUFFER_PROBE_CONFIG,
-  BUFFER_PROBE_FRAMES,
-  bufferProbeAssets,
-  bufferProbeLevel,
-  probeOrbitPositions,
-  probePuff,
-  type BufferProbeScenes,
+  BUFFER_PROBE_CONFIG, BUFFER_PROBE_PHASES, BUFFER_PROBE_FRAMES,
+  bufferProbeAssets, bufferProbeLevel, makeProbeCommit, probePuff, probeSprites,
+  probeViewport, type BufferProbePhase, type BufferProbeScenes, type ProbeSprite,
 } from './bufferProbeGame';
 
-/** A full synthetic commit: every field the batch select path may read. */
-export function makeProbeCommit(tick: number): CommitFrame<BufferProbeScenes> {
-  return {
-    scene: 'probe',
-    previous: { tick: Math.max(0, tick - 1) },
-    current: { tick },
-    tick,
-    elapsedSeconds: tick / 60,
-    revision: tick,
-    hardCut: false,
-    stepMs: 1000 / 60,
-  };
-}
-
-function initialViewport(): ResolvedViewport2D {
-  const { width, height } = BUFFER_PROBE_CONFIG;
-  return {
-    surfaceSize: { width, height },
-    logicalBounds: { x: 0, y: 0, width, height },
-    visibleLogicalBounds: { x: 0, y: 0, width, height },
-    contentBounds: { x: 0, y: 0, width, height },
-    scale: 1,
-    offsetX: 0,
-    offsetY: 0,
-  } as ResolvedViewport2D;
-}
-
 export default function BufferProbeScreen({ onExit }: PlaygroundGameContentProps) {
-  const insets = useSafeAreaInsets();
-  const [system] = useState(() => createParticleSystem({ effects: { puff: probePuff } }));
-  const assetsState = useGameAssets(bufferProbeAssets, { groups: ['sprites', 'tiles'] });
+  const [system] = useState(() => {
+    const created = createParticleSystem({ effects: { puff: probePuff } });
+    created.emit('puff', { position: { x: 64, y: 64 }, seed: 1 });
+    return created;
+  });
+  const binding = useMemo(() => system.bindPresentation(), [system]);
   useEffect(() => () => system.dispose(), [system]);
-
-  // Presentation clock for the particle views; the probe has no session.
-  const statusReader = useMemo(() => ({ sessionStatus: () => 'running' as const }), []);
-  const presentation = useParticlePresentation(system, statusReader);
-
-  // Synthetic commit: revision + tick advance at display cadence. The batch
-  // select reads only `current.tick`, so slot contents — and nothing else —
-  // change per frame.
-  const commit: SharedValue<CommitFrame<BufferProbeScenes>> = useSharedValue(
-    makeProbeCommit(0),
-  );
+  const clock = useSharedValue(binding.activeClock);
+  const registry = useSharedValue(binding.buildUiRegistry());
+  const presentation = useMemo(() => ({ clock, registry }), [clock, registry]);
+  const commit = useSharedValue(makeProbeCommit('initial', 0));
   const alpha = useSharedValue(0);
-  // Viewport pan: 1px per frame with wraparound. The tile layer reads only
-  // visibleLogicalBounds (no camera exists), so tile slots — and nothing
-  // else — change per frame.
-  const viewport: SharedValue<ResolvedViewport2D | undefined> = useSharedValue<ResolvedViewport2D | undefined>(initialViewport());
-  const tickRef = useRef(0);
+  const viewport = useSharedValue<ResolvedViewport2D | undefined>(probeViewport('initial'));
+  const world = useMemo(() => ({ viewport, camera: undefined }), [viewport]);
+  const revision = useRef(0);
+  const [, rerender] = useState(0);
+  const [generation, remount] = useState(0);
+  const assets = useGameAssets(bufferProbeAssets, { groups: ['tiles'] });
+  const sheet = assets.status === 'ready' ? assets.assets.get(bufferProbeAssets.tiles.sheet) : undefined;
+  const tileSource = useMemo(() => sheet === undefined ? undefined : {
+    image: sheet.image as SkImage, frames: sheet.frames,
+  }, [sheet]);
+  const spriteSource = useMemo(() => sheet === undefined ? undefined : {
+    image: sheet.image as SkImage, frame: BUFFER_PROBE_FRAMES.ground,
+  }, [sheet]);
 
-  useEffect(() => {
-    const id = setInterval(() => {
-      tickRef.current += 1;
-      const tick = tickRef.current;
-      commit.value = makeProbeCommit(tick);
-      const bounds = viewport.value?.visibleLogicalBounds;
-      if (bounds !== undefined) {
-        viewport.value = {
-          ...(viewport.value as ResolvedViewport2D),
-          visibleLogicalBounds: { ...bounds, x: tick % 640 },
-        };
-      }
-      if (tick % BUFFER_PROBE_CONFIG.puffEveryTicks === 0) {
-        system.emit('puff', { position: { x: 160, y: 200 }, seed: tick });
-      }
-    }, 1000 / 60);
-    return () => clearInterval(id);
-  }, [commit, viewport, system]);
-
-  const spriteSource = (
-    assetsState.status === 'ready'
-      ? assetsState.assets.get(bufferProbeAssets.sprites.probe)
-      : undefined
-  );
-  const tileImage = (
-    assetsState.status === 'ready'
-      ? (assetsState.assets.get(bufferProbeAssets.tiles.sheet) as { readonly image: unknown })
-          ?.image
-      : undefined
-  );
+  const applyPhase = (phase: BufferProbePhase) => {
+    revision.current += 1;
+    // Recycle the single slot, so every button works independently and can
+    // be repeated. Manual binding ticks are the only particle clock owner.
+    system.emit('puff', { position: { x: 64, y: 64 }, seed: 1 });
+    binding.tick(phase === 'hide' ? 4 : phase === 'fade' ? 3 : phase === 'move' ? 1 : 0);
+    registry.set(binding.buildUiRegistry());
+    clock.set(binding.activeClock);
+    commit.set(makeProbeCommit(phase, revision.current));
+    viewport.set(probeViewport(phase));
+  };
+  const { width, height, capacity } = BUFFER_PROBE_CONFIG;
 
   return (
     <View style={styles.screen}>
-      <Canvas pointerEvents="none" style={StyleSheet.absoluteFill}>
-        {spriteSource === undefined || tileImage === undefined ? null : (
-          <GameWorld2D viewport={viewport}>
-            <TileMapLayer2D
-              map={bufferProbeLevel}
-              layer="terrain"
-              source={{ image: tileImage as never, frames: BUFFER_PROBE_FRAMES }}
-              width={BUFFER_PROBE_CONFIG.width}
-              height={BUFFER_PROBE_CONFIG.height}
-              overscan={1}
-            />
-            <SpriteBatch<BufferProbeScenes, 'probe', { readonly x: number; readonly y: number }>
-              scene="probe"
-              commit={commit}
-              alpha={alpha}
-              source={spriteSource as never}
-              capacity={BUFFER_PROBE_CONFIG.orbitCount}
-              select={({ current }) => {
-                'worklet';
-                return probeOrbitPositions(current.tick).map((position) => ({ ...position }));
-              }}
-              write={(write, item, index) => {
-                'worklet';
-                write.set(index, 'probe', item.x, item.y, 0, 0.5);
-              }}
-              anchor={{ x: 0.5, y: 0.5 }}
-            />
-            <ParticleView
-              system={system}
-              effect="puff"
-              width={BUFFER_PROBE_CONFIG.width}
-              height={BUFFER_PROBE_CONFIG.height}
-              presentation={presentation}
-              spriteSource={{
-                image: spriteSource as never,
-                frame: { x: 0, y: 0, width: 64, height: 64 },
-              }}
-            />
-          </GameWorld2D>
+      <LabHeader title="Buffer Probe" onExit={onExit} testID="buffer-probe-back" />
+      <Text style={styles.hint}>Tap phases in order. Each panel redraws independently.</Text>
+      <View style={styles.controls}>
+        {BUFFER_PROBE_PHASES.map((phase) => (
+          <Pressable key={phase} testID={`buffer-probe-${phase}`} accessibilityRole="button"
+            onPress={() => applyPhase(phase)} style={styles.button}>
+            <Text style={styles.buttonText}>{phase}</Text>
+          </Pressable>
+        ))}
+        <Pressable testID="buffer-probe-rerender" accessibilityRole="button"
+          onPress={() => rerender((value) => value + 1)} style={styles.button}>
+          <Text style={styles.buttonText}>Rerender</Text>
+        </Pressable>
+        <Pressable testID="buffer-probe-remount" accessibilityRole="button"
+          onPress={() => remount((value) => value + 1)} style={styles.button}>
+          <Text style={styles.buttonText}>Remount</Text>
+        </Pressable>
+      </View>
+      <Text style={styles.label}>Sprites: move, hide, return as brick</Text>
+      <Canvas style={styles.canvas}>
+        {sheet === undefined ? null : (
+          <SpriteBatch<BufferProbeScenes, 'probe', ProbeSprite> key={generation}
+            scene="probe" commit={commit} alpha={alpha} source={sheet}
+            capacity={capacity} select={probeSprites}
+            write={(writer, item, index) => {
+              'worklet';
+              writer.set(index, item.frame, item.x, item.y, 0, 1);
+            }} />
         )}
       </Canvas>
-
-      <LabHeader title="Buffer Probe" onExit={onExit} testID="buffer-probe-back" />
-      <View pointerEvents="none" style={[styles.hud, { top: insets.top + 76 }]}>
-        <Text style={styles.line}>GS-REACT-03 reproduction: watch 20 seconds.</Text>
-        <Text style={styles.line}>Orbiters circle · tiles scroll · puffs rise and fade.</Text>
-        <Text style={styles.line}>Frozen slots while commits advance = missing publication.</Text>
-      </View>
+      <Text style={styles.label}>Tiles: move visible columns, hide, return as brick</Text>
+      <Canvas style={styles.canvas}>
+        <GameWorldContext.Provider value={world}>
+          {tileSource === undefined ? null : (
+            <TileMapLayer2D key={generation} map={bufferProbeLevel} layer="terrain"
+              source={tileSource} width={width} height={height} overscan={0} />
+          )}
+        </GameWorldContext.Provider>
+      </Canvas>
+      <Text style={styles.label}>Particle: move, hide, return, fade to 25%</Text>
+      <Canvas style={styles.canvas}>
+        {spriteSource === undefined ? null : (
+          <ParticleView key={generation} system={system} effect="puff"
+            width={width} height={height} presentation={presentation} spriteSource={spriteSource} />
+        )}
+      </Canvas>
+      <Text style={styles.hint}>Rerender / Remount must keep the current picture.</Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#080b12' },
-  hud: { alignItems: 'center', left: 24, position: 'absolute', right: 24 },
-  line: { color: '#c7efe4', fontSize: 12, fontWeight: '600', textAlign: 'center', marginTop: 2 },
+  canvas: { width: BUFFER_PROBE_CONFIG.width, height: BUFFER_PROBE_CONFIG.height,
+    alignSelf: 'center', backgroundColor: '#172033' },
+  controls: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6, padding: 10 },
+  button: { paddingHorizontal: 12, paddingVertical: 9, backgroundColor: '#32435d', borderRadius: 6 },
+  buttonText: { color: '#fff', fontSize: 12 },
+  label: { color: '#c7efe4', fontSize: 12, marginTop: 10, marginBottom: 4, textAlign: 'center' },
+  hint: { color: '#c7efe4', fontSize: 12, textAlign: 'center', marginTop: 8 },
 });

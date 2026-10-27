@@ -110,6 +110,11 @@ Frame rectangles resolve once at bind time; missing frames throw a structured er
 
 React does not re-render per tile; each layer is one stable Atlas node whose UI-runtime worklet refills slots from the presented camera bounds.
 
+The layer notifies Skia after updating its rectangle and transform buffers.
+Losing the viewport or replacing a map/source binding hides the previous
+slots while a matching tile window is unavailable, so old tiles do not remain
+visible during the asynchronous request.
+
 ## Tiled import
 
 `parseTiledMap2D()` normalizes one finite orthogonal Tiled JSON subset: inline uncompressed tilelayer arrays, no chunks, no object groups, no per-tile flip flags. Unsupported features reject with exact source paths (`layers[1](walls).compression: …`). Raw editor JSON never enters fixed-step or render hot paths — the normalized Gamekit map is the runtime model.

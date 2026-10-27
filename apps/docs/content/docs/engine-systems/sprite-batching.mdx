@@ -11,7 +11,7 @@ between the paths automatically; authors choose, and the docs explain the
 trade-off with measured data.
 
 ```tsx
-import { GameWorld2D, SpriteBatch } from 'rn-gamekit/react';
+import { SpriteBatch } from 'rn-gamekit/react';
 
 <SpriteBatch
   scene="play"
@@ -19,7 +19,10 @@ import { GameWorld2D, SpriteBatch } from 'rn-gamekit/react';
   alpha={alpha}
   source={assets.get(gameAssets.gameplay.enemies)}
   capacity={512}
-  select={({ current }) => current.enemies}
+  select={({ current }) => {
+    'worklet';
+    return current.enemies;
+  }}
   write={(write, enemy, index) => {
     'worklet';
     write.set(index, enemy.frame, enemy.x, enemy.y, enemy.rotation, enemy.scale, enemy.visible);
@@ -30,10 +33,13 @@ import { GameWorld2D, SpriteBatch } from 'rn-gamekit/react';
 ## Contract
 
 - `capacity` is fixed for the mounted batch; active count is explicit.
-- The batch owns all derived-value plumbing: `select` maps the committed
-  snapshot to the item array and `write` mutates the buffers in place on the
-  UI runtime — no per-frame allocation, no author-written derived values, no
-  React per frame.
+- The batch owns its UI reaction: `select` maps the committed snapshot to
+  items and `write` updates slots. After writing the slots, the batch
+  publishes the buffers to Skia. Authors need no frame callback or manual
+  refresh. Both callbacks must be worklets.
+- Buffers stay allocated at capacity; updates do not render React. Selection,
+  update policy, and transform calculations can still allocate temporary
+  values, so fixed buffers do not imply zero per-frame allocation.
 - `write.set(index, frame, x, y, rotation, scale, visible)` — writes past
   capacity fail clearly in development; inactive slots are hidden with
   zero-size rects and never remount topology.
@@ -51,6 +57,7 @@ import { GameWorld2D, SpriteBatch } from 'rn-gamekit/react';
 
 ## Performance evidence
 
-The retained-vs-batch comparison is measured on the physical-device matrix
-(see the Performance Lab's sprite-scaling scenario and the device results).
-Simulator numbers are development proxies and never approve device gates.
+Use the Performance Lab's sprite-scaling scenario to compare retained and
+batched rendering on representative physical devices. Buffer publication
+tests check update ordering and notifications; they do not measure FPS or
+establish a universal count at which batching becomes faster.

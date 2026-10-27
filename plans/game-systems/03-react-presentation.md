@@ -1,5 +1,8 @@
 # React integration and presentation bridge
 
+Implementation follow-up: [2026-10-25 lifecycle and presentation review](03-react-presentation-review-2026-10-25.md).
+Native buffer publication remains a separate investigation; the original findings below are historical.
+
 ## Purpose and verdict
 
 React owns mount/unmount, composition, loading screens, and low-frequency UI. A headless session owns simulation. Shared values carry compact commits to the UI runtime, where one alpha clock interpolates presentation. **Keep this boundary. Remove unconditional diagnostic work and close subscription failure paths.**
@@ -23,6 +26,10 @@ Sources: [GameView.tsx](../../packages/gamekit/src/react/GameView.tsx), [bindGam
 **Acceptance:** fail scheduling, an initial present callback, AppState registration, and pause notification separately. Count all listeners before/after; they return to baseline. Strict Mode setup/cleanup rehearsals and disposed-session unmounts remain safe.
 
 ## GS-REACT-03 — P1 investigation: prove buffer writes notify the native renderer
+
+Implementation follow-up: [2026-10-26 buffer publication review](03-buffer-publication-review-2026-10-26.md).
+Source-backed fixes and isolated probe are implemented; iOS/Android visual
+acceptance remains pending. The finding below records the original audit.
 
 **Evidence: installed-source risk; native failure not demonstrated in this review.** SpriteBatch, tile layers, and sprite particles initialize `useRectBuffer`/`useRSXformBuffer` with constant modifiers, then mutate host objects from a different `useDerivedValue`. Installed Skia **2.11.0**, `src/external/reanimated/buffers.ts`, explicitly calls `notifyChange(values)` after executing its own buffer modifier. The separate GameKit writers do not perform an equivalent publication. Their derived count is discarded or unchanged. A test that inspects a fake rect's fields does not prove Skia redraws it.
 

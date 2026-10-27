@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict';
 import { before, describe, it, mock } from 'node:test';
-import { createElement } from 'react';
+import { Component, createElement, useState } from 'react';
 import { act, create } from 'react-test-renderer';
 
 import { createGameSessionWithDriver } from '../src/core/session/createGameSession';
@@ -27,6 +27,9 @@ function host(tag: string) {
 
 let capturedFrameCallback: ((info: { timeSincePreviousFrame?: number }) => void) | null = null;
 const scheduledCalls: unknown[][] = [];
+let deferScheduledCalls = false;
+let sharedValueWrites = 0;
+let appStateSetupError: Error | undefined;
 let dateNowCalls = 0;
 const realDateNow = Date.now;
 
@@ -39,7 +42,12 @@ mock.module('react-native', {
     },
     AppState: {
       currentState: 'active',
-      addEventListener: () => ({ remove: () => undefined }),
+      addEventListener: () => {
+        if (appStateSetupError !== undefined) {
+          throw appStateSetupError;
+        }
+        return { remove: () => undefined };
+      },
     },
   },
 });
@@ -48,9 +56,16 @@ mock.module('@shopify/react-native-skia', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
-    useSharedValue: (initial: unknown) => ({
-      value: typeof initial === 'function' ? (initial as () => unknown)() : initial,
-    }),
+    useSharedValue: (initial: unknown) => useState(() => {
+      let value = typeof initial === 'function' ? (initial as () => unknown)() : initial;
+      return {
+        get value() { return value; },
+        set value(next: unknown) {
+          sharedValueWrites += 1;
+          value = next;
+        },
+      };
+    })[0],
     useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
     useAnimatedStyle: () => ({}),
     useFrameCallback: (callback: (info: { timeSincePreviousFrame?: number }) => void) => {
@@ -64,7 +79,9 @@ mock.module('react-native-worklets', {
     // observer delivery is observable headlessly.
     scheduleOnRN: (callback: (...args: never[]) => void, ...args: never[]) => {
       scheduledCalls.push([callback, ...args]);
-      callback(...args);
+      if (!deferScheduledCalls) {
+        callback(...args);
+      }
     },
   },
 });
@@ -78,14 +95,14 @@ const viewport = {
   mode: 'fit',
 } as const;
 
-function tickGame() {
+function tickGame(initialCount = 0) {
   return defineGame({
     viewport,
     input: {},
     scenes: {
       main: defineScene({
         actions: [],
-        create: () => ({ count: 0 }),
+        create: () => ({ count: initialCount }),
         update: ({ state }: { state: { readonly count: number } }) => ({
           count: state.count + 1,
         }),
@@ -107,6 +124,7 @@ async function mount(
 ): Promise<{ readonly renderer: ReturnType<typeof create> }> {
   capturedFrameCallback = null;
   scheduledCalls.length = 0;
+  deferScheduledCalls = false;
   let renderer: ReturnType<typeof create> | null = null;
   await act(async () => {
     renderer = create(ui);
@@ -117,6 +135,22 @@ async function mount(
 
 function uiFrame(): void {
   capturedFrameCallback!({ timeSincePreviousFrame: 16 });
+}
+
+function deliverScheduledCalls(): void {
+  for (const [callback, ...args] of scheduledCalls.splice(0)) {
+    (callback as (...args: unknown[]) => void)(...args);
+  }
+}
+
+class ErrorBoundary extends Component<{
+  readonly children?: React.ReactNode;
+  readonly onError: (error: unknown) => void;
+}> {
+  state = { failed: false };
+  static getDerivedStateFromError(): { failed: boolean } { return { failed: true }; }
+  componentDidCatch(error: unknown): void { this.props.onError(error); }
+  render(): React.ReactNode { return this.state.failed ? null : this.props.children; }
 }
 
 describe('GS-REACT-01 instrumentation round trip', () => {
@@ -141,9 +175,13 @@ describe('GS-REACT-01 instrumentation round trip', () => {
     };
     try {
       driver.fireNext(0);
+      sharedValueWrites = 0;
       uiFrame();
+      assert.equal(sharedValueWrites, 3, 'only the three alpha-clock values are written');
       driver.fireNext(16);
+      sharedValueWrites = 0;
       uiFrame();
+      assert.equal(sharedValueWrites, 3, 'a new revision does not write diagnostic values');
       driver.fireNext(32);
       uiFrame();
     } finally {
@@ -216,6 +254,7 @@ describe('GS-REACT-01 instrumentation round trip', () => {
     );
     driver.fireNext(0);
     const pendingBefore = driver.pendingCount;
+    const callbackBefore = capturedFrameCallback;
     const observed: number[] = [];
     const second: GameViewInstrumentation = {
       onUiRevisionObserved: (revision) => {
@@ -233,6 +272,7 @@ describe('GS-REACT-01 instrumentation round trip', () => {
     });
     assert.equal(session.status, 'running', 'no restart on instrumentation replacement');
     assert.equal(driver.pendingCount, pendingBefore, 'the scheduled loop is untouched');
+    assert.equal(capturedFrameCallback, callbackBefore, 'the registered worklet is stable');
     driver.fireNext(16);
     uiFrame();
     assert.deepEqual(observed, [2], 'the replacement observer reports new revisions');
@@ -240,13 +280,144 @@ describe('GS-REACT-01 instrumentation round trip', () => {
     session.dispose();
   });
 
+  it('drops queued observations for replaced observers and samples the current revision afresh', async () => {
+    const session = createGameSessionWithDriver(tickGame(), { frameDriver: new ManualFrameDriver() });
+    const first: number[] = [];
+    const second: number[] = [];
+    const Renderer = host('renderer');
+    const { renderer } = await mount(createElement(GameView as never, {
+      game: session, renderer: Renderer,
+      instrumentation: { onUiRevisionObserved: (revision: number) => first.push(revision) },
+    } as never));
+    deferScheduledCalls = true;
+    uiFrame();
+    assert.equal(scheduledCalls.length, 1);
+    await act(async () => renderer.update(createElement(GameView as never, {
+      game: session, renderer: Renderer,
+      instrumentation: { onUiRevisionObserved: (revision: number) => second.push(revision) },
+    } as never)));
+    deliverScheduledCalls();
+    assert.deepEqual(first, []);
+    assert.deepEqual(second, [], 'the replacement must not receive the previous observer sample');
+    uiFrame();
+    uiFrame();
+    deliverScheduledCalls();
+    assert.deepEqual(second, [session.getRenderFrame().revision], 'new observer samples this revision once');
+    await act(async () => renderer.unmount());
+    session.dispose();
+  });
+
+  it('drops queued observations after unmount', async () => {
+    const session = createGameSessionWithDriver(tickGame(), { frameDriver: new ManualFrameDriver() });
+    const observed: number[] = [];
+    const { renderer } = await mount(createElement(GameView as never, {
+      game: session, renderer: host('renderer'),
+      instrumentation: { onUiRevisionObserved: (revision: number) => observed.push(revision) },
+    } as never));
+    deferScheduledCalls = true;
+    uiFrame();
+    await act(async () => renderer.unmount());
+    deliverScheduledCalls();
+    assert.deepEqual(observed, []);
+    assert.equal(session.status, 'paused');
+    session.dispose();
+  });
+
+  it('isolates frames and queued observations when a session replaces one with the same explicit key', async () => {
+    const first = createGameSessionWithDriver(tickGame(1), { frameDriver: new ManualFrameDriver() });
+    const second = createGameSessionWithDriver(tickGame(100), { frameDriver: new ManualFrameDriver() });
+    const rendered: number[] = [];
+    const observed: number[] = [];
+    const instrumentation = { onUiRevisionObserved: (revision: number) => observed.push(revision) };
+    const Renderer = ({ frame }: { frame: { value: { current: { count: number } } } }) => {
+      rendered.push(frame.value.current.count);
+      return null;
+    };
+    const { renderer } = await mount(createElement(GameView as never, {
+      game: first, presentationKey: 'surface', renderer: Renderer, instrumentation,
+    } as never));
+    deferScheduledCalls = true;
+    uiFrame();
+    rendered.length = 0;
+    await act(async () => renderer.update(createElement(GameView as never, {
+      game: second, presentationKey: 'surface', renderer: Renderer, instrumentation,
+    } as never)));
+    assert.deepEqual(rendered, [100], 'the replacement renderer starts with its own snapshot');
+    deliverScheduledCalls();
+    assert.deepEqual(observed, [], 'a retired session cannot deliver into its replacement');
+    assert.equal(first.status, 'paused');
+    assert.equal(second.status, 'running');
+    await act(async () => renderer.unmount());
+    first.dispose();
+    second.dispose();
+  });
+
+  it('clears the presented camera when AppState setup fails', async () => {
+    const session = createGameSessionWithDriver(tickGame(), { frameDriver: new ManualFrameDriver() });
+    const failure = new Error('AppState setup failed');
+    const caught: unknown[] = [];
+    let camera: { value: unknown } | undefined;
+    const Renderer = (props: { camera?: { value: unknown } }) => { camera = props.camera; return null; };
+    appStateSetupError = failure;
+    try {
+      await act(async () => {
+        create(createElement(ErrorBoundary, { onError: (error: unknown) => caught.push(error) },
+          createElement(GameView as never, {
+            game: session, renderer: Renderer,
+            camera2D: { select: () => ({ center: { x: 0, y: 0 }, zoom: 1, rotationRadians: 0 }) },
+          } as never)));
+      });
+    } finally {
+      appStateSetupError = undefined;
+    }
+    assert.deepEqual(caught, [failure]);
+    assert.equal(camera?.value, undefined, 'prepared camera resources unwind before the failed mount exits');
+    assert.equal(session.status, 'paused');
+    session.dispose();
+  });
+
+  it('treats the explicit key as a same-session reset without collapsing numeric key values', async () => {
+    const session = createGameSessionWithDriver(tickGame(), { frameDriver: new ManualFrameDriver() });
+    let presentedFrame: unknown;
+    const Renderer = ({ frame }: { frame: unknown }) => { presentedFrame = frame; return null; };
+    const { renderer } = await mount(createElement(GameView as never, {
+      game: session, renderer: Renderer,
+    } as never));
+    let previous = presentedFrame;
+    for (const key of [NaN, Infinity, -Infinity, 'Infinity', 1, '1']) {
+      await act(async () => renderer.update(createElement(GameView as never, {
+        game: session, renderer: Renderer, presentationKey: key,
+      } as never)));
+      assert.notEqual(presentedFrame, previous, `changing the reset key to ${String(key)} remounts`);
+      previous = presentedFrame;
+      await act(async () => renderer.update(createElement(GameView as never, {
+        game: session, renderer: Renderer, presentationKey: key,
+      } as never)));
+      assert.equal(presentedFrame, previous, 'reusing the same key retains presentation');
+    }
+    assert.equal(session.status, 'running');
+    await act(async () => renderer.unmount());
+    session.dispose();
+  });
+
   it('Strict Mode setup/cleanup rehearsals leave no scheduled loop behind', async () => {
     const { StrictMode } = await import('react');
     const driver = new ManualFrameDriver();
-    const session = createGameSessionWithDriver(tickGame(), {
+    const ownedSession = createGameSessionWithDriver(tickGame(), {
       frameDriver: driver,
       fixedStepMs: 10,
     });
+    let setups = 0;
+    let releases = 0;
+    const session = {
+      ...ownedSession,
+      get status() { return ownedSession.status; },
+      addCommitListener(listener: Parameters<typeof ownedSession.addCommitListener>[0]) {
+        setups += 1;
+        const subscription = ownedSession.addCommitListener(listener);
+        return { remove: () => { releases += 1; subscription.remove(); } };
+      },
+    };
     let renderer: ReturnType<typeof create> | null = null;
     await act(async () => {
       renderer = create(
@@ -261,11 +432,14 @@ describe('GS-REACT-01 instrumentation round trip', () => {
       );
     });
     assert.equal(session.status, 'running', 'the rehearsed mount still binds');
+    assert.equal(setups, 2, 'Strict Mode ran the binding setup twice');
+    assert.equal(releases, 1, 'the rehearsal released the first binding');
     await act(async () => {
       renderer!.unmount();
     });
     assert.equal(session.status, 'paused', 'unmount pauses the borrowed session');
     assert.equal(driver.pendingCount, 0, 'no scheduled callback survives unmount');
+    assert.equal(releases, 2, 'the final binding is released on unmount');
     session.dispose();
   });
 

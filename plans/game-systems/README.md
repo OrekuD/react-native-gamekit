@@ -18,6 +18,9 @@ These briefs record the audit and implementation instructions, not ongoing imple
 Implementation follow-up: [Scenes and snapshots — 2026-10-23](02-scenes-snapshots-review-2026-10-23.md)
 records verified fixes, remaining API proposals, and measured tradeoffs for system 02.
 
+[React lifecycle and presentation — 2026-10-25](03-react-presentation-review-2026-10-25.md)
+records the system 03 follow-up; native batch-buffer notification is tracked separately.
+
 Implementation follow-up: [Input — 2026-10-26](04-input-review-2026-10-26.md)
 records the system 04 ownership fixes, API changes and proposals, and native
 acceptance procedure. Viewport (05), then Camera2D (06), follow this review.
@@ -70,6 +73,10 @@ For each item: reproduce or explain why current code already resolves it; add th
 Keep headless fixed-step simulation, compact immutable presentation commits, direct 2D math, typed transactional events, optional native-effect adapters, and explicit storage schemas. No demonstrated need justifies an ECS, a new scheduler/runtime, a general event bus, streaming tile infrastructure, a physics backend, cloud storage, or future 3D APIs as part of this review. [T18](../task-18.md)'s physics no-go is an intentional scope decision.
 
 Delete inert state and duplicate algorithms first. Simplify resource and lifecycle ownership next. Optimize only remaining measured costs. Viewport and geometry mostly need contract precision, not replacement.
+
+System 03 buffer follow-up: [2026-10-26 publication review](03-buffer-publication-review-2026-10-26.md)
+records fixes across three batch renderers, corrected API examples, regression
+evidence, and the outstanding native redraw gate.
 
 ## Validation recorded for this review
 
