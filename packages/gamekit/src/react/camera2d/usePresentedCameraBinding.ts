@@ -1,25 +1,11 @@
 /**
- * Presented camera binding (T12.3, T12-F2, T12-F3).
- *
- * Joins authored camera data to the UI presentation pipeline: `commit`
- * runs per simulation commit on the JS runtime and evaluates the
- * definition's selector AND cut predicate as ONE exception-safe
- * transaction, validating the selected camera before any shared value is
- * published. `present` runs on the UI runtime per display frame and
- * delegates to the trusted scalar projector (a complete worklet call
- * graph), writing the read-only `CameraCut2D` into the GameView-owned
- * shared value that renderer and pointer adapter both consume.
- *
- * Cut semantics (snap instead of interpolate): scene transitions
- * (`hardCut` or a scene-name change), explicit `cut` predicate hits,
- * session replacement, and definition replacement — which is modeled as
- * ONE pending cut owned by the replacement and consumed on its first
- * successful commit, so later commits interpolate normally (T12-F3).
- * A throwing selector or cut predicate retains the last valid presented
- * value and leaves no half-updated state; the next valid commit recovers.
+ * A commit-boundary camera transaction, owned by one GameView presentation.
+ * Selectors run on RN. Accepted frame/camera packets publish in one UI task;
+ * failures freeze the last valid frame, alpha, and camera until recovery.
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
 
 import { interpolateCameraScalar2D, type CameraCut2D } from '../../camera2d';
 import { cloneValidCamera2D } from '../../camera2d/validation';
@@ -27,159 +13,207 @@ import type { CommitFrame } from '../../core/session/types';
 import type { SceneMap } from '../../definition/types';
 import type { GameCamera2DDefinition } from './defineGameCamera2D';
 
-/** A UI-side camera binding for one session presentation. */
-export interface PresentedCameraBinding<TScenes extends SceneMap> {
-  /** Evaluate the selector against one committed frame (JS runtime). */
-  commit(frame: CommitFrame<TScenes>): void;
-  /** Advance presentation by the current alpha (UI runtime worklet). */
-  present(alpha: number): void;
-  /** Drop the current state; the presented value stays as-is. */
-  dispose(): void;
+interface AuthoredCamera {
+  readonly previous: CameraCut2D | undefined;
+  readonly current: CameraCut2D;
 }
 
-function sameSceneName(first: string | undefined, second: string | undefined): boolean {
-  return first === second;
+/** Frame publication and readiness belong to the mounted presentation. */
+export interface CameraPresentationTarget<TScenes extends SceneMap> {
+  readonly frame: SharedValue<CommitFrame<TScenes>>;
+  readonly nextCutId: () => number;
+  readonly onReady: (ready: boolean) => void;
+}
+
+export interface PresentedCameraBinding<TScenes extends SceneMap> {
+  /** Disabled cameras leave frame publication on GameView's existing path. */
+  commit(frame: CommitFrame<TScenes>): 'accepted' | 'rejected' | 'disabled';
+  present(alpha: number): void;
+  /** Failure freezes both frame interpolation and camera presentation. */
+  readonly blocked: SharedValue<boolean>;
+  /** Re-arm effect replay without allowing stale callbacks after cleanup. */
+  activate(): void;
+  dispose(): void;
+  /** Apply a replacement to the latest attempted frame, including paused time. */
+  replace(definition: GameCamera2DDefinition<CommitFrame<TScenes>> | undefined): void;
 }
 
 /**
- * Create the camera binding for one presentation.
- *
- * The `presented` shared value is owned by `GameView` so the pointer
- * adapter (a sibling of the renderer) reads the same generation.
+ * Authored cameras and cut counters are RN-owned: committing never reads a
+ * SharedValue. Only immutable packets cross to UI, where the frame and
+ * camera become visible together before another render/input callback runs.
  */
 export function usePresentedCameraBinding<TScenes extends SceneMap>(
   definition: GameCamera2DDefinition<CommitFrame<TScenes>> | undefined,
   presented: SharedValue<CameraCut2D | undefined>,
+  target?: CameraPresentationTarget<TScenes>,
 ): PresentedCameraBinding<TScenes> {
-  const authoredPrevious = useSharedValue<CameraCut2D | undefined>(undefined);
-  const authoredCurrent = useSharedValue<CameraCut2D | undefined>(undefined);
-  const cutId = useSharedValue(0);
-  const sceneNameRef = useRef<string | undefined>(undefined);
-  // T12-F3: definition replacement is ONE pending cut, consumed by the
-  // first successful commit of the replacement binding — never a
-  // render-time boolean that stays true for the binding lifetime.
-  const pendingCutRef = useRef(false);
+  const authored = useSharedValue<AuthoredCamera | undefined>(undefined);
+  const blocked = useSharedValue(false);
+  const activeOnUI = useSharedValue(true);
+  const generationOnUI = useSharedValue(0);
 
-  const definitionRef = useRef(definition);
-  useEffect(() => {
-    if (definitionRef.current === definition) {
-      return;
-    }
-    definitionRef.current = definition;
-    pendingCutRef.current = true;
-    authoredPrevious.value = undefined;
-    authoredCurrent.value = undefined;
-    sceneNameRef.current = undefined;
-    cutId.value += 1;
-    presented.value = undefined;
-  }, [authoredCurrent, authoredPrevious, cutId, definition, presented]);
+  const binding = useMemo<PresentedCameraBinding<TScenes>>(() => {
+    let activeDefinition = definition;
+    let latestFrame: CommitFrame<TScenes> | undefined;
+    let current: CameraCut2D | undefined;
+    let scene: string | undefined;
+    let pendingCut = true;
+    let failed = false;
+    let reported = false;
+    let active = true;
+    let generation = 0;
+    let ready = false;
+    let readinessPending = false;
+    let cutId = 0;
+    const nextCutId = target?.nextCutId ?? (() => { cutId += 1; return cutId; });
 
-  const binding = useMemo<PresentedCameraBinding<TScenes>>(
-    () => {
-      // GS-CAMERA-02: one report per failure episode (phase + message),
-      // reset by the next successful commit so a later distinct failure
-      // stays visible.
-      let lastReportedFailureKey: string | null = null;
-      const reportCameraError = (
-        activeDefinition: GameCamera2DDefinition<CommitFrame<TScenes>>,
-        phase: 'select' | 'cut' | 'validate',
-        error: unknown,
-        frame: CommitFrame<TScenes>,
-      ): void => {
-        const onError = activeDefinition.onError;
-        if (onError === undefined) {
-          return;
+    const reportReady = (expectedGeneration: number): void => {
+      if (!active || generation !== expectedGeneration || ready) return;
+      ready = true;
+      readinessPending = false;
+      target?.onReady(true);
+    };
+    const publish = (
+      nextFrame: CommitFrame<TScenes>,
+      next: AuthoredCamera,
+      hardCut: boolean,
+    ): void => {
+      const frameValue = target?.frame;
+      const expectedGeneration = generation;
+      const needsReady = !ready && !readinessPending && target !== undefined;
+      if (needsReady) readinessPending = true;
+      scheduleOnUI(() => {
+        'worklet';
+        if (!activeOnUI.value || generationOnUI.value !== expectedGeneration) return;
+        authored.value = next;
+        if (frameValue !== undefined) frameValue.value = nextFrame;
+        if (hardCut) presented.value = next.current;
+        blocked.value = false;
+        if (needsReady) scheduleOnRN(reportReady, expectedGeneration);
+      });
+    };
+    const reject = (): void => {
+      failed = true;
+      const expectedGeneration = generation;
+      scheduleOnUI(() => {
+        'worklet';
+        if (activeOnUI.value && generationOnUI.value === expectedGeneration) blocked.value = true;
+      });
+    };
+    const commit = (frame: CommitFrame<TScenes>): 'accepted' | 'rejected' | 'disabled' => {
+      latestFrame = frame;
+      if (!active) return 'rejected';
+      if (activeDefinition === undefined) return 'disabled';
+      let camera;
+      let explicitCut = false;
+      let phase: 'select' | 'cut' | 'validate' = 'select';
+      try {
+        const selected = activeDefinition.select(frame);
+        phase = 'cut';
+        explicitCut = activeDefinition.cut?.(frame) === true;
+        phase = 'validate';
+        camera = cloneValidCamera2D(selected);
+      } catch (error) {
+        reject();
+        if (!reported && activeDefinition.onError !== undefined) {
+          reported = true;
+          try { activeDefinition.onError({ phase, error, scene: String(frame.scene) }); } catch {
+            // Diagnostics cannot break last-valid presentation.
+          }
         }
-        const message = error instanceof Error ? error.message : String(error);
-        const key = `${phase}:${message}`;
-        if (key === lastReportedFailureKey) {
-          return;
-        }
-        lastReportedFailureKey = key;
-        try {
-          onError({ phase, error, scene: String(frame.scene) });
-        } catch {
-          // A throwing reporter must not break the last-valid fallback.
-        }
-      };
-      const markRecovered = (): void => {
-        lastReportedFailureKey = null;
-      };
-      return {
-      commit: (frame) => {
-        // GS-CAMERA-01: the binding identity is stable across definition
-        // replacements (the inner effect owns the pending cut), so a
-        // definition change never tears down presentation or restarts the
-        // session. Always read the current definition here.
-        const activeDefinition = definitionRef.current;
-        if (activeDefinition === undefined) {
-          return;
-        }
-        // One exception-safe transaction: select + cut + validation. A
-        // failure retains the last valid presented value and leaves no
-        // half-updated scene/cut state.
-        let camera;
-        let explicitCut = false;
-        let phase: 'select' | 'cut' | 'validate' = 'select';
-        try {
-          // T12-RF4 + T12-SF3: the selector output is validated AND copied
-          // at the JS commit boundary with the STRICT full-camera clone — a
-          // mutable selector result can never alias the authored values,
-          // and a partial camera is rejected, never completed with
-          // defaults.
-          const selected = activeDefinition.select(frame);
-          phase = 'cut';
-          explicitCut = activeDefinition.cut?.(frame) === true;
-          phase = 'validate';
-          camera = cloneValidCamera2D(selected);
-        } catch (error) {
-          reportCameraError(activeDefinition, phase, error, frame);
-          return;
-        }
-        markRecovered();
-        const pendingCut = pendingCutRef.current;
-        pendingCutRef.current = false;
-        const sceneChanged = !sameSceneName(sceneNameRef.current, String(frame.scene));
-        sceneNameRef.current = String(frame.scene);
-        const current: CameraCut2D = { camera, cutId: cutId.value };
-        if (pendingCut || explicitCut || sceneChanged || frame.hardCut) {
-          authoredPrevious.value = undefined;
-          cutId.value += 1;
-          authoredCurrent.value = { camera, cutId: cutId.value };
-          // GS-CAMERA-01: a valid hard cut installs the presented camera
-          // immediately — paused time presents coherently without waiting
-          // for the next present(alpha). Ordinary commits leave
-          // presentation to the frame clock so pause freezes interpolation.
-          presented.value = { camera, cutId: cutId.value };
-        } else {
-          authoredPrevious.value = authoredCurrent.value;
-          authoredCurrent.value = current;
-        }
-      },
+        return 'rejected';
+      }
+      const recovery = failed;
+      const hardCut = pendingCut || recovery || explicitCut || scene !== String(frame.scene) || frame.hardCut;
+      const next: CameraCut2D = { camera, cutId: hardCut ? nextCutId() : current!.cutId };
+      const previous = hardCut ? undefined : current;
+      const nextFrame = recovery ? { ...frame, previous: frame.current, hardCut: true } : frame;
+      current = next;
+      scene = String(frame.scene);
+      pendingCut = false;
+      failed = false;
+      reported = false;
+      publish(nextFrame, { previous, current: next }, hardCut);
+      return 'accepted';
+    };
+    return {
+      commit,
+      blocked,
       present: (alpha: number) => {
         'worklet';
-        const current = authoredCurrent.value;
-        if (current === undefined) {
-          return;
-        }
+        if (!activeOnUI.value || blocked.value) return;
+        const value = authored.value;
+        if (value === undefined) return;
         presented.value = {
-          camera: interpolateCameraScalar2D(authoredPrevious.value, current, alpha),
-          cutId: current.cutId,
+          camera: interpolateCameraScalar2D(value.previous, value.current, alpha),
+          cutId: value.current.cutId,
         };
       },
-      dispose: () => {
-        authoredPrevious.value = undefined;
-        authoredCurrent.value = undefined;
-        presented.value = undefined;
+      activate: () => {
+        active = true;
+        generation += 1;
+        const expectedGeneration = generation;
+        scheduleOnUI(() => {
+          'worklet';
+          if (generationOnUI.value > expectedGeneration) return;
+          generationOnUI.value = expectedGeneration;
+          activeOnUI.value = true;
+        });
       },
-      };
-    },
-    // GS-CAMERA-01: stable identity across definition replacements — the
-    // inner effect owns the pending cut, so definition changes never tear
-    // down presentation or restart the session. `presented` is GameView-owned
-    // and stable per mount.
-    [presented],
-  );
+      dispose: () => {
+        active = false;
+        generation += 1;
+        current = undefined;
+        scene = undefined;
+        pendingCut = true;
+        ready = false;
+        readinessPending = false;
+        const expectedGeneration = generation;
+        scheduleOnUI(() => {
+          'worklet';
+          if (generationOnUI.value > expectedGeneration) return;
+          generationOnUI.value = expectedGeneration;
+          activeOnUI.value = false;
+          authored.value = undefined;
+          presented.value = undefined;
+          blocked.value = false;
+        });
+      },
+      replace: (nextDefinition) => {
+        if (activeDefinition === nextDefinition) return;
+        activeDefinition = nextDefinition;
+        pendingCut = true;
+        if (nextDefinition === undefined) {
+          current = undefined;
+          scene = undefined;
+          failed = false;
+          reported = false;
+          ready = false;
+          readinessPending = false;
+          generation += 1;
+          target?.onReady(false);
+          const frameValue = target?.frame;
+          const nextFrame = latestFrame;
+          const expectedGeneration = generation;
+          scheduleOnUI(() => {
+            'worklet';
+            if (!activeOnUI.value || generationOnUI.value > expectedGeneration) return;
+            generationOnUI.value = expectedGeneration;
+            authored.value = undefined;
+            presented.value = undefined;
+            blocked.value = false;
+            if (frameValue !== undefined && nextFrame !== undefined) frameValue.value = nextFrame;
+          });
+        } else if (latestFrame !== undefined) {
+          commit(latestFrame);
+        }
+      },
+    };
+  // These values belong to one presentation lifetime. Definition updates
+  // enter through replace; they never tear down the session binding.
+  }, [presented]);
 
+  useEffect(() => { binding.replace(definition); }, [binding, definition]);
   return binding;
 }

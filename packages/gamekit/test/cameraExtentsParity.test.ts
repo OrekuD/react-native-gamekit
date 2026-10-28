@@ -21,6 +21,7 @@ import {
   screenVisibleBounds,
 } from '../src/react/particles/culling.ts';
 import type { ResolvedViewport2D } from '../src/viewport2d/types.ts';
+import { writeLayerVisibleBounds } from '../src/react/tilemap/tilePresentation.ts';
 
 interface ExtentCase {
   readonly name: string;
@@ -133,6 +134,41 @@ describe('GS-CAMERA-03 rotated-extent parity', () => {
       closeTo((culled.maxX - culled.minX) / 2 - padding, trusted.x, `${testCase.name} cull extent X`);
       closeTo((culled.maxY - culled.minY) / 2 - padding, trusted.y, `${testCase.name} cull extent Y`);
       closeTo((culled.minX + culled.maxX) / 2, testCase.center.x, `${testCase.name} cull center X`);
+
+      const tiles = writeLayerVisibleBounds(
+        { value: { camera } }, { value: viewportFor(testCase) }, 1, 1, padding,
+      );
+      assert.ok(tiles !== null);
+      closeTo(tiles.minX, culled.minX, `${testCase.name} tile left`);
+      closeTo(tiles.minY, culled.minY, `${testCase.name} tile top`);
+      closeTo(tiles.maxX, culled.maxX, `${testCase.name} tile right`);
+      closeTo(tiles.maxY, culled.maxY, `${testCase.name} tile bottom`);
+    });
+
+    it(`preserves headless bounds under layer parallax for ${testCase.name}`, () => {
+      const camera = cameraFor(testCase);
+      // Include an extended logical view whose origin is not zero.
+      const view = { x: -80, y: -120, ...testCase.view };
+      const center = { x: view.x + view.width / 2, y: view.y + view.height / 2 };
+      for (const [px, py] of [[1, 1], [0, 0], [0.5, 1.5], [-0.5, 0.25]] as const) {
+        const effectiveCamera: Camera2D = {
+          ...camera,
+          center: {
+            x: center.x + (camera.center.x - center.x) * px,
+            y: center.y + (camera.center.y - center.y) * py,
+          },
+        };
+        const expected = getCameraVisibleBounds2D(effectiveCamera, view);
+        const padding = 7;
+        const actual = writeLayerVisibleBounds(
+          { value: { camera } }, { value: { visibleLogicalBounds: view } }, px, py, padding,
+        );
+        assert.ok(actual !== null);
+        closeTo(actual.minX, expected.x - padding, 'parallax left');
+        closeTo(actual.minY, expected.y - padding, 'parallax top');
+        closeTo(actual.maxX, expected.x + expected.width + padding, 'parallax right');
+        closeTo(actual.maxY, expected.y + expected.height + padding, 'parallax bottom');
+      }
     });
   }
 
@@ -145,5 +181,10 @@ describe('GS-CAMERA-03 rotated-extent parity', () => {
     assert.equal(cameraVisibleWorldBounds({ value: {} }, null, 16), undefined);
     const screen = screenVisibleBounds(320, 480, 16);
     assert.deepEqual(screen, { minX: -16, minY: -16, maxX: 336, maxY: 496 });
+    assert.deepEqual(
+      writeLayerVisibleBounds(null, { value: viewportFor(CASES[1]!) }, 0.25, 0.5, 16),
+      screen,
+      'a layer without a camera uses the viewport bounds without parallax',
+    );
   });
 });

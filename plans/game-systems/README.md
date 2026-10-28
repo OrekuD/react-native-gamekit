@@ -78,6 +78,11 @@ System 03 buffer follow-up: [2026-10-26 publication review](03-buffer-publicatio
 records fixes across three batch renderers, corrected API examples, regression
 evidence, and the outstanding native redraw gate.
 
+System 06 follow-up: [2026-10-28 Camera2D review](06-camera2d-review-2026-10-28.md)
+records coherent frame/camera publication, paused replacement and failure recovery,
+shake and constructor fixes, public API comparisons, and native acceptance still
+required. The next core-system review is **07 — Geometry**.
+
 ## Validation recorded for this review
 
 | Check | Baseline outcome |

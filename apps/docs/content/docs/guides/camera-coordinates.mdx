@@ -39,6 +39,8 @@ Games without a camera never touch this path at all; an explicit identity camera
 
 ## Pointer alignment
 
-`GamePointerInput` applies containment first (a `fit` letterbox begin is rejected before any conversion), then inverse-maps through the currently presented camera — the same generation the renderer drew that frame. Every move re-reads the presented camera, so a follow camera moving mid-drag keeps the world coordinate under your finger. Camera motion never cancels pointer ownership, and a hard cut never synthesizes touches.
+`GamePointerInput` applies containment first (a `fit` letterbox begin is rejected before any conversion), then inverse-maps through the camera sampled with that native event on UI. Deferred and coalesced moves retain their event-time camera instead of reading a newer camera when RN receives them. Camera motion never cancels pointer ownership, and a hard cut never synthesizes touches. When a camera is configured but has not published its first valid value, new pointer begins are rejected.
+
+The renderer's `camera` shared value contains an optional `CameraCut2D`. Conversion helpers take its inner `camera: Camera2D`, not the cut wrapper. Sample and narrow it on UI before converting; keep this mapping out of React render.
 
 The [Camera Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/camera-lab) shows the crosshair: the world point from the pointer action renders exactly where you touched, through zoom, rotation, shake, and cuts.

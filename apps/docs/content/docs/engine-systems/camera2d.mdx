@@ -27,11 +27,11 @@ const logical = worldToLogical2D({ x: 105, y: 195 }, camera, LOGICAL_VIEW);
 const world = logicalToWorld2D(logical, camera, LOGICAL_VIEW); // round trip
 ```
 
-Rotation is in radians, positive per the Skia convention. Zoom is a finite number greater than zero. Camera values are immutable plain data: no Skia matrices, no shared values, no mutable controllers. `createCamera2D()` fills missing fields from the identity camera.
+Rotation is in radians, positive per the Skia convention. Zoom is a finite number greater than zero. Camera values are immutable plain data: no Skia matrices, no shared values, no mutable controllers. `createCamera2D()` defaults missing or `undefined` fields to center `(0, 0)`, zoom `1`, and rotation `0`. Explicit `null` fields are invalid and throw `GeometryError`. A selector must return a complete camera; its output never receives constructor defaults.
 
 ## Identity and the no-camera path
 
-With no `camera2D` prop, `GameView`, `GameWorld2D`, and `GamePointerInput` keep the exact pre-camera path. The identity camera — the camera that reproduces that path — is the camera whose center equals the logical view center with zoom 1 and no rotation. Games that never opt in pay nothing, and the no-camera fast path is retained.
+With no `camera2D` prop, `GameView`, `GameWorld2D`, and `GamePointerInput` retain viewport-only transforms. The identity camera that reproduces that path has its center at the logical view center, zoom 1, and no rotation. The no-camera display callback skips camera interpolation and its shared-value reads.
 
 ## One authoritative binding
 
@@ -49,11 +49,34 @@ const camera = defineGameCamera2D({
 </GameView>
 ```
 
-`GameView` evaluates the selector against committed frames, interpolates the presented camera with the same alpha clock the renderer uses, and publishes one read-only value to both the renderer and the pointer adapter. The pointer adapter never repeats the binding: it discovers the presented camera from the mounted surface. React never re-renders for camera movement.
+`GameView` evaluates `select` and `cut` on the RN runtime at each commit, validates and copies the selected camera, then publishes the accepted frame and camera endpoints together in one UI task. Display callbacks interpolate with the renderer's alpha clock. The pointer adapter reads that same presented camera from the mounted surface. React updates once for initial camera readiness, never for each camera movement.
+
+Before the first valid camera reaches UI, the renderer stays unmounted and new pointer begins are rejected. A rejected begin cannot become a drag later; the user must begin a new touch after readiness. Replacing the session or presentation creates a separate camera value so the new renderer cannot inherit the old session's transform.
 
 ## Cuts and interpolation
 
-Center and zoom interpolate linearly; rotation takes the shortest arc. The presented `CameraCut2D` carries a monotonic `cutId`, and a new id snaps instead of interpolating. Cuts happen automatically on scene transitions, session replacement, and binding changes, and explicitly through the optional `cut` predicate for teleports and respawns. Pausing freezes the presented camera; resuming never interpolates through background time.
+Center and zoom interpolate linearly; rotation takes the shortest arc. The presented `CameraCut2D` carries a `cutId` that increases across presentation replacements within a mounted `GameView`, and a new id snaps instead of interpolating. Cuts happen automatically on scene transitions, session replacement, and binding changes, and explicitly through the optional `cut` predicate for teleports and respawns. Pausing freezes interpolation; resuming never interpolates through background time. A valid scene cut still publishes while paused. Replacing the camera definition immediately reselects the latest attempted frame without restarting the session or waiting for another tick.
+
+## Failed selection and recovery
+
+If `select`, `cut`, or validation fails, the last valid frame, interpolation fraction, and camera remain visible together. The simulation continues unless your application pauses it. The next valid commit snaps to the latest frame and camera; it does not interpolate across the failed interval. If there has never been a valid camera, the renderer remains unmounted.
+
+Use the optional reporter to observe a failure:
+
+```ts
+import { defineGameCamera2D, type GameCameraErrorInfo } from 'rn-gamekit/react';
+
+const reportCameraError = ({ phase, error, scene }: GameCameraErrorInfo) => {
+  console.error('Camera selection failed', { phase, error, scene });
+};
+
+const camera = defineGameCamera2D({
+  select: (frame: GameFrame) => frame.current.camera,
+  onError: reportCameraError,
+});
+```
+
+Here `GameFrame` is your game's commit-frame type. `phase` is `select`, `cut`, or `validate`; `error` preserves the original thrown value as `unknown`. The reporter runs on RN at most once per uninterrupted failure episode, even if subsequent errors have different messages. A successful commit resets reporting. Exceptions thrown by the reporter are contained. Omitting it keeps the same fallback silently.
 
 ## Behavior helpers
 
@@ -67,10 +90,12 @@ const clamped = clampCameraBounds2D(followed, WORLD_BOUNDS, LOGICAL_VIEW);
 const shaken = sampleCameraShake2D(clamped, { seed: 7, elapsedSeconds: t, durationSeconds: 0.3, amplitude: 4 });
 ```
 
-`followCamera2D` supports direct follow, an axis-aligned dead zone, per-axis follow, and a damping half-life. `clampCameraBounds2D` keeps the visible region inside a world bound (conservative for rotated views, centering axes where the world is smaller than the view). `sampleCameraShake2D` is deterministic from its seed and returns the unmodified base camera at its duration — and because the shake lives in the presented camera, pointer inversion stays aligned with what the player sees.
+`followCamera2D` supports direct follow, an axis-aligned dead zone, per-axis follow, and a damping half-life. `clampCameraBounds2D` keeps the visible region inside a world bound (conservative for rotated views, centering axes where the world is smaller than the view). `sampleCameraShake2D` is deterministic from its seed. Its offset magnitude is at most `amplitude * (1 - elapsedSeconds / durationSeconds)` during the effect, and it returns the unmodified base camera at its duration. Because the shake lives in the presented camera, pointer inversion stays aligned with what the player sees.
 
 ## Layers, parallax, and culling
 
 `GameLayer2D` renders ordered layers with per-axis parallax; the [Render layers](../guides/render-layers) guide covers the policy. Visibility is presentation-only: `getCameraVisibleBounds2D`, `intersectsCameraView2D`, and `filterCameraVisible2D` compute what the camera sees, and `SpriteBatch` can hide off-screen slots without touching the simulation. Off-screen entities keep moving, colliding, and re-entering view.
+
+Passing `GameView`'s primary camera to `SpriteBatch.cull` does not account for a surrounding `GameLayer2D`'s parallax. In non-default parallax layers, omit `cull` unless you supply a camera matching that layer's effective transform.
 
 See [Add a camera to a game](../guides/add-a-camera) for the hands-on path, and the [Camera Lab](https://github.com/OrekuD/react-native-gamekit/tree/main/apps/playground/src/screens/camera-lab) for follow, zoom, rotation, cuts, shake, bounds, and culling on one screen.

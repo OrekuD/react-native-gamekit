@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { before, describe, it, mock } from 'node:test';
-import { createElement, StrictMode } from 'react';
+import { createElement, StrictMode, useState } from 'react';
 import { act, create } from 'react-test-renderer';
 
 type HostProps = Record<string, unknown> & { readonly children?: unknown };
@@ -55,7 +55,10 @@ mock.module('@shopify/react-native-skia', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
-    useSharedValue: (initial: unknown) => ({ value: initial }),
+    makeMutable: (initial: unknown) => ({ value: initial }),
+    useSharedValue: (initial: unknown) => useState(() => ({
+      value: typeof initial === 'function' ? (initial as () => unknown)() : initial,
+    }))[0],
     useDerivedValue: (fn: () => unknown) => ({ value: fn() }),
     useAnimatedReaction: (prepare: () => unknown, react: (value: unknown) => void) => react(prepare()),
     useFrameCallback: () => {},
@@ -67,7 +70,8 @@ mock.module('react-native-reanimated', {
 });
 mock.module('react-native-worklets', {
   namedExports: {
-    scheduleOnRN: () => {},
+    scheduleOnUI: (callback: (...args: never[]) => void, ...args: never[]) => callback(...args),
+    scheduleOnRN: (callback: (...args: never[]) => void, ...args: never[]) => callback(...args),
   },
 });
 mock.module('react-native-gesture-handler', {
@@ -302,7 +306,7 @@ describe('presented camera binding (T12.3)', () => {
     assert.equal((third.presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'hard cut snaps');
   });
 
-  it('treats definition replacement as ONE pending cut owned by the NEW binding (T12-F3, T12-RF5)', () => {
+  it('reselects the latest frame with one replacement cut before later commits interpolate', () => {
     // Definition B is OBSERVABLY different: a different selection source
     // and cut behavior, so accidentally committing through A cannot pass.
     const definitionA = { select: (f: Frame) => f.current.camera };
@@ -320,12 +324,13 @@ describe('presented camera binding (T12.3)', () => {
     act(() => binding().present(1));
     assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 0);
 
-    // Replacement: the first B commit (through the CURRENT binding) snaps,
-    // and B's selector transform is visible: 100 + 1000.
+    // Replacement immediately reselects the latest frame, even without a
+    // new simulation commit. That consumes the one replacement cut.
     rerender(definitionB);
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 1000);
     act(() => binding().commit(frame('play', cameraB)));
     act(() => binding().present(0.25));
-    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 1100, 'first B commit snaps through the new binding');
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 1025, 'the next commit interpolates from the replacement cut');
 
     // ...and later B commits interpolate normally between B's own outputs.
     const cameraC = createCamera2D({ center: { x: 200, y: 0 } });
@@ -344,12 +349,16 @@ describe('presented camera binding (T12.3)', () => {
     const cameraB = createCamera2D({ center: { x: 100, y: 0 } });
     act(() => binding().commit(frame('play', cameraA)));
     act(() => binding().present(1));
+    const before = (presented() as { cutId: number }).cutId;
 
     rerender(definitionB);
-    // One cut: the first B commit snaps, the second interpolates.
+    const replacementCut = (presented() as { cutId: number }).cutId;
+    assert.equal(replacementCut, before + 1, 'replacement consumes exactly one cut');
+    // Subsequent commits interpolate; Strict Mode does not repeat the cut.
     act(() => binding().commit(frame('play', cameraB)));
     act(() => binding().present(0.5));
-    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 100, 'the single replacement cut snaps');
+    assert.equal((presented() as { camera: { center: { x: number } } }).camera.center.x, 50);
+    assert.equal((presented() as { cutId: number }).cutId, replacementCut);
     const cameraC = createCamera2D({ center: { x: 200, y: 0 } });
     act(() => binding().commit(frame('play', cameraC)));
     act(() => binding().present(0.5));

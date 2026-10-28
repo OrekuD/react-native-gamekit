@@ -46,6 +46,7 @@ mock.module('@shopify/react-native-skia', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
+    makeMutable: (initial: unknown) => ({ value: initial }),
     // Stable per hook instance: fresh objects every render would retrigger
     // every effect keyed on a shared value and corrupt the lifecycle under
     // observation (notably the bind-once presentation effect).
@@ -64,7 +65,10 @@ mock.module('react-native-reanimated', {
   },
 });
 mock.module('react-native-worklets', {
-  namedExports: { scheduleOnRN: () => {} },
+  namedExports: {
+    scheduleOnUI: (callback: (...args: never[]) => void, ...args: never[]) => callback(...args),
+    scheduleOnRN: (callback: (...args: never[]) => void, ...args: never[]) => callback(...args),
+  },
 });
 
 // eslint-disable-next-line @typescript-eslint/consistent-type-imports

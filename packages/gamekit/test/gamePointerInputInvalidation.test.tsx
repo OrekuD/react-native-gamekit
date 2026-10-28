@@ -19,6 +19,7 @@ import { act, create } from 'react-test-renderer';
 import type { createGameSessionWithDriver } from '../src/core/session/createGameSession';
 import type { ManualFrameDriver } from './helpers/ManualFrameDriver';
 import type { GameDefinition } from '../src/definition/types';
+import type { CameraCut2D } from '../src/camera2d/types';
 
 function host(tag: string) {
   const Component = ({ children, ...props }: Record<string, unknown>): unknown =>
@@ -63,6 +64,7 @@ mock.module('react-native-gesture-handler', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
+    makeMutable: (initial: unknown) => ({ value: initial }),
     // Stable per hook instance (via a real ref): fresh objects every render
     // would retrigger every effect keyed on a shared value and corrupt the
     // very lifecycle the tests observe.
@@ -91,6 +93,7 @@ mock.module('react-native-reanimated', {
 });
 mock.module('react-native-worklets', {
   namedExports: {
+    scheduleOnUI: (fn: (...args: never[]) => void, ...args: never[]) => fn(...args),
     scheduleOnRN: (fn: (...args: never[]) => void, ...args: never[]) => {
       scheduled.push(() => fn(...args));
     },
@@ -149,13 +152,14 @@ function pointerElement(
   binding = viewportBinding(),
   strict = false,
   sampleListener: ((sample: unknown) => void) | null = (sample) => { pointerSamples.push(sample); },
+  presented?: { value: CameraCut2D | undefined },
 ) {
   const element = createElement(
     GameViewportContext.Provider as never,
     { value: { binding, viewport: binding.viewport } },
     createElement(
       GameCameraContext.Provider as never,
-      { value: { presented: undefined } },
+      { value: { presented } },
       createElement(GamePointerInput as never, {
         game: session,
         action: 'primary',
@@ -286,6 +290,40 @@ function resetInstrumentation(): void {
 }
 
 describe('GS-INPUT-04 pointer adapter invalidation', () => {
+  it('waits for a declared camera before accepting a fresh down', async () => {
+    resetInstrumentation();
+    const driver = new ManualFrameDriverClass();
+    const session = createSessionWithDriver(game, { frameDriver: driver, fixedStepMs: 10 }) as unknown as Session;
+    session.start();
+    const camera: { value: CameraCut2D | undefined } = { value: undefined };
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(pointerElement(session, viewportBinding(), false, undefined, camera));
+    });
+    try {
+      down(1);
+      assert.equal(scheduled.length, 0, 'an unavailable camera cannot schedule a viewport-only begin');
+      await flushScheduled();
+      assert.equal(activeNow(session, driver, 0), false);
+      assert.equal(pointerSamples.length, 0);
+
+      camera.value = {
+        camera: { center: { x: 500, y: 700 }, zoom: 2, rotationRadians: 0 },
+        cutId: 1,
+      };
+      move(1);
+      await flushScheduled();
+      assert.equal(pointerSamples.length, 0, 'readiness cannot revive the rejected down');
+      down(2, 160, 240);
+      await flushScheduled();
+      assert.equal(activeNow(session, driver, 32), true);
+      assert.deepEqual((pointerSamples[0] as { world: unknown }).world, { x: 500, y: 700 });
+    } finally {
+      await act(async () => { renderer.unmount(); });
+      session.dispose();
+    }
+  });
+
   it('updates and removes RN sample instrumentation without retiring a live drag', async () => {
     resetInstrumentation();
     const clock = mock.method(Date, 'now', () => 1000);

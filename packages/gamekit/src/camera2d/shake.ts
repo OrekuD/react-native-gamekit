@@ -76,13 +76,19 @@ export function sampleCameraShake2D(
   }
   const envelope = 1 - elapsedSeconds / durationSeconds;
   const offset = {
-    x: Math.sin(elapsedSeconds * frequency + phaseOf(seed, 1)) * amplitude * envelope,
-    y: Math.sin(elapsedSeconds * frequency + phaseOf(seed, 2)) * amplitude * envelope,
+    x: Math.sin(elapsedSeconds * frequency + phaseOf(seed, 1)),
+    y: Math.sin(elapsedSeconds * frequency + phaseOf(seed, 2)),
   };
+  // Amplitude bounds the vector magnitude, not each axis independently.
+  // Clamp only excess length, preserving the seeded direction and every
+  // sample already inside the envelope. Normalize before scaling so large
+  // finite amplitudes do not overflow the length calculation.
+  const magnitude = Math.hypot(offset.x, offset.y);
+  const scale = magnitude > 1 ? 1 / magnitude : 1;
   return Object.freeze({
     center: Object.freeze({
-      x: base.center.x + offset.x,
-      y: base.center.y + offset.y,
+      x: base.center.x + offset.x * scale * amplitude * envelope,
+      y: base.center.y + offset.y * scale * amplitude * envelope,
     }),
     zoom: base.zoom,
     rotationRadians: base.rotationRadians,
