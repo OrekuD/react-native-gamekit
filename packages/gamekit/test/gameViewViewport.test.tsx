@@ -45,6 +45,7 @@ mock.module('react-native-gesture-handler', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
+    makeMutable: (initial: unknown) => ({ value: initial }),
     useSharedValue: (initial: unknown) => useState(() => {
       let value = typeof initial === 'function' ? (initial as () => unknown)() : initial;
       const counter = { reads: 0, writes: 0 };
@@ -62,6 +63,7 @@ mock.module('react-native-reanimated', {
 });
 mock.module('react-native-worklets', {
   namedExports: {
+    scheduleOnUI: (callback: (...args: never[]) => void, ...args: never[]) => callback(...args),
     scheduleOnRN: (callback: (...args: never[]) => void, ...args: never[]) => {
       scheduled.push(() => callback(...args));
     },
