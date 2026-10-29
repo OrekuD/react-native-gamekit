@@ -41,8 +41,9 @@ export function logicalViewCenter2D(logicalView: Aabb2D): Point2D {
 }
 
 /**
- * Create a camera from optional partial values; missing fields default to
- * the identity camera (`center` origin, `zoom` 1, no rotation).
+ * Create a camera from optional partial values; missing/undefined fields
+ * default to center at the origin, zoom 1, and no rotation. The camera
+ * matching a viewport-only transform instead centers on its logical view.
  */
 export function createCamera2D(value?: Partial<Camera2D>): Camera2D {
   if (value !== undefined && (typeof value !== 'object' || value === null || Array.isArray(value))) {
@@ -52,11 +53,10 @@ export function createCamera2D(value?: Partial<Camera2D>): Camera2D {
       `expected a camera record, got ${value === null ? 'null' : typeof value}`,
     );
   }
-  const camera: Camera2D = {
-    center: value?.center ?? { x: 0, y: 0 },
-    zoom: value?.zoom ?? 1,
-    rotationRadians: value?.rotationRadians ?? 0,
-  };
+  // Only missing/undefined fields receive defaults. Explicit null values
+  // remain invalid and reach the same structured validation as other inputs.
+  const { center = { x: 0, y: 0 }, zoom = 1, rotationRadians = 0 } = value ?? {};
+  const camera: Camera2D = { center, zoom, rotationRadians };
   assertValidCamera2D(camera);
   return Object.freeze({
     center: Object.freeze({ x: camera.center.x, y: camera.center.y }),

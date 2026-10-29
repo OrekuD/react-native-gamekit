@@ -11,8 +11,8 @@ import type { ResolvedViewport2D } from '../../viewport2d/types';
  * Conservative visible bounds for batch culling (T12.6).
  *
  * Worklet-safe inline version of the headless `paddedCameraBounds2D` —
- * the presented camera is already validated at the public boundary, so the
- * per-frame path allocates nothing and validates nothing.
+ * the presented camera is already validated at the public boundary. This
+ * path creates constant-size extent/bounds records without revalidating it.
  */
 export function batchVisibleBounds2D(
   camera: CameraCut2D | undefined,

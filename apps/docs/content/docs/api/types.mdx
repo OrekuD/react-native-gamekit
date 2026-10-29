@@ -63,9 +63,10 @@ The geometry primitives (`Point2D`, `Vector2D`, `Aabb2D`, `Circle2D`, `Segment2D
 
 | Type | Purpose |
 | --- | --- |
-| `Camera2D` | Headless camera state: center, zoom, rotation, bounds. |
+| `Camera2D` | Headless camera state: center, zoom, and rotation. Bounds are supplied separately to helpers. |
 | `CameraCut2D` | The presented camera snapshot shared with renderers and pointer input. |
 | `CameraShakeOptions2D`, `FollowCamera2DOptions2D`, `CameraViewShape2D` | Shake configuration, follow tuning, and the visible-view shape. |
+| `GameCamera2DDefinition`, `GameCameraErrorInfo` | Camera selection configuration and failure context, exported from `rn-gamekit/react`. |
 
 See [Camera2D](../engine-systems/camera2d).
 

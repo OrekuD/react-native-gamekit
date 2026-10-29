@@ -30,7 +30,7 @@ Related helpers: `resolveSpriteFrameRect`, `spriteFrameNameForClip`, `viewportTr
 
 | Export | Purpose |
 | --- | --- |
-| `defineGameCamera2D(select)` | Declares the `GameView`-owned presented camera; the selection runs on commits as a worklet. Passed to `GameView` through its `camera2D` prop. |
+| `defineGameCamera2D({ select, cut?, onError? })` | Declares the `GameView`-owned presented camera. Selection and error reporting run on RN at commit boundaries; interpolation runs on UI. A replacement definition reselects the latest frame, including while paused. Passed through `camera2D`. |
 | `GameLayer2D` | An ordered parallax layer inside `GameWorld2D`. JSX order is draw order; parallax scales only the camera center contribution. |
 | `cameraViewportTransform2D` / `layerParallaxTransform2D` | The composed camera + viewport transform element lists used by the groups. |
 

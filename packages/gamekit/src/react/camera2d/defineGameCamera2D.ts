@@ -22,8 +22,9 @@ export interface GameCameraErrorInfo {
 /** The static camera definition supplied to `GameView`. */
 export interface GameCamera2DDefinition<TFrame> {
   /**
-   * Read the authored camera from a committed frame. Runs once per commit
-   * on the JS runtime; returning the same value keeps the camera static.
+   * Read the authored camera from a committed frame on RN, once per commit
+   * and once when a replacement definition reselects the latest frame.
+   * Returning the same camera keeps the view static.
    */
   readonly select: (frame: TFrame) => Camera2D;
   /**
@@ -35,9 +36,12 @@ export interface GameCamera2DDefinition<TFrame> {
   readonly cut?: (frame: TFrame) => boolean;
   /**
    * Optional failure reporter (GS-CAMERA-02). Invoked at most once per
-   * failure episode with the failing phase and scene; a successful commit
-   * resets deduplication. Failures without a reporter keep the last valid
-   * presentation silently.
+   * failure episode with the failing phase, original thrown value, and
+   * scene. A successful commit resets deduplication. Failure holds the last
+   * valid frame, interpolation fraction, and camera; recovery snaps to the
+   * latest valid frame. Simulation keeps running unless the caller pauses.
+   * Without a reporter, the same fallback is silent. Reporter exceptions
+   * cannot interrupt that fallback.
    */
   readonly onError?: (info: GameCameraErrorInfo) => void;
 }

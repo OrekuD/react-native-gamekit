@@ -56,6 +56,7 @@ mock.module('@shopify/react-native-skia', {
 });
 mock.module('react-native-reanimated', {
   namedExports: {
+    makeMutable: (initial: unknown) => ({ value: initial }),
     useSharedValue: (initial: unknown) => useState(() => {
       let value = typeof initial === 'function' ? (initial as () => unknown)() : initial;
       return {
@@ -75,6 +76,7 @@ mock.module('react-native-reanimated', {
 });
 mock.module('react-native-worklets', {
   namedExports: {
+    scheduleOnUI: (callback: (...args: never[]) => void, ...args: never[]) => callback(...args),
     // The RN crossing itself is mocked away; the callback still runs so
     // observer delivery is observable headlessly.
     scheduleOnRN: (callback: (...args: never[]) => void, ...args: never[]) => {

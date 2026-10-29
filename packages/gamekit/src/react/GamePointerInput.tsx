@@ -278,6 +278,12 @@ export function GamePointerInput<TScenes extends SceneMap, TInput extends InputM
       if (!canBeginPrimaryPointer(event.numberOfTouches)) {
         return;
       }
+      // A declared camera must publish its first valid cut before input can
+      // start. An absent definition still uses the existing viewport path.
+      if (cameraShared !== undefined && cameraShared.value === undefined) {
+        GestureStateManager.fail(event.handlerTag);
+        return;
+      }
       // UI-side containment mirror: an invalid layout or `fit` letterbox
       // begin fails the gesture before it activates. JS re-validates.
       if (!isBeginAllowed(viewportShared.value, touch.x, touch.y)) {

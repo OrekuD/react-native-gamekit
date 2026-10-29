@@ -63,6 +63,22 @@ describe('camera2d values', () => {
     assert.deepEqual(camera, { center: { x: 10, y: -20 }, zoom: 2, rotationRadians: 0 });
   });
 
+  it('keeps defaults for absent or explicitly undefined fields', () => {
+    const identity = { center: { x: 0, y: 0 }, zoom: 1, rotationRadians: 0 };
+    assert.deepEqual(createCamera2D(undefined), identity);
+    assert.deepEqual(createCamera2D({}), identity);
+    assert.deepEqual(createCamera2D({ center: undefined, zoom: undefined, rotationRadians: undefined } as never), identity);
+    assert.deepEqual(createCamera2D({ center: undefined, zoom: 2, rotationRadians: undefined } as never), {
+      center: { x: 0, y: 0 }, zoom: 2, rotationRadians: 0,
+    });
+  });
+
+  for (const field of ['center', 'zoom', 'rotationRadians'] as const) {
+    it(`rejects an explicit null ${field} instead of defaulting it`, () => {
+      rejects(() => createCamera2D({ [field]: null } as never), `camera.${field}`);
+    });
+  }
+
   it('rejects non-finite centers, zoom, and rotation with structured fields', () => {
     rejects(() => createCamera2D({ center: { x: NaN, y: 0 } }), 'camera.center.x');
     rejects(() => createCamera2D({ center: { x: 0, y: Infinity } }), 'camera.center.y');
