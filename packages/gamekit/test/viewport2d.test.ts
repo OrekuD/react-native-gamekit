@@ -237,6 +237,62 @@ describe('resolveViewport2D extend-world mode', () => {
   });
 });
 
+describe('resolveViewport2D constrained axes', () => {
+  for (const mode of ['fit', 'fill', 'extend-world'] as const) {
+    it(`preserves exact horizontal surface edges in ${mode} mode`, () => {
+      const viewport = resolveViewport2D(
+        { logicalSize: { width: 360, height: 180 }, mode },
+        { width: 393, height: mode === 'fill' ? 100 : 852 },
+      )!;
+
+      // 360 * (393 / 360) rounds below 393. The constrained axis still
+      // fills the measured surface; rounding must not create a letterbox.
+      assert.equal(viewport.offsetX, 0);
+      assert.equal(viewport.contentBounds.x, 0);
+      assert.equal(viewport.contentBounds.width, 393);
+      assert.equal(viewport.visibleLogicalBounds.x, 0);
+      assert.equal(viewport.visibleLogicalBounds.width, 360);
+      const y = viewport.surfaceSize.height / 2;
+      assert.equal(containsSurfacePoint(viewport, { x: 0, y }), true);
+      assert.equal(containsSurfacePoint(viewport, { x: 393, y }), true);
+      assert.equal(containsSurfacePoint(viewport, { x: -1e-8, y }), false);
+      assert.equal(containsSurfacePoint(viewport, { x: 393 + 1e-8, y }), false);
+    });
+
+    it(`preserves exact vertical surface edges in ${mode} mode`, () => {
+      const viewport = resolveViewport2D(
+        { logicalSize: { width: 180, height: 360 }, mode },
+        { width: mode === 'fill' ? 100 : 852, height: 393 },
+      )!;
+
+      assert.equal(viewport.offsetY, 0);
+      assert.equal(viewport.contentBounds.y, 0);
+      assert.equal(viewport.contentBounds.height, 393);
+      assert.equal(viewport.visibleLogicalBounds.y, 0);
+      assert.equal(viewport.visibleLogicalBounds.height, 360);
+      const x = viewport.surfaceSize.width / 2;
+      assert.equal(containsSurfacePoint(viewport, { x, y: 0 }), true);
+      assert.equal(containsSurfacePoint(viewport, { x, y: 393 }), true);
+      assert.equal(containsSurfacePoint(viewport, { x, y: -1e-8 }), false);
+      assert.equal(containsSurfacePoint(viewport, { x, y: 393 + 1e-8 }), false);
+    });
+
+    it(`preserves both axes for matching fractional surface sizes in ${mode} mode`, () => {
+      const viewport = resolveViewport2D(
+        { logicalSize: { width: 360, height: 180 }, mode },
+        { width: 393, height: 196.5 },
+      )!;
+
+      assert.equal(viewport.offsetX, 0);
+      assert.equal(viewport.offsetY, 0);
+      assert.deepEqual(viewport.contentBounds, { x: 0, y: 0, width: 393, height: 196.5 });
+      assert.deepEqual(viewport.visibleLogicalBounds, { x: 0, y: 0, width: 360, height: 180 });
+      assert.equal(containsSurfacePoint(viewport, { x: 0, y: 0 }), true);
+      assert.equal(containsSurfacePoint(viewport, { x: 393, y: 196.5 }), true);
+    });
+  }
+});
+
 describe('Viewport2D coordinate conversion', () => {
   it('round-trips every surface in every mode', () => {
     for (const surface of SURFACES) {
@@ -377,5 +433,24 @@ describe('resolveViewport2D mode validation (feedback)', () => {
         ),
       { name: 'RangeError' },
     );
+  });
+
+  it('rejects an unknown authored mode even while the surface is unusable', () => {
+    for (const surface of [
+      { width: 0, height: 0 },
+      { width: 393, height: 0 },
+      { width: 0, height: 852 },
+      { width: -393, height: 852 },
+      { width: 393, height: -852 },
+      { width: Number.NaN, height: 852 },
+      { width: 393, height: Number.NaN },
+      { width: Number.POSITIVE_INFINITY, height: 852 },
+      { width: 393, height: Number.POSITIVE_INFINITY },
+    ]) {
+      assert.throws(
+        () => resolveViewport2D({ ...authored, mode: 'zoom' as 'fit' }, surface),
+        { name: 'RangeError', message: 'Unknown viewport mode: zoom' },
+      );
+    }
   });
 });

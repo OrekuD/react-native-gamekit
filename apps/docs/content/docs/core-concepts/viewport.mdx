@@ -9,7 +9,7 @@ description: The three viewport modes, the headless Viewport2D math, and the coo
 ## One coordinate authority
 
 React Native layout points are the only surface unit. Physical pixels never
-enter the viewport math. The authored logical world and the mounted surface
+enter the viewport math. The authored logical view and the mounted surface
 are connected by one resolved transform that drawing and hit testing share —
 `GameView` and `GamePointerInput` consume the same resolved viewport for a
 layout revision, so the renderer and your finger agree after any resize.
@@ -50,10 +50,10 @@ dependencies — they run in Node tests directly.
 import { resolveViewport2D, surfaceToWorld } from 'rn-gamekit';
 
 const viewport = resolveViewport2D(game.viewport, { width: 390, height: 844 });
-// undefined until the surface has positive size on both axes
+// undefined until both surface dimensions are finite and positive
 
 if (viewport !== undefined) {
-  const world = surfaceToWorld(viewport, { x: 195, y: 400 });
+  const logical = surfaceToWorld(viewport, { x: 195, y: 400 });
 }
 ```
 
@@ -66,24 +66,62 @@ A resolved viewport is immutable plain data:
 - `scale`, `offsetX`, `offsetY` — the linear transform
   `surface = world * scale + offset`.
 
-Invalid authored sizes throw a `RangeError` naming the invalid dimension. A
-zero-sized layout is normal before the first layout pass and resolves to
-`undefined`. Round trips are stable within a documented floating-point
-tolerance. Conversion stays mathematical everywhere — `containsSurfacePoint`
-is the operation that decides whether a gesture may begin, which is how
-letterbox space rejects input in `fit` mode.
+Invalid authored sizes and unknown modes throw a `RangeError`, including
+before the surface has been measured. A zero-sized layout is normal before
+the first layout pass. Zero, negative, or non-finite surface dimensions
+resolve to `undefined` for a valid configuration.
+
+Conversions trust the resolved viewport and caller-supplied points. They do
+not validate or clamp every coordinate; ordinary floating-point rounding
+applies. The tests cover phone, tablet, and split-view dimensions with a
+`1e-6` round-trip tolerance. This is not a guarantee for arbitrary finite
+JavaScript numbers: extreme dimensions or points can overflow or underflow.
+
+Conversion stays mathematical outside the visible area.
+`containsSurfacePoint` decides whether a gesture may begin; it rejects
+letterbox space in `fit` mode and includes the content edges. On the axis
+that determines the scale, those edges are exactly zero and the measured
+surface extent, so rounding cannot exclude an edge touch.
+
+### Logical coordinates and cameras
+
+Despite their names, `surfaceToWorld(viewport, point)` and
+`worldToSurface(viewport, point)` apply only the viewport transform. Logical
+and world coordinates coincide in games without a camera. With a camera,
+use the existing composed helpers with the camera that was presented.
+Here `sampledCut` is the optional `CameraCut2D` captured with the input event;
+its `.camera` field contains the `Camera2D` these helpers accept:
+
+```ts
+import { surfaceToWorld2D, worldToSurface2D } from 'rn-gamekit/camera2d';
+
+if (sampledCut !== undefined) {
+  const world = surfaceToWorld2D(surfacePoint, viewport, sampledCut.camera);
+  const surface = worldToSurface2D(world, viewport, sampledCut.camera);
+}
+```
+
+`GamePointerInput` already uses the event-time presented camera. See
+[Camera coordinates](../guides/camera-coordinates) for the full conversion
+order; applications should not calculate a separate input transform.
 
 ## Resizing and rotation
 
 - A resize may cause a React layout update; it must never cause a simulation
   update, scene transition, session recreation, or input jump.
+- A changed surface measurement cancels the active pointer stream and
+  requires a fresh down. Repeated identical measurements do not invalidate
+  input or republish the viewport to the UI runtime.
 - If resizing temporarily produces an invalid surface, the active pointer is
   cancelled and drawing is suspended until a valid viewport is available.
+- Replacing the game with a different authored viewport reuses the measured
+  surface size; it does not depend on another native layout event.
 - Safe-area layout belongs to the React overlay and never silently modifies
   the logical world or its transform.
 
 ## Future work
 
-Adaptive breakpoint layouts, cameras, scrolling worlds, and parallax remain
-future work; the surface/world mapping owned by `Viewport2D` is the only
-camera-like transform today.
+Breakpoint-driven adaptive layouts remain future work. Camera movement,
+zoom, rotation, and parallax are implemented separately by
+[Camera2D](../guides/camera-coordinates); they do not change the viewport's
+ownership of surface layout.
