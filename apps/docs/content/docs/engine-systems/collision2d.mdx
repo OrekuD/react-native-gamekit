@@ -20,6 +20,8 @@ const delta: Vector2D = { x: 90, y: 70 };
 
 `Aabb2D.x/y` are the top-left corner (Gamekit's positive-down coordinates). Width, height, and radius must be finite and nonnegative; malformed values throw a `GeometryError` with a stable code (`GEOMETRY_INVALID_SIZE`, `GEOMETRY_INVALID_NUMBER`, ...) and the offending field.
 
+See [Geometry](./geometry) for the immutable shape helpers and their numeric limits.
+
 ## Static contact
 
 One function per shape pair, with a consistent result:

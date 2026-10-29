@@ -1,0 +1,68 @@
+---
+title: Geometry
+description: Immutable 2D points, vectors, and bounds, with explicit validation and numeric limits.
+---
+
+Geometry supplies the points, directions, and bounds used by game rules, cameras, and collision queries. Import it from `rn-gamekit/geometry`; it has no React or native dependencies. The same exports are also available from `rn-gamekit`.
+
+## Values and helpers
+
+`Point2D` and `Vector2D` contain `x` and `y`. `Aabb2D` contains a top-left `x`/`y` and nonnegative `width`/`height`. `Circle2D` contains a center `x`/`y` and nonnegative `radius`; `Segment2D` contains `start` and `end` points. Use the coordinate space appropriate to your operation; these types do not encode or convert spaces.
+
+```ts
+import {
+  expandAabb2D,
+  normalizeVector2D,
+  scaleVector2D,
+  translateAabb2D,
+  type Aabb2D,
+} from 'rn-gamekit/geometry';
+
+const body: Aabb2D = { x: 20, y: 30, width: 16, height: 24 };
+const direction = normalizeVector2D({ x: 3, y: 4 }); // { x: 0.6, y: 0.8 }
+const moved = translateAabb2D(body, scaleVector2D(direction, 5));
+const hitArea = expandAabb2D(moved, { x: 4, y: 2 });
+```
+
+| Operation | Result |
+| --- | --- |
+| `aabbCenter2D(box)` | Center point of a box. |
+| `translateAabb2D(box, delta)` | Box moved by a vector, retaining its size. |
+| `expandAabb2D(box, inset)` | Margin on each side; a number applies to both axes, a vector configures each axis. |
+| `unionAabb2D(first, second)` | Smallest axis-aligned box containing both boxes. |
+| `addVector2D`, `subtractVector2D`, `scaleVector2D` | Component-wise arithmetic. |
+| `lengthVector2D`, `distancePoint2D` | Euclidean magnitude or distance. |
+| `normalizeVector2D(vector)` | Unit direction, or `{ x: 0, y: 0 }` for a zero vector. |
+
+Helpers leave their inputs untouched. Object results are fresh frozen records, including zero normalization. A negative expansion inset shrinks a box; shrinking to zero is valid, while shrinking past zero throws. Zero-size boxes and zero-radius circles are valid values. Collision segment queries require distinct endpoints.
+
+## Validation and errors
+
+Operations require finite numeric fields and validate the shapes they consume. They do not coerce strings, boxed numbers, arrays, or functions into geometry values. Plain records with missing fields fail at the missing field. Extra fields on valid records are ignored.
+
+Catch `GeometryError` and inspect its stable `code` and `field`. Message text is diagnostic, not a contract to parse:
+
+```ts
+import { expandAabb2D, GeometryError } from 'rn-gamekit/geometry';
+
+try {
+  expandAabb2D({ x: 0, y: 0, width: 4, height: 4 }, -3);
+} catch (error) {
+  if (error instanceof GeometryError) {
+    // code: GEOMETRY_INVALID_SIZE; field: expanded.width
+    console.error(error.code, error.field);
+  } else {
+    throw error;
+  }
+}
+```
+
+Malformed untyped inputs produce `GEOMETRY_INVALID_SHAPE` for the outer shape, `GEOMETRY_INVALID_NUMBER` for a nonnumeric/nonfinite component, or `GEOMETRY_INVALID_SIZE` for a negative size. For example, an invalid inset record is reported at `inset`, a missing y component at `inset.y`, and a nonfinite scalar inset at `inset.x`. Error formatting does not invoke custom object conversion methods. Supply data records: exceptions from property getters or proxy traps are not converted into `GeometryError`.
+
+## Numeric limits
+
+Inputs use JavaScript `number` arithmetic. Input validation is not a promise that arbitrary finite operands produce finite results: addition, subtraction, scaling, bounds arithmetic, length, and distance can overflow, underflow, or lose precision at extreme magnitudes. Keep both intermediate and final values within the representable range and choose world units with sufficient precision. General arithmetic helpers do not check their results. `expandAabb2D` does validate its result because shrinking can create an invalid box; nonfinite expansion results also throw.
+
+`normalizeVector2D` handles every finite component magnitude, including overflowing lengths and subnormal inputs. A nonzero vector returns a finite direction with unit length within floating-point tolerance; components too small relative to the other axis may round to zero. For example, `{ x: Number.MAX_VALUE, y: Number.MAX_VALUE }` normalizes to approximately `{ x: 0.7071, y: 0.7071 }`, even though its unnormalized length is not representable. A zero vector retains the defined zero result.
+
+Geometry helpers are synchronous headless operations. They allocate their returned records and validate public inputs; they are not worklet APIs or an allocation-free per-item rendering path. Use them in scene rules and preparation. See [Collision2D](./collision2d) for contacts and queries, and [Camera2D](./camera2d) for coordinate transforms.
