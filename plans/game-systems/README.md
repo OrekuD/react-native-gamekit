@@ -27,7 +27,7 @@ acceptance procedure.
 
 Implementation follow-up: [Viewport — 2026-10-27](05-viewport-review-2026-10-27.md)
 records the system 05 edge-coordinate and layout-publication fixes, API
-clarifications, and native acceptance procedure. Camera2D (06) is next.
+clarifications, and native acceptance procedure.
 
 | Order | System | Original verdict / main action |
 | --- | --- | --- |
@@ -85,7 +85,12 @@ evidence, and the outstanding native redraw gate.
 System 06 follow-up: [2026-10-28 Camera2D review](06-camera2d-review-2026-10-28.md)
 records coherent frame/camera publication, paused replacement and failure recovery,
 shake and constructor fixes, public API comparisons, and native acceptance still
-required. The next core-system review is **07 — Geometry**.
+required.
+
+System 07 follow-up: [2026-10-29 Geometry review](07-geometry-review-2026-10-29.md)
+records stable normalization, structured boundary errors, numeric policy, and
+API before/after recommendations. The next core-system review is
+**08 — Collision2D**.
 
 ## Validation recorded for this review
 

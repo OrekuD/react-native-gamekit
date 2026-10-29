@@ -5,10 +5,10 @@
  */
 import type { Aabb2D, Point2D, Vector2D } from './types';
 import {
+  assertFiniteNumber,
   assertValidAabb2D,
   assertValidPoint2D,
   assertValidVector2D,
-  GeometryError,
 } from './validation';
 
 /** Center of an AABB. */
@@ -40,10 +40,13 @@ export function translateAabb2D(aabb: Aabb2D, delta: Vector2D): Aabb2D {
  */
 export function expandAabb2D(aabb: Aabb2D, inset: number | Vector2D): Aabb2D {
   assertValidAabb2D(aabb);
+  if (typeof inset === 'number') {
+    assertFiniteNumber(inset, 'inset.x');
+  } else {
+    assertValidVector2D(inset, 'inset');
+  }
   const x = typeof inset === 'number' ? inset : inset.x;
   const y = typeof inset === 'number' ? inset : inset.y;
-  assertFiniteInset(x, 'inset.x');
-  assertFiniteInset(y, 'inset.y');
   const expanded = Object.freeze({
     x: aabb.x - x,
     y: aabb.y - y,
@@ -54,16 +57,6 @@ export function expandAabb2D(aabb: Aabb2D, inset: number | Vector2D): Aabb2D {
   // malformed (negative-size) result.
   assertValidAabb2D(expanded, 'expanded');
   return expanded;
-}
-
-function assertFiniteInset(value: number, field: string): void {
-  if (!Number.isFinite(value)) {
-    throw new GeometryError(
-      'GEOMETRY_INVALID_NUMBER',
-      field,
-      `expected a finite inset, got ${String(value)}`,
-    );
-  }
 }
 
 /** The smallest AABB containing both inputs (bounding union). */
@@ -99,13 +92,7 @@ export function subtractVector2D(first: Vector2D, second: Vector2D): Vector2D {
 /** Scale a vector by a finite scalar. */
 export function scaleVector2D(vector: Vector2D, scalar: number): Vector2D {
   assertValidVector2D(vector);
-  if (!Number.isFinite(scalar)) {
-    throw new GeometryError(
-      'GEOMETRY_INVALID_NUMBER',
-      'scalar',
-      `expected a finite number, got ${String(scalar)}`,
-    );
-  }
+  assertFiniteNumber(scalar, 'scalar');
   return Object.freeze({ x: vector.x * scalar, y: vector.y * scalar });
 }
 
@@ -118,12 +105,24 @@ export function lengthVector2D(vector: Vector2D): number {
 /**
  * Normalize a vector to unit length. The zero vector is returned unchanged
  * (never NaN); callers that need a fallback direction choose it explicitly.
+ * Scaling protects nonzero directions when their length overflows or is
+ * subnormal; ordinary finite lengths retain the direct division path.
  */
 export function normalizeVector2D(vector: Vector2D): Vector2D {
   assertValidVector2D(vector);
   const length = Math.hypot(vector.x, vector.y);
   if (length === 0) {
     return Object.freeze({ x: 0, y: 0 });
+  }
+  if (length === Infinity || length < 2 ** -1022) {
+    // A subnormal length loses relative precision; an overflowing length
+    // cannot be used as a divisor. The scaled vector has a component of
+    // magnitude one, so its length stays between one and Math.SQRT2.
+    const scale = Math.max(Math.abs(vector.x), Math.abs(vector.y));
+    const x = vector.x / scale;
+    const y = vector.y / scale;
+    const scaledLength = Math.hypot(x, y);
+    return Object.freeze({ x: x / scaledLength, y: y / scaledLength });
   }
   return Object.freeze({ x: vector.x / length, y: vector.y / length });
 }

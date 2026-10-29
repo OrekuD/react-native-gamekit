@@ -40,6 +40,19 @@ Everything in this table is a pure function unless noted. Signatures live in the
 | --- | --- |
 | `Viewport2D` module (`rn-gamekit`) | The headless viewport math: resolve modes, scale, offsets, and coordinate conversion. See [Viewport and coordinate spaces](../core-concepts/viewport). |
 
+## Geometry
+
+All geometry helpers are exported from `rn-gamekit/geometry` and the root entry.
+
+| Function | Purpose |
+| --- | --- |
+| `aabbCenter2D`, `translateAabb2D`, `expandAabb2D`, `unionAabb2D` | Centers, movement, margins, and bounding union. Negative margins shrink; invalid resulting sizes throw. |
+| `addVector2D`, `subtractVector2D`, `scaleVector2D` | Immutable vector arithmetic. |
+| `lengthVector2D`, `distancePoint2D` | Euclidean magnitude and distance. |
+| `normalizeVector2D` | Stable unit direction for finite components; zero stays zero. |
+
+See [Geometry](../engine-systems/geometry) for structured errors, immutable results, and numeric limits.
+
 ## Camera2D
 
 | Function | Purpose |

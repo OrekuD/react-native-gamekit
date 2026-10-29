@@ -36,6 +36,7 @@ const TRACKED_MODULES = [
   'src/assets/defineAssets.ts',
   'src/assets/validation.ts',
   'src/geometry/validation.ts',
+  'src/geometry/helpers.ts',
   'src/sprites/sampleSpriteClip.ts',
   'src/sprites/spriteAnimationState.ts',
   'src/react/sprites/spriteTransform.ts',

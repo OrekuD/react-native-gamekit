@@ -26,6 +26,7 @@
     "engine-systems/animation",
     "engine-systems/input",
     "engine-systems/assets",
+    "engine-systems/geometry",
     "engine-systems/collision2d",
     "engine-systems/camera2d",
     "engine-systems/events",

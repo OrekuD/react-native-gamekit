@@ -6,13 +6,14 @@
  * public operation boundaries; helpers never coerce or reorder malformed
  * values into valid shapes.
  *
- * Numeric policy (GS-GEOMETRY-01): validators require the declared
- * structural shape (a null/array/scalar argument fails with
- * GEOMETRY_INVALID_SHAPE, never a TypeError) and finite components within
- * ordinary game-world magnitudes. Derived-value overflow from extreme
- * finite inputs is out of contract: helpers do not re-validate results,
- * and zero-length normalization of an overflowing length stays a zero
- * vector by the existing defined behavior.
+ * Numeric policy (GS-GEOMETRY-01): validators require the declared record
+ * shape and finite numeric components. Malformed plain data fails with a
+ * structured error; diagnostics never invoke object coercion hooks. Errors
+ * thrown by caller-provided getters or proxy traps remain caller errors.
+ * Arithmetic helpers target ordinary game-world magnitudes: derived-value
+ * overflow remains out of contract, except expandAabb2D validates its
+ * result. normalizeVector2D supports every finite input component,
+ * including extremes whose unscaled Euclidean length would overflow.
  */
 import type { Aabb2D, Circle2D, Point2D, Segment2D, Vector2D } from './types';
 
@@ -41,13 +42,21 @@ export class GeometryError extends Error {
   }
 }
 
+/** Describe invalid values without calling object/function coercion hooks. */
+function describeValue(value: unknown): string {
+  if (value !== null && (typeof value === 'object' || typeof value === 'function')) {
+    return typeof value;
+  }
+  return String(value);
+}
+
 /** Assert a finite number (rejects NaN and ±Infinity). */
 export function assertFiniteNumber(value: number, field: string): void {
   if (!Number.isFinite(value)) {
     throw new GeometryError(
       'GEOMETRY_INVALID_NUMBER',
       field,
-      `expected a finite number, got ${String(value)}`,
+      `expected a finite number, got ${describeValue(value)}`,
     );
   }
 }
@@ -70,18 +79,18 @@ export function assertUnsigned32Bits(value: number, field: string): void {
     throw new GeometryError(
       'GEOMETRY_INVALID_BITS',
       field,
-      `expected an unsigned 32-bit integer, got ${String(value)}`,
+      `expected an unsigned 32-bit integer, got ${describeValue(value)}`,
     );
   }
 }
 
-/** Assert a value is a plain record before reading fields (GS-GEOMETRY-01). */
+/** Assert a non-array record shape before reading fields (GS-GEOMETRY-01). */
 function assertRecordShape(value: unknown, name: string): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new GeometryError(
       'GEOMETRY_INVALID_SHAPE',
       name,
-      `expected an object with numeric fields, got ${Array.isArray(value) ? 'an array' : String(value)}`,
+      `expected an object with numeric fields, got ${Array.isArray(value) ? 'an array' : describeValue(value)}`,
     );
   }
 }
