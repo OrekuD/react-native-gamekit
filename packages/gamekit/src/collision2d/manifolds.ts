@@ -23,7 +23,6 @@ import {
   assertValidAabb2D,
   assertValidCircle2D,
 } from '../geometry/validation';
-import { closestPointOnAabb2D } from './intersections';
 
 /** One contact between two shapes, in the first shape's local resolution. */
 export interface CollisionHit2D {
@@ -136,9 +135,12 @@ export function collideCircleAabb2D(circle: Circle2D, aabb: Aabb2D): CollisionHi
   assertValidCircle2D(circle);
   assertValidAabb2D(aabb);
 
-  const closest = closestPointOnAabb2D(circle, aabb);
-  const dx = circle.x - closest.x;
-  const dy = circle.y - closest.y;
+  // Keep the already-validated closest coordinates scalar: a miss needs
+  // no temporary point, and a hit allocates only its public result records.
+  const closestX = Math.max(aabb.x, Math.min(circle.x, aabb.x + aabb.width));
+  const closestY = Math.max(aabb.y, Math.min(circle.y, aabb.y + aabb.height));
+  const dx = circle.x - closestX;
+  const dy = circle.y - closestY;
   const distanceSquared = dx * dx + dy * dy;
   if (distanceSquared > circle.radius * circle.radius) {
     return undefined;
@@ -182,10 +184,6 @@ export function collideCircleAabb2D(circle: Circle2D, aabb: Aabb2D): CollisionHi
   return Object.freeze({
     normal,
     depth: circle.radius - distance,
-    // GS-COLLISION-01: copy-freeze the contact point at the public result
-    // boundary. `closest` is rebuilt per call, but copying keeps the hit
-    // independent of any future helper caching; sweeps reuse this object
-    // through hitFromManifold, so one fix covers every wrapper.
-    point: Object.freeze({ x: closest.x, y: closest.y }),
+    point: Object.freeze({ x: closestX, y: closestY }),
   });
 }

@@ -58,6 +58,31 @@ describe('spatial hash broad phase', () => {
     }
   });
 
+  it('preserves conservative candidates and input order across fractional and negative cells', () => {
+    const fixtures = Array.from({ length: 100 }, (_, position) => ({
+      id: `item-${100 - position}`,
+      bounds: {
+        x: ((position * 17) % 65) - 32,
+        y: ((position * 29) % 65) - 32,
+        width: (position % 9) * 0.5,
+        height: (position % 7) * 0.5,
+      },
+    }));
+    for (const cellSize of [1, 4, 16]) {
+      const index = buildSpatialHash2D({ items: fixtures, cellSize });
+      for (let position = 0; position < 40; position += 1) {
+        const query = { x: (position % 8) * 8 - 32, y: Math.floor(position / 8) * 16 - 32, width: 12.5, height: 0.5 };
+        const candidates = querySpatialHash2D(index, query);
+        const candidateSet = new Set(candidates);
+        assert.deepEqual(candidates, fixtures.filter((item) => candidateSet.has(item.id)).map((item) => item.id));
+        for (const item of fixtures) {
+          if (overlaps(item.bounds, query)) assert.ok(candidateSet.has(item.id), `${item.id} must remain a candidate`);
+        }
+        assert.equal(Object.isFrozen(candidates), true);
+      }
+    }
+  });
+
   it('fails clearly on duplicate ids and invalid cell sizes', () => {
     assert.throws(
       () => buildSpatialHash2D({ items: [items[0]!, { ...items[1]!, id: 'a' }], cellSize: 16 }),

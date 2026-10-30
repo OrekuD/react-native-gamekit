@@ -10,6 +10,11 @@ import type { Point2D, Vector2D } from '../geometry/types';
 import { assertValidPoint2D, assertValidVector2D } from '../geometry/validation';
 import type { CollisionHit2D } from './manifolds';
 import type { WorldCollider2D } from './colliders';
+import {
+  assertOptionalString,
+  assertValidCollisionHit2D,
+  assertValidWorldCollider2D,
+} from './validation';
 
 /** Optional presentation metadata. */
 export interface DebugStyle2D {
@@ -69,6 +74,7 @@ export type DebugPrimitive2D =
 
 /** Project a world collider into a debug primitive, preserving its id. */
 export function projectWorldCollider2D(world: WorldCollider2D): DebugAabb2D | DebugCircle2D {
+  assertValidWorldCollider2D(world);
   const style = world.id === undefined ? {} : { label: world.id };
   if (world.shape === 'aabb') {
     return Object.freeze({
@@ -94,6 +100,7 @@ export function projectHit2D(hit: CollisionHit2D): {
   readonly point: DebugPoint2D;
   readonly normal: DebugVector2D;
 } {
+  assertValidCollisionHit2D(hit);
   return Object.freeze({
     point: Object.freeze({ kind: 'point', x: hit.point.x, y: hit.point.y }),
     normal: Object.freeze({
@@ -110,6 +117,7 @@ export function projectHit2D(hit: CollisionHit2D): {
 export function projectSweepPath2D(start: Point2D, end: Point2D, label?: string): DebugSegment2D {
   assertValidPoint2D(start, 'start');
   assertValidPoint2D(end, 'end');
+  assertOptionalString(label, 'label');
   return Object.freeze({
     kind: 'segment',
     start: Object.freeze({ x: start.x, y: start.y }),
@@ -122,6 +130,7 @@ export function projectSweepPath2D(start: Point2D, end: Point2D, label?: string)
 export function projectVector2D(origin: Point2D, vector: Vector2D, label?: string): DebugVector2D {
   assertValidPoint2D(origin, 'origin');
   assertValidVector2D(vector, 'vector');
+  assertOptionalString(label, 'label');
   return Object.freeze({
     kind: 'vector',
     x: origin.x,

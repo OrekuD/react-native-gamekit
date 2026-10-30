@@ -43,6 +43,11 @@ if (hit !== undefined) {
 
 `undefined` means no contact. A `CollisionHit2D` carries `normal` (unit, pointing to push the first shape out of the second), `depth` (nonnegative penetration), and a stable contact `point`. Boundary contact counts as a hit and may return zero depth. Applying `normal * depth` resolves ordinary overlaps within floating-point tolerance. Predicates (`intersectsAabbAabb2D`, `pointInCircle2D`, ...) answer yes/no without the manifold.
 
+`closestPointOnAabb2D(point, bounds)` clamps a point to the box and returns a
+fresh frozen point, including when the input is already inside. Contacts and
+debug projections likewise own their nested points and vectors; they never
+freeze caller-owned inputs.
+
 ## Swept contact
 
 For fast objects, query the movement before it happens:
@@ -64,6 +69,13 @@ if (hit !== undefined) {
 
 `time` is normalized to `[0, 1]` along the displacement; a starting overlap returns `time: 0` with the static manifold normal; zero displacement never produces NaN. Segment queries (`intersectSegmentAabb2D`, `intersectSegmentCircle2D`) power line-of-sight and targeting.
 
+Segments require distinct endpoints. A segment starting inside or on a shape
+returns a hit at zero. For an outside start, the AABB segment query excludes a
+path that only slides along a parallel boundary; the circle segment query
+includes tangency. AABB sweeps inherit that slab convention. Equal-time sweep
+candidates keep deterministic precedence: X faces before Y faces, then circle
+corners in their defined order.
+
 ## Colliders, filters, and sensors
 
 A collider is local data attached to an authored object; placement is the only local-to-world step:
@@ -82,7 +94,14 @@ const player = {
 const body = placeCollider2D(player.colliders.body, player.position);
 ```
 
-`LocalCollider2D` and `WorldCollider2D` are distinct discriminated types: world-only operations reject local colliders at compile time, so double translation is impossible. Colliders are translation-only — no rotation or nonuniform scale — and the `sensor` flag is metadata that never changes geometry results. Filters use symmetric unsigned-32-bit category/mask sets:
+`LocalCollider2D` and `WorldCollider2D` are distinct discriminated types:
+placement accepts local colliders, and world-only operations accept world
+colliders. Runtime validation also checks the `space` and `shape` tags, so
+untyped data cannot silently undergo double translation or become a different
+shape. Placement copies the filter even when the local collider is an ordinary
+caller-owned record. Colliders are translation-only — no rotation or nonuniform
+scale — and the `sensor` flag is metadata that never changes geometry results.
+Filters use symmetric unsigned-32-bit category/mask sets:
 
 ```ts
 import { canCollide2D } from 'rn-gamekit/collision2d';
@@ -90,11 +109,20 @@ import { canCollide2D } from 'rn-gamekit/collision2d';
 canCollide2D({ categoryBits: 0b1, maskBits: 0b10 }, { categoryBits: 0b10, maskBits: 0b1 }); // true
 ```
 
-`collideWorldColliders2D` applies the filters and dispatches on the shape pair in one call.
+`collideWorldColliders2D` validates both colliders, applies the filters, and
+dispatches on the shape pair in one call. Invalid geometry still throws when a
+filter would exclude the pair. Optional `id` and `sensor` fields must be a
+string and a boolean respectively when supplied; an absent filter means
+`ALL_FILTER2D`.
+
+Malformed plain records, options, offsets, and filters throw `GeometryError`.
+Use its `code` and `field` for handling failures; diagnostic message text may
+change. As with Geometry, caller-defined getters/proxy traps can throw their own
+errors, and arithmetic targets ordinary game-world magnitudes.
 
 ## Broad phase
 
-For many objects, index once and query candidates:
+For many objects, build an index for the current bounds and query candidates:
 
 ```ts
 import { buildSpatialHash2D, querySpatialHash2D } from 'rn-gamekit/collision2d';
@@ -104,6 +132,27 @@ const candidates = querySpatialHash2D(index, bounds);
 ```
 
 The spatial hash returns candidate ids in insertion order, deduplicated across cells, and is deliberately conservative: candidates still need the narrow phase. The Collision Lab in the playground shows the whole pipeline with live values.
+
+Reuse an index while its bounds remain static. Moving, adding, or removing an
+indexed object requires rebuilding it; editing the original `items` cannot
+change the index's frozen copy. IDs must be unique strings and `cellSize` must
+be finite and positive. The index is a process-local handle: copying its visible
+fields or serializing it does not preserve queryability. Store source items for
+replay and rebuild the handle; keep it out of renderer snapshots.
+
+Resource guards limit each item/query to 1,024 cells per axis and 65,536 cells
+in total. A complete build may contain at most **262,144 cell references**:
+each item's presence in each cell counts separately, even when many items
+overlap the same cells. Construction checks the total before filling buckets.
+Exceeding a limit throws `GeometryError` with code
+`GEOMETRY_SPATIAL_INDEX_RANGE`. Coordinates must also map to safe integer cell
+indices. Cell boundaries are inclusive, so a box ending exactly on the next
+cell boundary includes that cell.
+
+These limits bound resource use, not frame time. Choose cell size for the level's
+shape sizes, reuse static indexes, and partition large worlds when needed.
+Larger cells reduce references but can increase candidate counts; profile the
+complete query and narrow-phase workload on a target device.
 
 ## The boundary
 

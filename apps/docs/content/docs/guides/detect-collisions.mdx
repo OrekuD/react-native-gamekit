@@ -141,6 +141,13 @@ export function broadPhaseExample(): BroadPhaseExampleResult {
 ```
 
 The index returns deterministic candidate ids in insertion order; it is conservative, so candidates still need the narrow phase. Moving colliders change their bounds — rebuild the index when they move, or the candidates go stale. The complete example is compile-checked at `apps/playground/src/docs-examples/broadphase-guide.ts`.
+
+Reuse a separate static index for terrain that does not move. The complete build
+is limited to 262,144 cell references, counting each item in each occupied cell;
+overlapping items count separately. Individual items and queries also have span
+limits. See [Broad phase](../engine-systems/collision2d#broad-phase) for those
+limits, cell-size tradeoffs, and the process-local index lifetime.
+
 ## Filters keep systems apart
 
 Give players, enemies, and terrain their own category bits, and let masks decide who touches whom:
