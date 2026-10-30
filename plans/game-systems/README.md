@@ -89,8 +89,12 @@ required.
 
 System 07 follow-up: [2026-10-29 Geometry review](07-geometry-review-2026-10-29.md)
 records stable normalization, structured boundary errors, numeric policy, and
-API before/after recommendations. The next core-system review is
-**08 — Collision2D**.
+API before/after recommendations.
+
+System 08 follow-up: [2026-10-30 Collision2D review](08-collision2d-review-2026-10-30.md)
+records boundary and ownership fixes, aggregate spatial work limits, measured
+algorithm tradeoffs, and API proposals. The next core-system review is
+**09 — Assets and loading**.
 
 ## Validation recorded for this review
 

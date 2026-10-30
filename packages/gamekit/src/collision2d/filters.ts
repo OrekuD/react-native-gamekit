@@ -6,7 +6,7 @@
  * category is included by the other mask. No bit positions are reserved.
  */
 import type { Vector2D } from '../geometry/types';
-import { assertUnsigned32Bits } from '../geometry/validation';
+import { assertValidCollisionFilter2D } from './validation';
 
 /** Two explicit unsigned 32-bit bit sets for collision eligibility. */
 export interface CollisionFilter2D {
@@ -23,10 +23,8 @@ export interface CollisionFilter2D {
  * comparison; `false` never implies malformed input.
  */
 export function canCollide2D(first: CollisionFilter2D, second: CollisionFilter2D): boolean {
-  assertUnsigned32Bits(first.categoryBits, 'first.categoryBits');
-  assertUnsigned32Bits(first.maskBits, 'first.maskBits');
-  assertUnsigned32Bits(second.categoryBits, 'second.categoryBits');
-  assertUnsigned32Bits(second.maskBits, 'second.maskBits');
+  assertValidCollisionFilter2D(first, 'first');
+  assertValidCollisionFilter2D(second, 'second');
   return (
     (first.categoryBits & second.maskBits) !== 0 &&
     (second.categoryBits & first.maskBits) !== 0

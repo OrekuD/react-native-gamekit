@@ -84,13 +84,13 @@ export function assertUnsigned32Bits(value: number, field: string): void {
   }
 }
 
-/** Assert a non-array record shape before reading fields (GS-GEOMETRY-01). */
-function assertRecordShape(value: unknown, name: string): asserts value is Record<string, unknown> {
+/** Internal record guard shared with collision boundaries; not a public export. */
+export function assertRecordShape(value: unknown, name: string): asserts value is Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new GeometryError(
       'GEOMETRY_INVALID_SHAPE',
       name,
-      `expected an object with numeric fields, got ${Array.isArray(value) ? 'an array' : describeValue(value)}`,
+      `expected a non-array object, got ${Array.isArray(value) ? 'an array' : describeValue(value)}`,
     );
   }
 }

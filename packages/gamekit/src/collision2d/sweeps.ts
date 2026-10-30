@@ -27,6 +27,7 @@
  */
 import type { Aabb2D, Circle2D, Point2D, Vector2D } from '../geometry/types';
 import {
+  assertRecordShape,
   assertValidAabb2D,
   assertValidCircle2D,
   assertValidVector2D,
@@ -88,6 +89,7 @@ function beyondFaceY(index: number, pointY: number, minY: number, maxY: number):
 
 /** Swept circle-AABB against the exact rounded-rectangle Minkowski shape. */
 export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D | undefined {
+  assertRecordShape(options, 'options');
   const { circle, displacement, target } = options;
   assertValidCircle2D(circle);
   assertValidVector2D(displacement, 'displacement');
@@ -213,6 +215,7 @@ export function sweepCircleAabb2D(options: SweepCircleAabb2DOptions): SweepHit2D
 
 /** Swept AABB-AABB with the exact asymmetric reference expansion. */
 export function sweepAabbAabb2D(options: SweepAabbAabb2DOptions): SweepHit2D | undefined {
+  assertRecordShape(options, 'options');
   const { aabb, displacement, target } = options;
   assertValidAabb2D(aabb, 'aabb');
   assertValidVector2D(displacement, 'displacement');

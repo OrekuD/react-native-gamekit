@@ -66,15 +66,20 @@ export function intersectsCircleAabb2D(circle: Circle2D, aabb: Aabb2D): boolean 
   return dx * dx + dy * dy <= circle.radius * circle.radius;
 }
 
-/** Closest point on the AABB to the circle center (shared by manifold code). */
+/**
+ * Closest point in or on the AABB to `point` (interior points stay in place).
+ * Validates both inputs and returns a fresh frozen point.
+ */
 export function closestPointOnAabb2D(
   point: Point2D,
   aabb: Aabb2D,
-): { readonly x: number; readonly y: number } {
-  return {
+): Point2D {
+  assertValidPoint2D(point, 'point');
+  assertValidAabb2D(aabb);
+  return Object.freeze({
     x: clamp(point.x, aabb.x, aabb.x + aabb.width),
     y: clamp(point.y, aabb.y, aabb.y + aabb.height),
-  };
+  });
 }
 
 function clamp(value: number, min: number, max: number): number {

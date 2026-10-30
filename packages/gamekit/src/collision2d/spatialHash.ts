@@ -10,6 +10,8 @@
  */
 import type { Aabb2D } from '../geometry/types';
 import {
+  assertFiniteNumber,
+  assertRecordShape,
   assertValidAabb2D,
   GeometryError,
 } from '../geometry/validation';
@@ -22,11 +24,11 @@ export interface SpatialHashItem2D {
   readonly bounds: Aabb2D;
 }
 
-/** A frozen, immutable spatial-hash index. */
+/** A frozen, process-local handle. Copying/serializing it loses queryability. */
 export interface SpatialHashIndex2D {
   /** Positive finite cell size in world units. */
   readonly cellSize: number;
-  /** The ordered items, deduplicated by identifier. */
+  /** Cloned items in insertion order. Duplicate identifiers are rejected. */
   readonly items: readonly SpatialHashItem2D[];
 }
 
@@ -44,14 +46,19 @@ export const MAX_SPATIAL_HASH_SPAN_CELLS = 1024;
 /**
  * Maximum cells visited by ONE item insert or ONE query (GS-COLLISION-02).
  *
- * The per-axis bound alone permits ~1M cell visits per operation (~38ms
- * on desktop V8, multiples of that on mobile). The total budget fails
- * clearly before such spans do any work. Ordinary game spans (a few
- * hundred cells per axis at most) pass with wide headroom; aggregate build
- * cost still scales with item count, so prefer an appropriate cell size
- * and reuse static indexes instead of rebuilding per dynamic body per tick.
+ * The per-axis bound alone permits ~1M cell visits per operation. This
+ * resource guard rejects oversized spans before enumerating cells; it is
+ * not a guarantee of frame latency on any device.
  */
 export const MAX_SPATIAL_HASH_TOTAL_CELLS = 65_536;
+
+/**
+ * Maximum item-to-cell references across an entire index. Overlapping
+ * items count separately. This also bounds bucket references scanned by
+ * any one query. Reuse static indexes and choose an appropriate cell size;
+ * even an accepted index may be too costly to rebuild every frame.
+ */
+export const MAX_SPATIAL_HASH_CELL_REFERENCES = 262_144;
 
 /** Opaque per-index internal buckets and order, never exposed publicly. */
 const internalState = new WeakMap<
@@ -61,58 +68,91 @@ const internalState = new WeakMap<
 
 /** Build a spatial-hash index over the given items. */
 export function buildSpatialHash2D(options: BuildSpatialHash2DOptions): SpatialHashIndex2D {
+  assertRecordShape(options, 'options');
   const { items, cellSize } = options;
-  if (!Number.isFinite(cellSize) || cellSize <= 0) {
+  assertFiniteNumber(cellSize, 'cellSize');
+  if (cellSize <= 0) {
     throw new GeometryError(
       'GEOMETRY_INVALID_NUMBER',
       'cellSize',
-      `expected a positive finite number, got ${String(cellSize)}`,
+      `expected a positive finite number, got ${cellSize}`,
     );
   }
-  const seen = new Set<string>();
+  const { prepared, order } = prepareItems(items, cellSize);
   const cells = new Map<string, string[]>();
-  const order = new Map<string, number>();
-  const frozenItems: SpatialHashItem2D[] = [];
-  for (const item of items) {
-    if (seen.has(item.id)) {
-      throw new GeometryError(
-        'GEOMETRY_DUPLICATE_ID',
-        'items.id',
-        `expected unique item ids, got duplicate "${item.id}"`,
-      );
-    }
-    seen.add(item.id);
-    assertValidAabb2D(item.bounds, `items.${item.id}.bounds`);
-    // Clone the caller's item and its bounds: the index must never freeze
-    // or retain caller-owned objects, and the private buckets must agree
-    // with the public `items` view.
-    const cloned: SpatialHashItem2D = Object.freeze({
-      id: item.id,
-      bounds: Object.freeze({ ...item.bounds }),
-    });
-    frozenItems.push(cloned);
-    order.set(item.id, frozenItems.length - 1);
-    for (const cell of cellsOf(cloned.bounds, cellSize)) {
-      const key = cellKey(cell.x, cell.y);
-      const bucket = cells.get(key);
-      if (bucket === undefined) {
-        cells.set(key, [item.id]);
-      } else {
-        bucket.push(item.id);
+  for (const { item, range } of prepared) {
+    for (let y = range.minY; y <= range.maxY; y += 1) {
+      for (let x = range.minX; x <= range.maxX; x += 1) {
+        const key = cellKey(x, y);
+        const bucket = cells.get(key);
+        if (bucket === undefined) {
+          cells.set(key, [item.id]);
+        } else {
+          bucket.push(item.id);
+        }
       }
     }
   }
+  for (const bucket of cells.values()) Object.freeze(bucket);
   const index = Object.freeze({
     cellSize,
-    items: Object.freeze(frozenItems),
+    items: Object.freeze(prepared.map(({ item }) => item)),
   });
-  internalState.set(index, {
-    cells: new Map([...cells.entries()].map(([key, ids]) => [key, Object.freeze(ids)])),
-    // The local `order` map never escapes this function, so it is stored
-    // directly (GS-COLLISION-02): the extra copy served no ownership purpose.
-    order,
-  });
+  // Neither map escapes or changes after construction; copying them adds
+  // work without adding ownership protection.
+  internalState.set(index, { cells, order });
   return index;
+}
+
+interface PreparedItem {
+  readonly item: SpatialHashItem2D;
+  readonly range: CellRange;
+}
+
+/** Validate the complete aggregate before allocating any cell buckets. */
+function prepareItems(items: readonly SpatialHashItem2D[], cellSize: number): {
+  readonly prepared: readonly PreparedItem[];
+  readonly order: ReadonlyMap<string, number>;
+} {
+  if (!Array.isArray(items)) {
+    throw new GeometryError('GEOMETRY_INVALID_SHAPE', 'items', 'expected an array of items');
+  }
+  // Every item occupies at least one cell, so this check also bounds the
+  // validation pass and rejects oversized sparse arrays without reading them.
+  assertReferenceBudget(items.length);
+  const order = new Map<string, number>();
+  const prepared: PreparedItem[] = [];
+  let references = 0;
+  for (let position = 0; position < items.length; position += 1) {
+    const source: SpatialHashItem2D = items[position]!;
+    assertRecordShape(source, `items.${position}`);
+    if (typeof source.id !== 'string') {
+      throw new GeometryError('GEOMETRY_INVALID_SHAPE', `items.${position}.id`, 'expected a string identifier');
+    }
+    if (order.has(source.id)) {
+      throw new GeometryError('GEOMETRY_DUPLICATE_ID', 'items.id', `expected unique item ids, got duplicate "${source.id}"`);
+    }
+    assertValidAabb2D(source.bounds, `items.${source.id}.bounds`);
+    const { x, y, width, height } = source.bounds;
+    const bounds = Object.freeze({ x, y, width, height });
+    const range = rangeOf(bounds, cellSize);
+    references += (range.maxX - range.minX + 1) * (range.maxY - range.minY + 1);
+    assertReferenceBudget(references);
+    const item = Object.freeze({ id: source.id, bounds });
+    prepared.push({ item, range });
+    order.set(item.id, position);
+  }
+  return { prepared, order };
+}
+
+function assertReferenceBudget(references: number): void {
+  if (references > MAX_SPATIAL_HASH_CELL_REFERENCES) {
+    throw new GeometryError(
+      'GEOMETRY_SPATIAL_INDEX_RANGE',
+      'items',
+      `items require ${references} cell references, exceeding the aggregate maximum of ${MAX_SPATIAL_HASH_CELL_REFERENCES}`,
+    );
+  }
 }
 
 /** Query candidates whose bounds share a cell with the query bounds. */
@@ -126,17 +166,18 @@ export function querySpatialHash2D(index: SpatialHashIndex2D, bounds: Aabb2D): r
       'expected an index built by buildSpatialHash2D',
     );
   }
+  const range = rangeOf(bounds, index.cellSize);
   const seen = new Set<string>();
   const collected: string[] = [];
-  for (const cell of cellsOf(bounds, index.cellSize)) {
-    const bucket = state.cells.get(cellKey(cell.x, cell.y));
-    if (bucket === undefined) {
-      continue;
-    }
-    for (const id of bucket) {
-      if (!seen.has(id)) {
-        seen.add(id);
-        collected.push(id);
+  for (let y = range.minY; y <= range.maxY; y += 1) {
+    for (let x = range.minX; x <= range.maxX; x += 1) {
+      const bucket = state.cells.get(cellKey(x, y));
+      if (bucket === undefined) continue;
+      for (const id of bucket) {
+        if (!seen.has(id)) {
+          seen.add(id);
+          collected.push(id);
+        }
       }
     }
   }
@@ -147,13 +188,15 @@ export function querySpatialHash2D(index: SpatialHashIndex2D, bounds: Aabb2D): r
   return Object.freeze(collected);
 }
 
-interface Cell {
-  readonly x: number;
-  readonly y: number;
+interface CellRange {
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
 }
 
-/** Every cell an AABB occupies, in deterministic order. */
-function* cellsOf(bounds: Aabb2D, cellSize: number): Generator<Cell> {
+/** Validate scalar loop limits once, without allocating per-cell objects. */
+function rangeOf(bounds: Aabb2D, cellSize: number): CellRange {
   const minX = cellIndex(bounds.x, cellSize);
   const maxX = cellIndex(bounds.x + bounds.width, cellSize);
   const minY = cellIndex(bounds.y, cellSize);
@@ -161,11 +204,7 @@ function* cellsOf(bounds: Aabb2D, cellSize: number): Generator<Cell> {
   assertSpan(maxX - minX, 'x');
   assertSpan(maxY - minY, 'y');
   assertTotalCells(maxX - minX, maxY - minY);
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let x = minX; x <= maxX; x += 1) {
-      yield { x, y };
-    }
-  }
+  return { minX, maxX, minY, maxY };
 }
 
 /** Validate a derived cell index as a finite safe integer. */
