@@ -39,6 +39,14 @@ always goes through the typed descriptor reference — never a duplicated string
 const playerSheet = loaded.assets.get(gameAssets.gameplay.player);
 ```
 
+Declarations copy supported fields and leave author-owned records mutable.
+Frames, clips, and manifests are readonly in TypeScript as well as frozen at
+runtime. Extension metadata belongs in your own configuration; it is omitted
+from the returned declaration. `image()` and `spriteSheet()` descriptor references
+are preserved when placed in a manifest. A plain structural descriptor is
+copied, so use the returned `gameAssets.group.asset` reference for lookup rather
+than the original author record.
+
 Attach the manifest to a game definition; it is optional, so shape-only games
 declare nothing:
 
@@ -77,11 +85,16 @@ The state machine is exact:
 - `error` — a structured `GameAssetError` with a stable `code` and `path`,
   plus a stable `retry` that starts a new attempt (late completion from an
   older attempt can never replace the new state);
-- `ready` — the complete lease; the hook owns and releases it on unmount,
+- `ready` — the complete loaded assets; the hook owns their backing lease and releases it on unmount,
   retry, or manifest replacement. **Never dispose the ready value manually.**
 
 The hook normalizes group ordering, so a recreated equivalent array
 (`['boot', 'gameplay']` vs `['gameplay', 'boot']`) does not reload.
+Distinct group selections remain distinct even when a name contains a separator
+character. `stableGroupsKey()` and state `requestKey` values are opaque comparison
+keys; their encoding is not a storage format. The initial loading state already
+has the same functional `retry` callback exposed by later loading/error states.
+Synchronous store setup failures also become structured error states.
 
 ## Imperative ownership
 
@@ -90,19 +103,29 @@ same ownership model explicitly:
 
 ```ts
 const store = createGameAssetStore(gameAssets);
-const lease = await store.acquire({
-  groups: ['boot', 'gameplay'],
-  signal: abortController.signal,
-});
-
 try {
-  const playerSheet = lease.assets.get(gameAssets.gameplay.player);
-  // Mount/use resources that borrow from this lease.
+  const lease = await store.acquire({
+    groups: ['boot', 'gameplay'],
+    signal: abortController.signal,
+  });
+  try {
+    const playerSheet = lease.assets.get(gameAssets.gameplay.player);
+    // Mount/use resources that borrow from this lease.
+  } finally {
+    lease.dispose();
+  }
 } finally {
-  lease.dispose();
   store.dispose();
 }
 ```
+
+`acquire` infers the manifest's group names, just like the hook. A typo such as
+`groups: ['gameply']` is a compile-time error. `AcquireOptions<'boot' | 'gameplay'>`
+is available for explicitly typed adapters; JavaScript callers still receive
+`ASSET_UNKNOWN_GROUP` for unknown groups.
+Use `GameAssetStore<typeof gameAssets>` when explicitly annotating a store so
+its type retains those group names. Numeric object keys are requested as strings,
+matching JavaScript's runtime property names.
 
 Rules that are hard to miss:
 
@@ -114,6 +137,24 @@ Rules that are hard to miss:
 - a failed, retried, or aborted attempt releases every handle it acquired;
   `AbortSignal` detaches the caller immediately;
 - the renderer borrows from the lease and never disposes its images.
+
+Loaded image/sheet records are frozen and stable across repeated `assets.get`
+calls. Their decoded dimensions are checked once and shared with the image;
+native handles themselves are borrowed, not frozen. Cancelling or disposing
+during resolution, decoding, or a progress callback cannot publish a ready
+lease. Store disposal prevents further lookup/acquisition, while existing
+leases still own their references until released.
+
+Cleanup attempts all resource releases even if one native release throws.
+An isolated cleanup failure is rethrown; multiple failures use `AggregateError`,
+with the original acquisition failure first when cleanup follows a failed load.
+Use `finally` to dispose the store even if releasing a lease fails.
+
+The store indexes descriptors by group once and performs direct descriptor
+lookups after loading. Loading remains serial; shared sources decode once per
+store while references remain live. There is no global cache or parallel decode
+setting. Measure load time and decoded memory on devices before introducing
+concurrency.
 
 ## Supported sources and formats
 

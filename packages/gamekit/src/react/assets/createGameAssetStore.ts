@@ -23,16 +23,20 @@
  *   handle without touching a successor entry.
  * - `AbortSignal` detaches an imperative caller immediately; late results
  *   from the underlying work are ignored.
- * - Abort/disposed state is checked after the final awaited step and before
+ * - Abort/disposed state is checked after every awaited step and before
  *   the lease is published, so an abort racing completion never surfaces
  *   a lease for a cancelled request.
  * - Progress is monotonic and counts requested logical resources (a
  *   deduplicated source still counts once per logical descriptor).
  * - The store rejects acquisitions after disposal; disposal is idempotent.
+ * - Cleanup attempts every reference even if native disposal throws. A
+ *   single failure is rethrown; multiple failures use AggregateError, with
+ *   the acquisition failure first when cleanup follows a failed attempt.
  */
 import { GameAssetError } from '../../assets/errors';
 import type {
   AssetGroupMap,
+  AssetGroupName,
   BrandedAssetDescriptor,
   GameAssetLease,
   ImageDescriptor,
@@ -64,19 +68,25 @@ export interface AssetPipelines {
 }
 
 /** Acquisition options for `acquire`. */
-export interface AcquireOptions {
+export interface AcquireOptions<TGroup extends string = string> {
   /** Logical groups to load; an empty set resolves immediately. */
-  readonly groups: readonly string[];
+  readonly groups: readonly TGroup[];
   /** Detach the caller; late results are ignored, never resurrected. */
   readonly signal?: AbortSignal;
   /** Monotonic progress in [0, 1], one update per completed logical asset. */
   readonly onProgress?: (progress: number) => void;
 }
 
+interface DecodedImage {
+  readonly handle: NativeImageHandle;
+  readonly width: number;
+  readonly height: number;
+}
+
 interface ResourceEntry {
   readonly uri: string;
-  handle: NativeImageHandle | undefined;
-  inFlight: Promise<NativeImageHandle> | undefined;
+  decoded: DecodedImage | undefined;
+  inFlight: Promise<DecodedImage> | undefined;
   refCount: number;
 }
 
@@ -92,7 +102,24 @@ interface Attempt {
 interface ResourceRef {
   readonly release: () => void;
   /** Resolve to the decoded handle (the shared in-flight promise or cache). */
-  readonly ready: () => Promise<NativeImageHandle>;
+  readonly ready: () => Promise<DecodedImage>;
+}
+
+/** Native disposal must not prevent unrelated references from releasing. */
+function releaseAll(
+  refs: readonly Pick<ResourceRef, 'release'>[],
+  initialErrors: readonly unknown[] = [],
+): void {
+  const errors = [...initialErrors];
+  for (const ref of refs) {
+    try {
+      ref.release();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, 'asset acquisition or cleanup failed');
 }
 
 /** One logical (group, asset) identity inside a manifest. */
@@ -103,17 +130,20 @@ interface LogicalAsset {
   readonly descriptor: ImageDescriptor | SpriteSheetDescriptor;
 }
 
-function logicalAssetsOf(manifest: AssetGroupMap): LogicalAsset[] {
-  const result: LogicalAsset[] = [];
+/** Index once so each acquisition visits only its selected groups' assets. */
+function logicalAssetsByGroup(manifest: AssetGroupMap): ReadonlyMap<string, readonly LogicalAsset[]> {
+  const result = new Map<string, readonly LogicalAsset[]>();
   for (const [group, assets] of Object.entries(manifest)) {
+    const logical: LogicalAsset[] = [];
     for (const [name, descriptor] of Object.entries(assets)) {
-      result.push({
+      logical.push({
         key: `${group}/${name}`,
         group,
         name,
         descriptor: descriptor as ImageDescriptor | SpriteSheetDescriptor,
       });
     }
+    result.set(group, logical);
   }
   return result;
 }
@@ -141,12 +171,11 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
   manifest: TManifest,
   pipelines: AssetPipelines,
 ): {
-  readonly acquire: (options: AcquireOptions) => Promise<GameAssetLease<TManifest>>;
+  readonly acquire: (options: AcquireOptions<AssetGroupName<TManifest>>) => Promise<GameAssetLease<TManifest>>;
   readonly dispose: () => void;
   readonly isDisposed: () => boolean;
 } {
-  const groups = new Set<string>(Object.keys(manifest));
-  const logical = logicalAssetsOf(manifest);
+  const groups = logicalAssetsByGroup(manifest);
   const resources = new Map<string, ResourceEntry>();
   let disposed = false;
   /** Per-attempt ownership is explicit: the attempt object is passed through
@@ -158,6 +187,13 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     }
   }
 
+  /** Disposal invalidates work already in progress just like cancellation. */
+  function assertActive(signal: AbortSignal | undefined): void {
+    if (disposed || signal?.aborted === true) {
+      throw new AssetStoreError('ASSET_ABORTED', [], 'asset acquisition aborted');
+    }
+  }
+
   /** Race a promise with the abort signal; the listener is removed on
    * resolve, reject, and abort (RF5). */
   function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -166,6 +202,7 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     }
     return new Promise<T>((resolve, reject) => {
       const onAbort = (): void => {
+        signal.removeEventListener('abort', onAbort);
         reject(new AssetStoreError('ASSET_ABORTED', [], 'asset acquisition aborted'));
       };
       signal.addEventListener('abort', onAbort, { once: true });
@@ -179,6 +216,9 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
           reject(error);
         },
       );
+      // A pipeline may synchronously abort before returning its promise.
+      // Attach both settlement handlers first so its late rejection is owned.
+      if (signal.aborted) onAbort();
     });
   }
 
@@ -191,12 +231,14 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
   function dropResourceRef(entry: ResourceEntry): void {
     entry.refCount -= 1;
     if (entry.refCount <= 0) {
-      if (entry.handle !== undefined) {
-        entry.handle.dispose();
-      }
+      const decoded = entry.decoded;
+      entry.decoded = undefined;
       if (resources.get(entry.uri) === entry) {
         resources.delete(entry.uri);
       }
+      // Unlink before calling native/user code: a throw or reentrant acquire
+      // can never reuse a handle whose disposal has already been attempted.
+      decoded?.handle.dispose();
     }
   }
 
@@ -213,7 +255,7 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
    */
   function beginResourceRef(uri: string): { readonly ref: ResourceRef; readonly entry: ResourceEntry } {
     const existing = resources.get(uri);
-    if (existing !== undefined && existing.handle !== undefined) {
+    if (existing !== undefined && existing.decoded !== undefined) {
       // Completed cache hit.
       existing.refCount += 1;
       return { ref: idempotentRef(existing), entry: existing };
@@ -226,7 +268,7 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     // Cache miss: this waiter starts the decode.
     const entry: ResourceEntry = {
       uri,
-      handle: undefined,
+      decoded: undefined,
       inFlight: undefined,
       refCount: 1,
     };
@@ -236,15 +278,26 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       // A late completion must never resurrect a disposed store or an entry
       // whose last waiter aborted while the decode was in flight. Identity
       // matters here too: the mapping may now hold a successor entry.
-      if (disposed || entry.refCount <= 0) {
-        handle.dispose();
-        if (entry.refCount <= 0 && resources.get(uri) === entry) {
-          resources.delete(uri);
+      try {
+        assertActive(undefined);
+        if (entry.refCount <= 0) {
+          throw new AssetStoreError('ASSET_ABORTED', [], 'asset acquisition aborted');
         }
-        throw new AssetStoreError('ASSET_ABORTED', [], 'asset acquisition aborted');
+        // Read native dimensions once for this decode, before caching it.
+        const width = handle.width();
+        const height = handle.height();
+        if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
+          throw new AssetStoreError('ASSET_DECODE_FAILED', [], 'decoded image dimensions must be positive finite numbers');
+        }
+        assertActive(undefined);
+        const decoded = { handle, width, height };
+        entry.decoded = decoded;
+        return decoded;
+      } catch (error) {
+        if (resources.get(uri) === entry) resources.delete(uri);
+        releaseAll([{ release: () => handle.dispose() }], [error]);
+        throw error;
       }
-      entry.handle = handle;
-      return handle;
     })();
     entry.inFlight = promise;
     const cleanup = (): void => {
@@ -260,9 +313,9 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
   /** One release closure bound to its entry; safe to call repeatedly. */
   function idempotentRef(entry: ResourceEntry): ResourceRef {
     let released = false;
-    const ready = async (): Promise<NativeImageHandle> => {
-      if (entry.handle !== undefined) {
-        return entry.handle;
+    const ready = async (): Promise<DecodedImage> => {
+      if (entry.decoded !== undefined) {
+        return entry.decoded;
       }
       const inFlight = entry.inFlight;
       if (inFlight === undefined) {
@@ -299,17 +352,19 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
     signal: AbortSignal | undefined,
   ): Promise<ResourceEntry> {
     const uri = await raceWithAbort(pipelines.resolve(asset.descriptor.source), signal);
+    assertActive(signal);
     // RF5: the reference token exists before any cancellable await; abort
     // can never leave a positive reference behind.
     const { ref, entry } = beginResourceRef(uri);
     try {
-      const handle = await raceWithAbort(ref.ready(), signal);
+      const decoded = await raceWithAbort(ref.ready(), signal);
+      assertActive(signal);
       if (asset.descriptor.kind === 'sprite-sheet') {
         validateFrames(
           [asset.group, asset.name, 'frames'],
           asset.descriptor.frames,
-          handle.width(),
-          handle.height(),
+          decoded.width,
+          decoded.height,
         );
       }
       // Transfer ownership to the attempt only after validation succeeds.
@@ -317,39 +372,36 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       return entry;
     } catch (error) {
       // The single owner releases exactly once; surviving owners keep theirs.
-      ref.release();
+      releaseAll([ref], [error]);
       throw error;
     }
   }
 
 
-  const acquire = async (options: AcquireOptions): Promise<GameAssetLease<TManifest>> => {
+  const acquire = async (
+    options: AcquireOptions<AssetGroupName<TManifest>>,
+  ): Promise<GameAssetLease<TManifest>> => {
     assertLive();
     const { signal } = options;
-    const throwIfAborted = (): void => {
-      if (signal?.aborted === true) {
-        throw new AssetStoreError('ASSET_ABORTED', [], 'asset acquisition aborted');
-      }
-    };
-    throwIfAborted();
+    assertActive(signal);
 
     // RF5: normalize groups at the public boundary (dedupe) and use the
     // same list for the progress total and acquisition.
     const groupsNormalized = [...new Set(options.groups)];
     const requested: LogicalAsset[] = [];
     for (const group of groupsNormalized) {
-      if (!groups.has(group)) {
+      const logical = groups.get(group);
+      if (logical === undefined) {
         throw new GameAssetError('ASSET_UNKNOWN_GROUP', [group], `unknown asset group ${JSON.stringify(group)}`);
       }
       for (const asset of logical) {
-        if (asset.group === group) {
-          requested.push(asset);
-        }
+        requested.push(asset);
       }
     }
     if (requested.length === 0) {
       // Empty group set resolves immediately with progress 1 and no resources.
       options.onProgress?.(1);
+      assertActive(signal);
       return createLease(new Map(), () => undefined);
     }
 
@@ -360,26 +412,24 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       let completed = 0;
       const total = requested.length;
       for (const asset of requested) {
-        throwIfAborted();
+        assertActive(signal);
         const entry = await acquireOne(asset, attempt, signal);
+        assertActive(signal);
         loaded.set(asset.key, { asset, entry });
         completed += 1;
         options.onProgress?.(completed / total);
+        assertActive(signal);
       }
       // GS-ASSET-02: an abort racing the final step must surface instead of
       // publishing a lease for a cancelled request.
-      throwIfAborted();
+      assertActive(signal);
       return createLease(loaded, () => {
-        for (const ref of attempt.acquired) {
-          ref.release();
-        }
+        releaseAll(attempt.acquired);
       });
     } catch (error) {
       // Release every reference this attempt acquired exactly once; entries
       // still leased by a previous lease keep their references.
-      for (const ref of attempt.acquired) {
-        ref.release();
-      }
+      releaseAll(attempt.acquired, [error]);
       throw error;
     }
   };
@@ -387,11 +437,11 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
   /**
    * Build one validated loaded value from the exact entry that backed the
    * acquisition (GS-ASSET-04). The handle is always present: `ready()` only
-   * resolves after the entry's handle is set.
+   * resolves after the entry's validated image is set.
    */
   function loadedValueFor(asset: LogicalAsset, entry: ResourceEntry): LoadedImage | LoadedSpriteSheet {
-    const handle = entry.handle;
-    if (handle === undefined) {
+    const decoded = entry.decoded;
+    if (decoded === undefined) {
       // Defensive: reachable only if the store's own accounting is broken.
       // Fail clearly rather than publishing an imageless loaded value.
       throw new AssetStoreError(
@@ -401,20 +451,20 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
       );
     }
     if (asset.descriptor.kind === 'image') {
-      return {
+      return Object.freeze({
         descriptor: asset.descriptor,
-        width: handle.width(),
-        height: handle.height(),
-        image: handle,
-      };
+        width: decoded.width,
+        height: decoded.height,
+        image: decoded.handle,
+      });
     }
-    return {
+    return Object.freeze({
       descriptor: asset.descriptor,
       frames: asset.descriptor.frames,
-      width: handle.width(),
-      height: handle.height(),
-      image: handle,
-    };
+      width: decoded.width,
+      height: decoded.height,
+      image: decoded.handle,
+    });
   }
 
   function createLease(
@@ -476,17 +526,13 @@ export function createGameAssetStoreCore<TManifest extends AssetGroupMap>(
         return;
       }
       disposed = true;
-      // Drop entries with no live lease; leased entries stay until their
-      // lease releases them (their refCount keeps them alive).
-      for (const [uri, entry] of resources) {
-        if (entry.refCount <= 0 && entry.handle !== undefined) {
-          entry.handle.dispose();
-          resources.delete(uri);
-        }
-      }
+      // Every entry is owned by a lease or in-progress attempt. Their
+      // tokens release it; late decodes dispose their own native handles.
     },
     isDisposed: () => disposed,
   };
 }
 
-export type GameAssetStore = ReturnType<typeof createGameAssetStoreCore>;
+/** Explicit store annotations retain their manifest's groups and descriptors. */
+export type GameAssetStore<TManifest extends AssetGroupMap = AssetGroupMap> =
+  ReturnType<typeof createGameAssetStoreCore<TManifest>>;
