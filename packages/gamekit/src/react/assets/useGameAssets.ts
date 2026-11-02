@@ -24,15 +24,15 @@
  * - Unmount invalidates the attempt, releases the lease, and disposes the
  *   store — hook-owned resources are released exactly once.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { GameAssetError } from '../../assets/errors';
-import type { AssetGroupMap, GameAssetLease, LoadedAssets } from '../../assets/types';
+import { assetFailureMessage, GameAssetError } from '../../assets/errors';
+import type { AssetGroupMap, AssetGroupName, GameAssetLease, LoadedAssets } from '../../assets/types';
 import type { AcquireOptions } from './createGameAssetStore';
 
 /** The store surface the hook needs, kept generic over the manifest. */
 export interface HookStore<TManifest extends AssetGroupMap> {
-  readonly acquire: (options: AcquireOptions) => Promise<GameAssetLease<TManifest>>;
+  readonly acquire: (options: AcquireOptions<AssetGroupName<TManifest>>) => Promise<GameAssetLease<TManifest>>;
   readonly dispose: () => void;
 }
 
@@ -61,7 +61,7 @@ export type GameAssetsState<TManifest extends AssetGroupMap> =
 
 /** Deduplicate and sort groups so equivalent reordered/duplicated arrays
  * map to one key and one acquisition (R6). */
-export function dedupeGroups(groups: readonly string[]): readonly string[] {
+export function dedupeGroups<TGroup extends string>(groups: readonly TGroup[]): readonly TGroup[] {
   return [...new Set(groups)].sort();
 }
 
@@ -82,14 +82,15 @@ function participantId(table: WeakMap<object, number>, value: object): number {
   return id;
 }
 
-/** Order-independent group key: equivalent arrays map to one key. */
+/** Order-independent opaque group key: equivalent arrays map to one key.
+ * The encoding is internal; callers should compare keys rather than parse them. */
 export function stableGroupsKey(groups: readonly string[]): string {
-  return dedupeGroups(groups).join('\u0000');
+  return JSON.stringify(dedupeGroups(groups));
 }
 
 export function useGameAssets<TManifest extends AssetGroupMap>(
   manifest: TManifest,
-  options: { readonly groups: readonly (Extract<keyof TManifest, string>)[] },
+  options: { readonly groups: readonly AssetGroupName<TManifest>[] },
   storeFactory?: (manifest: TManifest) => HookStore<TManifest>,
 ): GameAssetsState<TManifest> {
   const groupsKey = stableGroupsKey(options.groups);
@@ -105,23 +106,21 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
   const requestKey =
     `${participantId(manifestIdentities, manifest)}:` +
     `${participantId(factoryIdentities, factory)}:${groupsKey}:${attempt}`;
+  const retry = useCallback(() => {
+    // Expose one functional callback from the first loading render onward.
+    setAttempt((current) => current + 1);
+  }, []);
   const [state, setState] = useState<GameAssetsState<TManifest>>({
     status: 'loading',
     progress: 0,
-    retry: () => undefined,
+    retry,
     requestKey,
   });
-  const storeRef = useRef<HookStore<TManifest> | undefined>(undefined);
-  const leaseRef = useRef<GameAssetLease<TManifest> | undefined>(undefined);
-  const retry = useCallback(() => {
-    // R6: one user action starts exactly one new attempt; the same function
-    // identity is exposed in loading and error states.
-    setAttempt((current) => current + 1);
-  }, []);
 
   useEffect(() => {
-    const store = factory(manifest);
-    storeRef.current = store;
+    // Each effect owns its resources even if setup fails synchronously.
+    let store: HookStore<TManifest> | undefined;
+    let ownedLease: GameAssetLease<TManifest> | undefined;
     // Per-effect invalidation (GS-ASSET-03): cleanup sets `disposed` before
     // any newer effect runs, so stale completions are rejected without a
     // render-time ref mutation standing in for ownership.
@@ -133,6 +132,13 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
         setState(updater);
       }
     };
+    const fail = (error: unknown): void => {
+      if (disposed) return;
+      const structured = error instanceof GameAssetError
+        ? error
+        : new GameAssetError('ASSET_DECODE_FAILED', [], assetFailureMessage(error), { cause: error });
+      setState({ status: 'error', error: structured, retry, requestKey });
+    };
 
     // R6: every attempt owns an AbortController; aborting detaches the
     // caller and rejects late progress/ready/error from older configs.
@@ -141,52 +147,48 @@ export function useGameAssets<TManifest extends AssetGroupMap>(
     setState({
       status: 'loading',
       progress: 0,
-      retry: retry,
+      retry,
       requestKey,
     });
 
-    store
-      .acquire({
-        groups: normalizedGroups,
-        signal: controller.signal,
-        onProgress: (progress) => {
-          setIfCurrent((previous) =>
-            previous.status === 'loading' && previous.requestKey === requestKey
-              ? { ...previous, progress }
-              : previous,
-          );
-        },
-      })
-      .then((lease) => {
-        if (disposed) {
-          // Stale completion (retry/unmount): release immediately.
-          lease.dispose();
-          return;
-        }
-        leaseRef.current?.dispose();
-        leaseRef.current = lease;
-        setState({ status: 'ready', assets: lease.assets, requestKey });
-      })
-      .catch((error: unknown) => {
-        if (disposed) {
-          return;
-        }
-        const structured =
-          error instanceof GameAssetError
-            ? error
-            : new GameAssetError('ASSET_DECODE_FAILED', [], error instanceof Error ? error.message : String(error));
-        setState({ status: 'error', error: structured, retry, requestKey });
-      });
+    try {
+      store = factory(manifest);
+      store
+        .acquire({
+          groups: normalizedGroups,
+          signal: controller.signal,
+          onProgress: (progress) => {
+            setIfCurrent((previous) =>
+              previous.status === 'loading' && previous.requestKey === requestKey
+                ? { ...previous, progress }
+                : previous,
+            );
+          },
+        })
+        .then((lease) => {
+          if (disposed) {
+            // Stale completion (retry/unmount): release immediately.
+            lease.dispose();
+            return;
+          }
+          ownedLease = lease;
+          setState({ status: 'ready', assets: lease.assets, requestKey });
+        })
+        .catch(fail);
+    } catch (error) {
+      fail(error);
+    }
 
     return () => {
       disposed = true;
       // R6: abort before releasing so no late completion can touch state or
       // resources, then release the lease and store exactly once.
       controller.abort();
-      leaseRef.current?.dispose();
-      leaseRef.current = undefined;
-      storeRef.current = undefined;
-      store.dispose();
+      try {
+        ownedLease?.dispose();
+      } finally {
+        store?.dispose();
+      }
     };
     // The effect re-runs only when the request identity (or its stable
     // derivatives) changes; equivalent recreated group arrays do not reload.

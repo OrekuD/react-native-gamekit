@@ -32,12 +32,22 @@ export class GameAssetError extends Error {
   /** Field path within the manifest/descriptor that caused the failure. */
   readonly path: readonly string[];
 
-  constructor(code: GameAssetErrorCode, path: readonly string[], message: string) {
-    super(`${code}${path.length > 0 ? ` at ${path.join('.')}` : ''}: ${message}`);
+  constructor(code: GameAssetErrorCode, path: readonly string[], message: string, options?: ErrorOptions) {
+    super(`${code}${path.length > 0 ? ` at ${path.join('.')}` : ''}: ${message}`, options);
     this.name = 'GameAssetError';
     this.code = code;
-    this.path = path;
+    this.path = Object.freeze([...path]);
   }
+}
+
+/** Internal fallback diagnostics never invoke a rejected object's coercion hooks. */
+export function assetFailureMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error === null || (typeof error !== 'object' && typeof error !== 'function')) {
+    return String(error);
+  }
+  return 'asset loading failed';
 }
 
 /** Throw when a definition-time identifier is invalid. */

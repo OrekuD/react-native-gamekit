@@ -93,8 +93,12 @@ API before/after recommendations.
 
 System 08 follow-up: [2026-10-30 Collision2D review](08-collision2d-review-2026-10-30.md)
 records boundary and ownership fixes, aggregate spatial work limits, measured
-algorithm tradeoffs, and API proposals. The next core-system review is
-**09 — Assets and loading**.
+algorithm tradeoffs, and API proposals.
+
+System 09 follow-up: [2026-11-01 Assets review](09-assets-review-2026-11-01.md)
+records cancellation and cleanup repairs, declaration ownership, loading API
+changes, and group-selection benchmarks. The next core-system review is
+**10 — Sprite animation**.
 
 ## Validation recorded for this review
 

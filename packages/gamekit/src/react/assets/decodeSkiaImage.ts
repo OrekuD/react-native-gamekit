@@ -6,8 +6,8 @@
  * - `Asset.fromModule(source)` -> `await asset.downloadAsync()` ->
  *   `asset.localUri ?? asset.uri` (canonical local URI; static module
  *   handles only);
- * - `Skia.Data.fromURI(uri)` -> `SkData` (disposed as soon as the image is
- *   created — `SkImage.MakeImageFromEncoded` copies the encoded bytes);
+ * - `Skia.Data.fromURI(uri)` -> `SkData` (its wrapper is disposed after image
+ *   creation; the native factory accepts reference-counted SkData);
  * - `Skia.Image.MakeImageFromEncoded(data)` -> `SkImage | null` (null is a
  *   structured load failure, never a ready resource).
  */
@@ -22,30 +22,53 @@ import {
 } from './createGameAssetStore';
 
 const resolvePipeline = async (source: number): Promise<string> => {
-  const asset = Asset.fromModule(source);
   try {
+    const asset = Asset.fromModule(source);
     await asset.downloadAsync();
+    return asset.localUri ?? asset.uri;
   } catch (error) {
     throw new GameAssetError(
       'ASSET_RESOLVE_FAILED',
       [],
-      `failed to resolve static asset module ${source}: ${error instanceof Error ? error.message : String(error)}`,
+      `failed to resolve static asset module ${source}`,
+      { cause: error },
     );
   }
-  return asset.localUri ?? asset.uri;
 };
 
-const decodePipeline = async (uri: string): Promise<NativeImageHandle> => {
-  const data = await Skia.Data.fromURI(uri);
+/** Preserve the original failure even if releasing an unpublished resource fails. */
+function failDecode(error: unknown, resource?: { dispose(): void }): never {
+  let cause = error;
   try {
-    const image = Skia.Image.MakeImageFromEncoded(data);
-    if (image === null) {
-      throw new GameAssetError('ASSET_DECODE_FAILED', [], `decoding ${uri} produced no image`);
-    }
-    return image as unknown as NativeImageHandle;
-  } finally {
-    data.dispose();
+    resource?.dispose();
+  } catch (cleanupError) {
+    cause = new AggregateError([error, cleanupError], 'Image decoding and cleanup failed');
   }
+  throw new GameAssetError('ASSET_DECODE_FAILED', [], 'failed to decode static image', { cause });
+}
+
+const decodePipeline = async (uri: string): Promise<NativeImageHandle> => {
+  let data;
+  try {
+    data = await Skia.Data.fromURI(uri);
+  } catch (error) {
+    return failDecode(error);
+  }
+  let image;
+  try {
+    image = Skia.Image.MakeImageFromEncoded(data);
+    if (image === null) {
+      throw new Error('decoding produced no image');
+    }
+  } catch (error) {
+    return failDecode(error, data);
+  }
+  try {
+    data.dispose();
+  } catch (error) {
+    return failDecode(error, image);
+  }
+  return image;
 };
 
 /**

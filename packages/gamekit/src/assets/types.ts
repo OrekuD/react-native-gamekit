@@ -51,6 +51,20 @@ export interface SpriteClip<TFrameName extends string = string> {
   readonly mode: SpriteAnimationMode;
 }
 
+/** Supported frame fields, preserving authored names and numeric literals. */
+type DeclaredFrames<TFrames extends Record<string, SpriteFrameRect>> = {
+  readonly [TName in keyof TFrames]: Readonly<Pick<TFrames[TName], keyof SpriteFrameRect>>;
+};
+
+/** Supported clip fields; author-owned extension metadata is not retained. */
+type DeclaredClips<TClips extends Record<string, SpriteClip>> = {
+  readonly [TName in keyof TClips]: {
+    readonly frames: Readonly<TClips[TName]['frames']>;
+    readonly frameDurationMs: TClips[TName]['frameDurationMs'];
+    readonly mode: TClips[TName]['mode'];
+  };
+};
+
 /** A sprite-sheet asset: named frames plus named animation clips. */
 export interface SpriteSheetDescriptor<
   TFrames extends Record<string, SpriteFrameRect> = Record<string, SpriteFrameRect>,
@@ -64,9 +78,9 @@ export interface SpriteSheetDescriptor<
   /** Static module handle. */
   readonly source: AssetSourceHandle;
   /** Named source rectangles. */
-  readonly frames: TFrames;
+  readonly frames: DeclaredFrames<TFrames>;
   /** Named animation clips restricted to the declared frames. */
-  readonly animations: TClips;
+  readonly animations: DeclaredClips<TClips>;
 }
 
 /** Union of all asset descriptors. */
@@ -77,6 +91,21 @@ export type AssetGroup = Readonly<Record<string, AssetDescriptor>>;
 
 /** The author-facing group map accepted by `defineAssets`. */
 export type AssetGroupMap = Readonly<Record<string, AssetGroup>>;
+
+/** Object keys are strings at runtime, including numeric declaration keys. */
+export type AssetGroupName<TManifest extends AssetGroupMap> =
+  `${Extract<keyof TManifest, string | number>}`;
+
+/** Canonical declaration surface returned for a structural input descriptor. */
+type DeclaredAsset<TDescriptor extends AssetDescriptor> =
+  TDescriptor extends { readonly kind: 'sprite-sheet' }
+    ? {
+        readonly kind: 'sprite-sheet';
+        readonly source: TDescriptor['source'];
+        readonly frames: DeclaredFrames<TDescriptor['frames']>;
+        readonly animations: DeclaredClips<TDescriptor['animations']>;
+      }
+    : Readonly<Pick<TDescriptor, 'kind' | 'source'>>;
 
 /**
  * Type-level manifest brand. Every descriptor of a manifest carries a
@@ -100,7 +129,7 @@ export type GameAssetManifest<TGroups extends AssetGroupMap = AssetGroupMap> = {
   readonly [TGroup in keyof TGroups]: {
     readonly [TAsset in keyof TGroups[TGroup]]: BrandedAssetDescriptor<
       GameAssetManifest<TGroups>,
-      TGroups[TGroup][TAsset]
+      DeclaredAsset<TGroups[TGroup][TAsset]>
     >;
   };
 };

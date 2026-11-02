@@ -3,18 +3,24 @@ title: Asset errors
 description: Every structured asset error code with its corrective action.
 ---
 
-Asset failures are structured `GameAssetError`s with a stable machine-readable
-`code` and a `path` to the offending field. Messages never embed
-absolute machine paths. Check the code, fix the path, retry.
+Definition and load failures use `GameAssetError` with a stable machine-readable
+`code` and an owned frozen `path` to the offending field. Native pipeline summaries
+omit absolute local paths; the optional `cause` preserves the original failure
+for diagnostics. Check the code and path rather than parsing message text.
+
+The constructor accepts standard error options:
+`new GameAssetError(code, path, message, { cause })`. If acquisition and resource
+cleanup both fail, the imperative store reports an `AggregateError` retaining
+the original failure and cleanup failures. Cleanup still attempts every release.
 
 ## Definition-time errors
 
 | Code | Meaning | Fix |
 | --- | --- | --- |
-| `ASSET_INVALID_IDENTIFIER` | Empty or reserved (`/`) group/asset/frame/clip name. | Rename the identifier; `/` is reserved for diagnostic ids. |
+| `ASSET_INVALID_IDENTIFIER` | Empty or reserved (`/`) name, or malformed manifest/group/descriptor record. | Use non-array records and nonempty names; `/` is reserved for diagnostic ids. |
 | `ASSET_INVALID_SOURCE` | The source is not a static module handle. | Pass the number returned by `require(...)`; strings and URLs are rejected in this version. |
-| `ASSET_INVALID_FRAME_RECT` | Frame coordinates are not finite, negative, or zero-sized. | Fix the rectangle: finite numbers, `x`/`y >= 0`, `width`/`height > 0`. |
-| `ASSET_EMPTY_CLIP` | A clip references no frames. | Give the clip at least one declared frame. |
+| `ASSET_INVALID_FRAME_RECT` | Malformed frame records or coordinates that are nonfinite, negative, or zero-sized. | Fix the rectangle: finite numbers, `x`/`y >= 0`, `width`/`height > 0`. |
+| `ASSET_EMPTY_CLIP` | Malformed animation records or a clip with no frame array. | Give each clip a nonempty array of declared frame names. |
 | `ASSET_UNKNOWN_FRAME` | A clip references a frame that is not declared. | Reference only the sheet's declared frame names. |
 | `ASSET_INVALID_DURATION` | A clip duration is not finite or not positive. | Use a finite `frameDurationMs > 0`. |
 | `ASSET_INVALID_MODE` | The clip mode is not `'loop'` or `'once'`. | Use the discriminated mode. |
@@ -26,7 +32,7 @@ absolute machine paths. Check the code, fix the path, retry.
 | `ASSET_UNKNOWN_GROUP` | A requested group does not exist in the manifest. | Request only declared groups (the type layer rejects unknown names). |
 | `ASSET_UNKNOWN_ASSET` | A descriptor lookup is not one of the descriptor references this manifest declared and this acquisition loaded. | Retrieve only the exact descriptor references from this manifest's declared groups. Note: an identically shaped descriptor object from elsewhere compiles (the type brand is structural) but fails this runtime reference-membership check; reusing the same declared reference in two manifests is accepted. |
 | `ASSET_RESOLVE_FAILED` | The static module could not be resolved. | Check that the module handle exists and is bundled; verify the asset is packaged. |
-| `ASSET_DECODE_FAILED` | Decoding produced no image. | The file may be corrupt or an unsupported format. |
+| `ASSET_DECODE_FAILED` | Image bytes could not be loaded/decoded, or decoded dimensions were invalid. | Check the file format and decoder; decoded width/height must be positive and finite. |
 | `ASSET_FRAME_OUT_OF_BOUNDS` | A frame rectangle exceeds the decoded image dimensions. | Fix the rectangle or replace the image. |
 | `ASSET_ABORTED` | The acquisition was aborted by its `AbortSignal` or its store was disposed. | This is an expected cancellation; start a new attempt if the caller is still live. |
 | `ASSET_STORE_DISPOSED` | The store or lease is disposed. | Create a new store/lease; never reuse disposed owners. |

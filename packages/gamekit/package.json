@@ -132,6 +132,7 @@
     "pack:inspect": "pnpm pack --dry-run",
     "bench:deepfreeze": "node --import tsx bench/deepFreeze.bench.ts",
     "bench:spatialhash": "node --import tsx bench/spatialHash.bench.ts",
+    "bench:assets": "node --import tsx bench/assets.bench.ts",
     "bench:tilequeries": "node --import tsx bench/tileQueries.bench.ts",
     "bench:particles": "node --import tsx bench/particles.bench.ts",
     "bench:storage": "node --import tsx bench/storage.bench.ts",

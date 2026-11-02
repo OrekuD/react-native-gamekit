@@ -10,7 +10,7 @@
  * - `AbortSignal` detaches an imperative caller immediately;
  * - the renderer borrows from the lease and never disposes its images.
  */
-import { createGameAssetStore } from '../../src/react';
+import { createGameAssetStore, createGameAssetStoreCore, type AcquireOptions } from '../../src/react';
 import type { GameAssetLease } from '../../src/index';
 
 import { gameAssets } from '../api/assetsManifest.types';
@@ -66,4 +66,22 @@ export function disposeOnce(abortController: AbortController): void {
     signal: abortController.signal,
   });
   store.dispose();
+}
+
+export function acquireOnlyDeclaredGroups(): void {
+  const store = createGameAssetStore(gameAssets);
+  void store.acquire({ groups: ['boot'] });
+  // @ts-expect-error the native store accepts only declared manifest groups
+  void store.acquire({ groups: ['typo'] });
+  const core = createGameAssetStoreCore(gameAssets, {
+    resolve: async () => 'fixture',
+    decode: async () => ({ width: () => 1, height: () => 1, dispose: () => undefined }),
+  });
+  // @ts-expect-error the injected store retains the same group constraint
+  void core.acquire({ groups: ['typo'] });
+  const options: AcquireOptions<'boot' | 'gameplay'> = { groups: ['boot'] };
+  void core.acquire(options);
+  // A non-generic options type remains available for generic adapters.
+  const adapterOptions: AcquireOptions = { groups: ['dynamic-group'] };
+  void adapterOptions;
 }
