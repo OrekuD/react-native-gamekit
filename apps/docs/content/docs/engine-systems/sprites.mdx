@@ -38,16 +38,43 @@ function MyRenderer({ frame, alpha, viewport, assets }) {
 | `opacity` | In `[0, 1]`; hiding is expressed as a combined opacity so the component stays mounted. |
 | `tint` | Optional tint color. |
 | `sampling` | Pixel-art defaults to nearest-neighbour. |
-| `frame` | The sheet frame name (or `clip` + `elapsedMs` for clip-driven selection). |
+| `frame` | The sheet frame name; overrides `clip`. Plain string or shared string, optionally carrying `undefined` before publication. |
+| `clip`, `elapsedMs` | Clip name and elapsed milliseconds. A shared clip may carry `undefined` before publication. |
 
 The transform pipeline is documented and tested as pure code:
 
 ```
-T(x, y) · R(rotation) · T(anchor) · S(scaleX, scaleY) · T(-anchor)
+T(x, y) · R(rotation) · S(scaleX, scaleY) · T(-pivot)
 ```
 
-Scale and flips happen around the anchor, then the frame rotates around the
-anchor at the world position.
+Here `pivot = (anchor.x * frame.width, anchor.y * frame.height)`,
+`scaleX = scale * (flipX ? -1 : 1)`, and similarly for `scaleY`. The local
+pivot lands at world `(x, y)` for every scale, rotation, and flip. The Atlas
+RSXform carries uniform scale/rotation/placement; the outer Group handles
+reflection. Reflection needs only position, rotation, and flips, so it does
+not resample the animation or depend on its frame dimensions.
+
+Both full images and sheet frames use a single-entry Atlas. The `scale` prop
+is uniform; there is no separate `scaleX`/`scaleY` prop.
+
+## Unpublished selection
+
+For a direct Sprite whose clip arrives later, keep absence explicit:
+
+```tsx
+const clip = useSharedValue<string | undefined>(undefined);
+return <Sprite source={player} clip={clip} elapsedMs={elapsedMs} />;
+```
+
+The sheet draws nothing until a clip is published. An empty string is an invalid
+clip name, not an absence marker. `SpriteAnimatableString` is exported from
+`rn-gamekit/react` alongside the number/boolean aliases; it describes a string
+or `SharedValue<string>`. The `frame` and `clip` props additionally accept
+`SharedValue<string | undefined>`.
+
+`resolveSpriteFrameRect(source, undefined)` retains its legacy static-baseline
+behavior: it returns the first animation's first own frame, or an empty rectangle.
+This helper does not describe the renderer's absent-selection behavior.
 
 ## GameSprite: the common path
 
@@ -76,12 +103,14 @@ snapshot by scene, and invokes one worklet selector — no author-written
 ```
 
 Position, rotation, uniform scale, and opacity interpolate when the selector
-requests it; clip/frame, tint, visibility, and flips are chosen discretely
+requests it; clip/frame, visibility, and flips are chosen discretely
 from the committed snapshot. The selector's scene typing is exact — a
 `scene="play"` selector receives only the play snapshot without casts.
 
 ## Drawing order
 
 React child order is the drawing order for retained sprites. A general
-layer/render graph is deferred. An unknown frame name or a disposed lease
-fails with a clear development error rather than undefined native behaviour.
+layer/render graph is deferred. An unknown frame name throws; only explicitly
+declared frame entries count, including names that also occur on Object.prototype.
+Keep the asset lease alive while any Sprite/GameSprite uses its image. These
+components borrow native handles and cannot detect every use after lease disposal.

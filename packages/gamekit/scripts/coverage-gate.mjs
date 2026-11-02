@@ -49,6 +49,8 @@ const TRACKED_MODULES = [
   'src/sprites/sampleSpriteClip.ts',
   'src/sprites/spriteAnimationState.ts',
   'src/react/sprites/spriteTransform.ts',
+  'src/react/sprites/Sprite.tsx',
+  'src/react/sprites/SpriteBatch.tsx',
   'src/react/assets/createGameAssetStore.ts',
   'src/react/assets/useGameAssets.ts',
   'src/react/assets/decodeSkiaImage.ts',

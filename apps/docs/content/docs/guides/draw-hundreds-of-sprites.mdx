@@ -54,6 +54,10 @@ buffer updates; no additional frame callback is needed. Its buffers are
 reused, though selection and transform calculations can allocate temporary
 values. The scene owns coin positions; the batch only presents them.
 
+Each update starts with active slots hidden. A writer may skip an item without
+leaving its previous sprite behind. A missing scene snapshot also hides the
+batch. Keep the asset lease alive until the batch unmounts.
+
 ## 3. Keep the topology fixed
 
 The batch node itself is stable; only the buffer contents change. That's the same rule as the rest of the renderer: build the tree once, update shared values. [Rendering](../engine-systems/rendering) covers the pattern, and [Sprite batching](../engine-systems/sprite-batching) has the full API contract including the transform elements (`computeSpriteRsxform`, `spriteAnchorWorld`, `spriteGroupCorrection`).

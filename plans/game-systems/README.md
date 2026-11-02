@@ -101,8 +101,12 @@ changes, and group-selection benchmarks.
 
 System 10 follow-up: [2026-11-02 Sprite animation review](10-sprite-animation-review-2026-11-02.md)
 records numeric and selection fixes, playback API contracts, transferred-worklet
-tests, and measured allocation/time tradeoffs. The next core-system review is
-**11 — Sprite rendering**.
+tests, and measured allocation/time tradeoffs.
+
+System 11 follow-up: [2026-11-02 Sprite rendering review](11-sprite-rendering-review-2026-11-02.md)
+records retained selection simplification, batch lifecycle fixes, API comparisons,
+and rendering measurement limits. The next core-system review is
+**12 — Tilemaps and platformer movement**.
 
 ## Validation recorded for this review
 

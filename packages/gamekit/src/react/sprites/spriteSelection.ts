@@ -29,7 +29,11 @@ export type SpriteFrameProp =
   | SharedValue<string>
   | SharedValue<string | undefined>
   | undefined;
-export type SpriteClipProp = string | SharedValue<string> | undefined;
+export type SpriteClipProp =
+  | string
+  | SharedValue<string>
+  | SharedValue<string | undefined>
+  | undefined;
 
 /** The discrete selection inputs for one sprite (all optional). */
 export interface SpriteSelection {
@@ -81,9 +85,8 @@ export function selectSpriteFrameRect(
 
 /**
  * Materialize mixed static/shared selection props into one plain selection
- * (GS-SPRITE-03): every worklet that resolves frames — rect, transform, and
- * Group correction — starts from this single helper, so clip-driven frame
- * changes reach every consumer coherently.
+ * (GS-SPRITE-03): the rect and transform modifiers start from this single
+ * helper, so clip-driven frame changes reach both consumers coherently.
  */
 export function materializeSpriteSelection(
   frame: SpriteFrameProp,

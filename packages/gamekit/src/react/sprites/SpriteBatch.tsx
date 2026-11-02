@@ -11,9 +11,11 @@
  *
  * Contract:
  * - `capacity` is fixed for the mounted batch; active count is explicit.
- * - Writes past capacity are rejected in development; inactive slots are
+ * - Invalid write indices are rejected in all builds; inactive slots are
  *   hidden (zero-size) and never remount topology.
- * - Item order is the drawing order; the anchor is uniform per batch.
+ * - Slot index is the drawing order; the anchor is uniform per batch.
+ * - Each update rebuilds visible slots; omitted writes leave slots hidden.
+ * - Unavailable snapshots and failed callbacks hide the whole batch.
  * - The batch never disposes the image (the asset lease owns it).
  */
 import { useMemo } from 'react';
@@ -40,13 +42,25 @@ function preserveBuffer(): void {
   'worklet';
 }
 
+function hideSlots(
+  slots: readonly { setXYWH(x: number, y: number, width: number, height: number): void }[],
+  start: number,
+  end: number,
+): void {
+  'worklet';
+  for (let index = start; index < end; index += 1) {
+    slots[index]?.setXYWH(0, 0, 0, 0);
+  }
+}
+
 /** The per-item write surface handed to the author's `write` mapper. */
 export interface SpriteBatchWrite {
   /**
    * Write one batch slot. `frame` names the sheet frame; `x`/`y` are world
    * logical units; `rotation` is radians around the batch anchor; `scale`
    * is uniform; `visible: false` hides the slot (zero-size rect). Writes
-   * past capacity fail in development.
+   * outside capacity fail. Multiple writes and writes to other active slots
+   * are supported. Slots at or beyond the selected active count stay hidden.
    */
   readonly set: (
     index: number,
@@ -79,7 +93,7 @@ export interface SpriteBatchProps<
     readonly current: SceneSnapshot<TScenes[TSceneName]>;
     readonly alpha: number;
   }) => readonly TItem[];
-  /** Write each item into its batch slot (UI runtime). */
+  /** Write each item into its batch slot (UI runtime). Omitted writes stay hidden. */
   readonly write: (write: SpriteBatchWrite, item: TItem, index: number) => void;
   /** Uniform anchor in [0, 1] relative to the selected frame. */
   readonly anchor?: { readonly x: number; readonly y: number };
@@ -213,61 +227,62 @@ export function SpriteBatch<
     };
   }, ({ envelope, alpha: presentationAlpha, camera, viewport }) => {
     'worklet';
-    if (envelope.scene !== scene) {
+    if (envelope.scene !== scene || envelope.current === undefined) {
       // RF8: leaving the scene clears every previously active slot so no
       // stale sprite from the old scene stays visible.
-      for (let index = 0; index < capacity; index += 1) {
-        const slot = rects.value[index];
-        if (slot !== undefined) {
-          slot.setXYWH(0, 0, 0, 0);
-        }
-      }
+      hideSlots(rects.value, 0, capacity);
       rects.modify(undefined, true);
       xforms.modify(undefined, true);
       return;
     }
-    const items = select({
-      current: envelope.current as never as SceneSnapshot<TScenes[TSceneName]>,
-      alpha: presentationAlpha,
-    });
-    const policy = batchUpdatePolicy(items.length, capacity, __DEV__);
-    // GS-SPRITE-04: no overflow loop — `policy.activeCount` already clamps
-    // production writes to capacity, and every buffer slot past capacity is
-    // absent by construction, so iterating [capacity, items.length) could
-    // only add unbounded dead work.
-    const count = policy.activeCount;
-    // T12.6 + T12-F5: culling hides off-screen slots in place, and
-    // authored writes run ONLY through `policy.activeCount`. In production
-    // an overflowing item (index >= capacity) is never written and never
-    // indexes a buffer — the [count, capacity) hide loop below clears the
-    // unused tail. The visible bounds are computed once per commit from the
-    // PRESENTED camera; hidden slots are cleared directly (zero size)
-    // without touching the author's write or reallocating buffers, so slot
-    // identity is stable across camera moves.
-    const visible =
-      cull === undefined
-        ? undefined
-        : batchVisibleBounds2D(camera, viewport, cullPadding);
-    for (let index = 0; index < count; index += 1) {
-      const item = items[index];
-      if (item === undefined) {
-        continue;
-      }
-      if (visible !== undefined && !intersectsBounds2D(cull!.bounds(item), visible)) {
-        const slot = rects.value[index];
-        if (slot !== undefined) {
-          slot.setXYWH(0, 0, 0, 0);
+    try {
+      const items = select({
+        current: envelope.current as never as SceneSnapshot<TScenes[TSceneName]>,
+        alpha: presentationAlpha,
+      });
+      const policy = batchUpdatePolicy(items.length, capacity, __DEV__);
+      // GS-SPRITE-04: no overflow loop — `policy.activeCount` already clamps
+      // production writes to capacity, and every buffer slot past capacity is
+      // absent by construction, so iterating [capacity, items.length) could
+      // only add unbounded dead work.
+      const count = policy.activeCount;
+      // Clear active slots before any author callback. A skipped write or
+      // sparse item must not retain last frame's sprite. Clearing this range
+      // together also preserves multiple/cross-index writes within the range.
+      hideSlots(rects.value, 0, count);
+      // T12.6 + T12-F5: culling hides off-screen slots in place, and
+      // authored writes run ONLY through `policy.activeCount`. In production
+      // an overflowing item (index >= capacity) is never written and never
+      // indexes a buffer — the [count, capacity) hide loop below clears the
+      // unused tail. The visible bounds are computed once per commit from the
+      // PRESENTED camera; hidden slots are cleared directly (zero size)
+      // without touching the author's write or reallocating buffers, so slot
+      // identity is stable across camera moves.
+      const visible =
+        cull === undefined
+          ? undefined
+          : batchVisibleBounds2D(camera, viewport, cullPadding);
+      for (let index = 0; index < count; index += 1) {
+        const item = items[index];
+        if (item === undefined) {
+          continue;
         }
-        continue;
+        if (visible !== undefined && !intersectsBounds2D(cull!.bounds(item), visible)) {
+          hideSlots(rects.value, index, index + 1);
+          continue;
+        }
+        write(writeApi, item, index);
       }
-      write(writeApi, item, index);
-    }
-    // Hide every inactive slot.
-    for (let index = count; index < capacity; index += 1) {
-      const slot = rects.value[index];
-      if (slot !== undefined) {
-        slot.setXYWH(0, 0, 0, 0);
-      }
+      // Hide every inactive slot, including cross-index writes into the tail.
+      hideSlots(rects.value, count, capacity);
+    } catch (error) {
+      // Host objects are mutated in place: a later author error could leave
+      // a mixture of old and new slots. Publish a fully hidden batch before
+      // propagating the original failure instead of exposing partial writes.
+      hideSlots(rects.value, 0, capacity);
+      rects.modify(undefined, true);
+      xforms.modify(undefined, true);
+      throw error;
     }
     // Publish only after every slot is coherent across both buffers.
     rects.modify(undefined, true);

@@ -8,8 +8,8 @@
  * - `capacity` is fixed for the mounted batch;
  * - `select` maps the committed snapshot to the batch item array;
  * - `write` is a UI-runtime setter that writes transforms in place —
- *   `write.set(index, frame, x, y, rotation, scale)` — no per-frame
- *   allocation and no React per-frame work.
+ *   `write.set(index, frame, x, y, rotation, scale)` — fixed buffers
+ *   without React per-frame work; temporary records can still allocate.
  */
 import { GameWorld2D, SpriteBatch } from '../../src/react';
 import type { GameRendererProps } from '../../src/react';
