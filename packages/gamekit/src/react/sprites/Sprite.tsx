@@ -91,14 +91,11 @@ export function Sprite({
     rect: { setXYWH(x: number, y: number, width: number, height: number): void },
   ): void => {
     'worklet';
-    const clipValue = typeof clip === 'string' ? clip : clip?.value;
-    const elapsedValue = typeof elapsedMs === 'number' ? elapsedMs : elapsedMs?.value;
-    const name: string | undefined = typeof frame === 'string' ? frame : frame?.value;
-    applySpriteFrameSelection(rect, source, {
-      ...(name === undefined ? {} : { frame: name }),
-      ...(clipValue === undefined ? {} : { clip: clipValue }),
-      ...(elapsedValue === undefined ? {} : { elapsedMs: elapsedValue }),
-    });
+    applySpriteFrameSelection(
+      rect,
+      source,
+      materializeSpriteSelection(frame, clip, elapsedMs),
+    );
   };
 
   const rects = useRectBuffer(1, resolveFrameRectWorklet);

@@ -97,8 +97,12 @@ algorithm tradeoffs, and API proposals.
 
 System 09 follow-up: [2026-11-01 Assets review](09-assets-review-2026-11-01.md)
 records cancellation and cleanup repairs, declaration ownership, loading API
-changes, and group-selection benchmarks. The next core-system review is
-**10 — Sprite animation**.
+changes, and group-selection benchmarks.
+
+System 10 follow-up: [2026-11-02 Sprite animation review](10-sprite-animation-review-2026-11-02.md)
+records numeric and selection fixes, playback API contracts, transferred-worklet
+tests, and measured allocation/time tradeoffs. The next core-system review is
+**11 — Sprite rendering**.
 
 ## Validation recorded for this review
 

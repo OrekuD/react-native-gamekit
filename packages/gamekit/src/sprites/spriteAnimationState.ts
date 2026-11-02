@@ -50,18 +50,27 @@ function assertFiniteDelta(deltaSeconds: number): void {
     throw new Error('sprite animation delta must be a finite number of seconds');
   }
 }
+
+function assertPlaybackElapsed(elapsedMs: number): void {
+  if (typeof elapsedMs !== 'number' || !Number.isFinite(elapsedMs) || elapsedMs < 0) {
+    throw new Error('sprite animation elapsed time must be finite and non-negative');
+  }
+}
+
 /** The clip names of a sprite-sheet descriptor (works through the manifest brand). */
-export type SpriteClipNames<TDescriptor extends SpriteSheetDescriptor> = Extract<
+export type SpriteClipNames<TDescriptor extends SpriteSheetDescriptor> = `${Extract<
   keyof TDescriptor['animations'],
-  string
->;
+  string | number
+>}`;
 
 /** Runtime clip lookup; throws a structured error for unknown clips. */
 function clipOf(
   descriptor: SpriteSheetDescriptor,
   clip: string,
 ): SpriteSheetDescriptor['animations'][string] {
-  const animation = descriptor.animations[clip];
+  const animation = Object.prototype.hasOwnProperty.call(descriptor.animations, clip)
+    ? descriptor.animations[clip]
+    : undefined;
   if (animation === undefined) {
     throw new GameAssetError(
       'ASSET_UNKNOWN_CLIP',
@@ -94,9 +103,11 @@ export function startSpriteAnimation<TDescriptor extends SpriteSheetDescriptor>(
 /**
  * Advance playback by `deltaSeconds` of fixed-step game time.
  *
- * Finite negative deltas clamp elapsed time to zero; NaN/infinity fail
+ * Finite negative deltas rewind, clamping at zero; NaN/infinity fail
  * clearly. Loop clips keep their elapsed time bounded within one timeline
- * (modulo), so arbitrarily large deltas cost constant arithmetic.
+ * (modulo), so large deltas cost constant arithmetic. The scaled delta and
+ * accumulated elapsed time must remain representable as finite milliseconds.
+ * Unchanged playback returns the original state object.
  */
 export function advanceSpriteAnimation<
   TDescriptor extends SpriteSheetDescriptor,
@@ -107,26 +118,39 @@ export function advanceSpriteAnimation<
   deltaSeconds: number,
 ): SpriteAnimationState<TClip> {
   assertFiniteDelta(deltaSeconds);
+  assertPlaybackElapsed(state.elapsedMs);
+  assertFinitePositiveSpeed(state.speed);
+  const clip = clipOf(descriptor, state.clip);
   if (state.paused || state.completed) {
     return state;
   }
-  const clip = clipOf(descriptor, state.clip);
   const totalMs = spriteClipDurationMs(clip);
-  const next = state.elapsedMs + deltaSeconds * 1000 * state.speed;
+  const scaledDelta = deltaSeconds * 1000 * state.speed;
+  // A huge delta with a tiny speed may have a finite product even when
+  // conversion to milliseconds overflows first. Retry that rare case.
+  const deltaMs = Number.isFinite(scaledDelta)
+    ? scaledDelta
+    : (deltaSeconds * state.speed) * 1000;
+  const next = state.elapsedMs + deltaMs;
+  if (!Number.isFinite(next)) {
+    throw new RangeError('sprite animation advance must produce finite milliseconds');
+  }
   if (clip.mode === 'once') {
     if (next >= totalMs) {
       return { ...state, elapsedMs: totalMs, completed: true };
     }
-    return { ...state, elapsedMs: next < 0 ? 0 : next };
+    const elapsedMs = next < 0 ? 0 : next;
+    return elapsedMs === state.elapsedMs ? state : { ...state, elapsedMs };
   }
   // Loop: bounded elapsed within one timeline; negative clamps to zero.
   const wrapped = next < 0 ? 0 : next % totalMs;
-  return { ...state, elapsedMs: wrapped };
+  return wrapped === state.elapsedMs ? state : { ...state, elapsedMs: wrapped };
 }
 
 /**
- * Switch playback to `clip`, restarting it from the beginning. The clip
- * name is typed against the descriptor's animation table.
+ * Switch playback to a different `clip`, restarting it from the beginning.
+ * Selecting the current clip is a no-op; use `resetSpriteAnimation` to
+ * restart it. The name is typed against the descriptor's animation table.
  */
 export function playSpriteAnimation<
   TDescriptor extends SpriteSheetDescriptor,
@@ -136,10 +160,10 @@ export function playSpriteAnimation<
   state: SpriteAnimationState<TClip>,
   clip: SpriteClipNames<TDescriptor>,
 ): SpriteAnimationState<SpriteClipNames<TDescriptor>> {
+  clipOf(descriptor, clip);
   if (clip === state.clip) {
     return state;
   }
-  clipOf(descriptor, clip);
   return {
     clip,
     elapsedMs: 0,
@@ -167,7 +191,9 @@ export function resumeSpriteAnimation<TClipName extends string>(
 export function resetSpriteAnimation<TClipName extends string>(
   state: SpriteAnimationState<TClipName>,
 ): SpriteAnimationState<TClipName> {
-  return { ...state, elapsedMs: 0, completed: false };
+  return state.elapsedMs === 0 && !state.completed
+    ? state
+    : { ...state, elapsedMs: 0, completed: false };
 }
 
 /** Set a finite positive speed multiplier. */

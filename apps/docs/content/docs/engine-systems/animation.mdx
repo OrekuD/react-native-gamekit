@@ -24,7 +24,8 @@ animations: {
 - `once` clips hold their final frame and report completion; restarting them
   is an explicit gameplay state change;
 - frame references are restricted to the declared frame names at compile
-  time and validated again at definition time.
+  time and validated again at definition time;
+- frame duration and total clip duration must both be finite and positive.
 
 ## Advance from scene state
 
@@ -36,20 +37,55 @@ const initial = startSpriteAnimation(playerSheet, 'idle');
 const next = advanceSpriteAnimation(playerSheet, initial, deltaSeconds);
 ```
 
-The helpers are immutable: changing, pausing, restarting, or completing a
-clip returns a new state object and never mutates scene state. Playback state
-is `{ clip, elapsedMs, paused, speed, completed }`.
+The helpers are immutable: a changed playback record is a new object; a no-op
+can return the original object. Playback state is
+`{ clip, elapsedMs, paused, speed, completed }`.
 
-- `playSpriteAnimation(sheet, state, clip)` switches clips from the start;
+- `playSpriteAnimation(sheet, state, clip)` switches different clips from the
+  start; selecting the current clip preserves its playback position;
 - `pauseSpriteAnimation` / `resumeSpriteAnimation` are exact and idempotent;
-- `resetSpriteAnimation` restarts the current clip;
+- `resetSpriteAnimation` restarts the current clip, preserving pause and speed;
 - `setSpriteAnimationSpeed` sets a finite positive multiplier; large deltas
   stay bounded (loop elapsed time wraps within one timeline);
-- finite negative deltas clamp to zero; NaN/infinity fail clearly.
+- finite negative deltas rewind active playback, clamping at zero; paused and
+  completed playback stay unchanged;
+- NaN/infinite deltas, negative/non-finite state elapsed time, and invalid speed
+  fail clearly. An advance whose scaled delta or accumulated elapsed cannot be
+  represented as finite milliseconds throws `RangeError` instead of publishing
+  `NaN` or treating overflow as one-shot completion.
+
+Clip names infer from the descriptor, including numeric declaration keys as
+strings: a clip declared as `0: { ... }` is selected with `'0'`. Untyped unknown
+clip names throw `GameAssetError` with code `ASSET_UNKNOWN_CLIP`; inherited names
+such as `toString` count only if explicitly declared on that sheet.
 
 Gameplay selects the clip from movement or other deterministic rules — the
 reference game switches idle ↔ run from the player's motion — and the
 renderer presents `clip` + `elapsedMs` through the sprite's frame selection.
+
+## Presentation sampling
+
+`sampleSpriteClipFrame`, `sampleSpriteClipFrameName`, `spriteClipDurationMs`,
+and `spriteFrameNameForClip` are pure worklet helpers. Playback transitions such
+as `advanceSpriteAnimation` run in the simulation on the React Native runtime;
+they are not UI worklets.
+
+Direct sampling accepts finite elapsed milliseconds. Negative loop time wraps;
+negative one-shot time selects the first frame. This differs deliberately from
+rewinding playback state, which stops at zero. Loop times are reduced by the
+finite timeline before dividing into frames, matching playback's modulo policy.
+JavaScript floating-point time is still subject to ordinary rounding.
+
+`Sprite` and `GameSprite` use the same sampler. An explicit frame overrides
+clip selection. An absent sheet selection draws nothing, while an unknown
+clip/frame throws a plain, worklet-safe error. `GameSprite` also hides full-image
+sources while its scene is inactive or has no published snapshot. Rendering
+borrows the loaded image; animation never acquires or disposes assets.
+
+Raw clips passed directly to the helpers must contain a nonempty frame array,
+a supported mode, and valid duration. The name sampler rejects an absent or
+empty selected frame name. Use `spriteSheet` to validate every frame reference
+once at declaration time; sampling does not scan the whole clip every frame.
 
 ## Separation of concerns
 

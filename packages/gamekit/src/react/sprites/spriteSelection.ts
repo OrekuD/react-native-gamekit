@@ -68,7 +68,9 @@ export function selectSpriteFrameRect(
       selection.elapsedMs ?? 0,
     );
   }
-  const rect = sheet.frames[name];
+  const rect = Object.prototype.hasOwnProperty.call(sheet.frames, name)
+    ? sheet.frames[name]
+    : undefined;
   if (rect === undefined) {
     throw new Error(
       `frame ${JSON.stringify(name)} does not belong to this sprite sheet (loaded frames: ${Object.keys(sheet.frames).join(', ')})`,

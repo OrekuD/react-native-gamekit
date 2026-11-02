@@ -191,7 +191,7 @@ describe('animation playback state (T7.3)', () => {
     );
   });
 
-  it('playback helpers are worklet-compatible and capture no native objects', () => {
+  it('simulation playback state is serializable and contains no native objects', () => {
     const descriptor = sheet();
     const state = startSpriteAnimation(descriptor, 'idle');
     // The helpers must be plain functions carrying no native state; JSON

@@ -115,7 +115,12 @@ export function GameSprite<
   const opacity = useDerivedValue(() => selection.value?.opacity ?? 1);
   const flipX = useDerivedValue(() => selection.value?.flipX ?? false);
   const flipY = useDerivedValue(() => selection.value?.flipY ?? false);
-  const visible = useDerivedValue(() => selection.value?.visible ?? true);
+  const visible = useDerivedValue(() => {
+    const selected = selection.value;
+    // A missing scene/commit has no presentation, including full images
+    // whose source rectangle does not depend on frame selection.
+    return selected !== undefined && (selected.visible ?? true);
+  });
   const frameName = useDerivedValue(() => {
     'worklet';
     const selectionValue = selection.value;
