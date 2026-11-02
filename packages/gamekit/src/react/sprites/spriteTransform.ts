@@ -11,10 +11,9 @@ export interface SpriteFrameRect {
 /**
  * Resolve the source rectangle for a static frame selection.
  *
- * RF4: an absent selection (the dynamic clip/elapsed mode before its first
- * value) presents nothing instead of throwing. The static baseline uses the
- * sheet's first frame so the anchor/scale correction has sane dimensions
- * while the per-frame worklet resolves the real selection.
+ * An absent static selection uses the first animation's first own frame,
+ * or an empty rectangle if it is unavailable. This legacy baseline helper
+ * differs from the renderer's dynamic selector, which hides absent selection.
  */
 export function resolveSpriteFrameRect(
   source: LoadedImage | LoadedSpriteSheet,
@@ -33,10 +32,14 @@ export function resolveSpriteFrameRect(
         : sheet.descriptor.animations[firstAnimationName];
     const firstFrameName = firstAnimation?.frames[0];
     const baseline =
-      firstFrameName === undefined ? undefined : sheet.frames[firstFrameName];
+      firstFrameName !== undefined && Object.prototype.hasOwnProperty.call(sheet.frames, firstFrameName)
+        ? sheet.frames[firstFrameName]
+        : undefined;
     return baseline ?? { x: 0, y: 0, width: 0, height: 0 };
   }
-  const rect = sheet.frames[frame];
+  const rect = Object.prototype.hasOwnProperty.call(sheet.frames, frame)
+    ? sheet.frames[frame]
+    : undefined;
   if (rect === undefined) {
     throw new Error(
       `frame ${JSON.stringify(frame)} does not belong to this sprite sheet (loaded frames: ${Object.keys(sheet.frames).join(', ')})`,
@@ -148,7 +151,9 @@ export function computeSpriteRsxform(input: SpriteTransformInput): SpriteRsxform
  * the pivot), so callers must derive it on the UI runtime from live values
  * — never memoize it from stale React-render reads (GS-SPRITE-01).
  */
-export function spriteGroupCorrection(input: SpriteTransformInput): readonly SkiaTransformElement[] {
+export function spriteGroupCorrection(
+  input: SpriteTransformInput | Pick<SpriteTransformInput, 'x' | 'y' | 'rotation' | 'flipX' | 'flipY'>,
+): readonly SkiaTransformElement[] {
   'worklet';
   const flipX = readBoolean(input.flipX);
   const flipY = readBoolean(input.flipY);

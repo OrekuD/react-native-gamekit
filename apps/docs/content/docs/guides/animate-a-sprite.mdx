@@ -29,18 +29,31 @@ const assets = defineAssets({
 Animation state is plain serializable data: clip name, elapsed time, paused flag, speed, completion. Store it in scene state and advance it in `update` with the fixed step:
 
 ```ts
+create: () => ({
+  // ...other initial scene state...
+  animation: startSpriteAnimation(assets.gameplay.player, 'idle'),
+}),
 update: ({ state, input, deltaSeconds }) => {
   const moving = /* ... from input ... */;
+  const selected = playSpriteAnimation(
+    assets.gameplay.player,
+    state.animation,
+    moving ? 'run' : 'idle',
+  );
   const animation = advanceSpriteAnimation(
     assets.gameplay.player,
-    moving ? 'run' : 'idle',
+    selected,
     deltaSeconds,
   );
   return { ...state, animation };
 },
 ```
 
-`advanceSpriteAnimation(descriptor, clip, deltaSeconds)` returns the next `SpriteAnimationState`. Because the input and elapsed game time select the frame, the same game produces the same frames at 30, 60, 90, or 120 Hz. The other operations are `playSpriteAnimation`, `pauseSpriteAnimation`, `resumeSpriteAnimation`, `setSpriteAnimationSpeed`, `resetSpriteAnimation`, and `startSpriteAnimation`.
+`advanceSpriteAnimation(descriptor, state, deltaSeconds)` returns the next
+`SpriteAnimationState`. `playSpriteAnimation` preserves playback when the same
+clip remains selected and restarts on a different clip. Because input and elapsed
+game time select the frame, equivalent simulation time produces the same frame
+at 30, 60, 90, or 120 Hz. Pause, resume, speed, and reset are explicit state changes.
 
 ## 3. Let the renderer present it
 
@@ -53,11 +66,15 @@ update: ({ state, input, deltaSeconds }) => {
   alpha={alpha}
   source={assets.get(definition.assets.gameplay.player)}
   anchor={{ x: 0.5, y: 1 }}
-  select={({ current }) => ({
-    x: current.playerX,
-    y: current.playerY,
-    clip: current.animation.clip,
-  })}
+  select={({ current }) => {
+    'worklet';
+    return {
+      x: current.playerX,
+      y: current.playerY,
+      clip: current.animation.clip,
+      elapsedMs: current.animation.elapsedMs,
+    };
+  }}
 />
 ```
 

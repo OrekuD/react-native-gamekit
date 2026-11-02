@@ -40,20 +40,34 @@ import { SpriteBatch } from 'rn-gamekit/react';
 - Buffers stay allocated at capacity; updates do not render React. Selection,
   update policy, and transform calculations can still allocate temporary
   values, so fixed buffers do not imply zero per-frame allocation.
-- `write.set(index, frame, x, y, rotation, scale, visible)` — writes past
-  capacity fail clearly in development; inactive slots are hidden with
-  zero-size rects and never remount topology.
-- Item order is the drawing order; the anchor is uniform per batch.
+- `write.set(index, frame, x, y, rotation, scale, visible)` requires an integer
+  index inside capacity in every build. Selecting more items than capacity
+  throws in development and truncates to capacity in production.
+- Each update rebuilds the visible slots. A sparse/undefined item or omitted
+  write leaves that slot hidden, unless another callback writes it. Multiple
+  writes and writes to another active slot are supported; the last write wins.
+  Slots at or beyond the selected active count are hidden after callbacks.
+- Slot index is drawing order; callbacks run in selected-item order. With the
+  usual `write.set(index, ...)` these orders match. The anchor is uniform per batch.
+- A missing snapshot or inactive scene hides the batch without calling `select`.
+  If selection, culling bounds, frame lookup, or an author writer throws, the
+  batch clears and publishes its rects before rethrowing. This assumes live,
+  working native buffers; it is not recovery from a broken native host handle.
 - The batch never disposes the image — the asset lease owns it.
-- Do not put unrelated textures in one batch; multiple sheets may share a
-  batch only if they resolve to the same Skia image.
+- One batch uses one source image and its frame table. Use separate batches
+  for unrelated textures, and retain the source's asset lease while mounted.
+
+With culling, bounds are evaluated in selected-item order, and a culled item
+clears its own slot. Prefer writing the supplied `index` when using culling;
+cross-index writes retain their ordering semantics and can interact with later
+clears. Culling is presentation-only and never changes simulation state.
 
 ## When not to batch
 
 - A handful of unique sprites: use retained `Sprite`s.
 - Mixed textures in one draw: use separate batches.
-- Per-sprite non-uniform scale: the RSXform carries uniform scale only;
-  retained sprites support non-uniform scale through the wrapping group.
+- Per-sprite non-uniform scale: both Sprite and SpriteBatch expose uniform
+  scale. Use custom Skia composition if separate axis scales are required.
 
 ## Performance evidence
 
@@ -61,3 +75,7 @@ Use the Performance Lab's sprite-scaling scenario to compare retained and
 batched rendering on representative physical devices. Buffer publication
 tests check update ordering and notifications; they do not measure FPS or
 establish a universal count at which batching becomes faster.
+
+Clearing active slots before writing fixes stale sprites but adds zero-rect
+writes for active slots. Every update still scans allocated capacity as well as
+selected items; fixed buffers and culling do not make CPU work visible-only.

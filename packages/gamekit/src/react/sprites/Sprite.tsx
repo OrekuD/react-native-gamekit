@@ -2,9 +2,9 @@
  * `Sprite` — the retained sprite primitive (T7.6).
  *
  * Renders one full-image sprite or one sprite-sheet frame through a
- * source-verified Skia path: full images use `<Image>`; sheet frames use a
- * single-entry Atlas (the RSXform carries rotation + position, a wrapping
- * Group applies the scale/flip part around the anchor). All animatable
+ * source-verified Skia path: both full images and sheet frames use a
+ * single-entry Atlas (the RSXform carries scale, rotation, and position; a
+ * wrapping Group applies reflection around the anchor). All animatable
  * properties accept plain numbers or Reanimated shared/derived values
  * without mirroring them through React state. Drawing order is React child
  * order. The sprite never subscribes React to the game frame.
@@ -37,8 +37,9 @@ export interface SpriteProps {
   /** Frame name for sprite sheets; ignored for full images. A shared value
    * may carry undefined while the selection has not been published. */
   readonly frame?: SpriteAnimatableString | SharedValue<string | undefined>;
-  /** Clip name for sprite sheets; the frame is selected from it. */
-  readonly clip?: SpriteAnimatableString;
+  /** Clip name for sprite sheets; the frame is selected from it. A shared
+   * value may carry undefined before a clip selection has been published. */
+  readonly clip?: SpriteAnimatableString | SharedValue<string | undefined>;
   /** Elapsed milliseconds within the clip (frame selection). */
   readonly elapsedMs?: SpriteAnimatable;
   /** World position in logical units. */
@@ -122,27 +123,19 @@ export function Sprite({
     });
     xform.set(result.scos, result.ssin, result.tx, result.ty);
   });
-  // GS-SPRITE-01: the correction depends on position, rotation, scale,
-  // flips, and the live frame dimensions, so it is derived on the UI
-  // runtime from live values — never memoized from React-render reads.
+  // GS-SPRITE-01: reflection depends only on position, rotation, and flips.
+  // Frame size, anchor, and scale are already handled by the RSXform;
+  // resampling the clip here adds work and unnecessary dependencies.
   const groupTransform = useDerivedValue(() => {
-    const resolved = selectSpriteFrameRect(
-      source,
-      materializeSpriteSelection(frame, clip, elapsedMs),
-    );
+    'worklet';
     return spriteGroupCorrection({
       x,
       y,
       rotation,
-      scale,
       flipX,
       flipY,
-      anchorX: anchor.x,
-      anchorY: anchor.y,
-      frameWidth: resolved?.width ?? 0,
-      frameHeight: resolved?.height ?? 0,
     });
-  }, [x, y, rotation, scale, flipX, flipY, frame, clip, elapsedMs, source, anchor.x, anchor.y]);
+  }, [x, y, rotation, flipX, flipY]);
   const colors = useMemo(() => (tint === undefined ? undefined : [tint]), [tint]);
 
   // The Skia Group has no `visible` prop: hiding is expressed as a combined
