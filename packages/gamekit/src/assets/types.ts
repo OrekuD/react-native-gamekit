@@ -45,7 +45,7 @@ export type SpriteAnimationMode = 'loop' | 'once';
 export interface SpriteClip<TFrameName extends string = string> {
   /** Ordered frame references; at least one, all declared on the sheet. */
   readonly frames: readonly TFrameName[];
-  /** Uniform per-frame duration in milliseconds; finite and greater than zero. */
+  /** Uniform per-frame milliseconds; positive, with finite frame and total duration. */
   readonly frameDurationMs: number;
   /** Discriminated playback mode. */
   readonly mode: SpriteAnimationMode;

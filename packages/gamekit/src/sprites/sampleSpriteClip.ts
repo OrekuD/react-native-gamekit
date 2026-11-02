@@ -7,7 +7,7 @@
  *
  * Single-contract rule (GS-ANIMATION-01): every renderer path resolves
  * frames through these helpers — never duplicated arithmetic. Negative
- * elapsed clamps uniformly (loops wrap, one-shots pin to frame zero);
+ * elapsed follows one policy (loops wrap, one-shots pin to frame zero);
  * non-finite elapsed, empty clips, and non-positive durations fail clearly
  * instead of masking invalid data as frame zero. Unknown clip names throw
  * a plain `[ASSET_UNKNOWN_CLIP]` error: the UI-reachable call graph must
@@ -21,7 +21,7 @@ function assertFiniteElapsed(elapsedMs: number): void {
   'worklet';
   if (typeof elapsedMs !== 'number' || !Number.isFinite(elapsedMs)) {
     throw new Error(
-      `sprite clip elapsed time must be a finite number of milliseconds, got ${String(elapsedMs)}`,
+      'sprite clip elapsed time must be a finite number of milliseconds',
     );
   }
 }
@@ -29,6 +29,9 @@ function assertFiniteElapsed(elapsedMs: number): void {
 /** Reject clips with no selectable frame or no positive pace. */
 function assertSelectableClip(clip: SpriteClip): number {
   'worklet';
+  if (clip === null || typeof clip !== 'object' || !Array.isArray(clip.frames)) {
+    throw new Error('sprite clip must contain an array of frame names');
+  }
   const frameCount = clip.frames.length;
   const duration = clip.frameDurationMs;
   if (frameCount === 0) {
@@ -36,8 +39,14 @@ function assertSelectableClip(clip: SpriteClip): number {
   }
   if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) {
     throw new Error(
-      `sprite clip frame duration must be a finite number greater than zero, got ${String(duration)}`,
+      'sprite clip frame duration must be a finite number greater than zero',
     );
+  }
+  if (!Number.isFinite(frameCount * duration)) {
+    throw new Error('sprite clip total duration must be finite');
+  }
+  if (clip.mode !== 'loop' && clip.mode !== 'once') {
+    throw new Error("sprite clip mode must be 'loop' or 'once'");
   }
   return frameCount;
 }
@@ -56,8 +65,16 @@ export function sampleSpriteClipFrame(clip: SpriteClip, elapsedMs: number): numb
   const frameCount = assertSelectableClip(clip);
   const duration = clip.frameDurationMs;
   if (clip.mode === 'loop') {
-    const index = Math.floor(elapsedMs / duration) % frameCount;
-    return (index + frameCount) % frameCount;
+    // Match playback's bounded timeline before division. Dividing an
+    // unbounded elapsed value first can overflow or lose frame precision.
+    const remainder = elapsedMs % (frameCount * duration);
+    if (remainder === 0) return 0;
+    const index = Math.floor(remainder / duration);
+    // Tiny negative offsets can divide to -0; they still precede frame 0.
+    // Clamp rounded endpoint quotients to a valid index on either side.
+    return remainder < 0
+      ? Math.max(0, frameCount + Math.min(-1, index))
+      : Math.min(frameCount - 1, index);
   }
   const index = Math.floor(elapsedMs / duration);
   if (index < 0) {
@@ -72,15 +89,18 @@ export function sampleSpriteClipFrame(clip: SpriteClip, elapsedMs: number): numb
  */
 export function sampleSpriteClipFrameName(clip: SpriteClip, elapsedMs: number): string {
   'worklet';
-  const frames = clip.frames;
   const index = sampleSpriteClipFrame(clip, elapsedMs);
-  return frames[index] ?? '';
+  const name = clip.frames[index];
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('[ASSET_EMPTY_CLIP] sprite clip selects no frame name');
+  }
+  return name;
 }
 
 /** Total clip duration in milliseconds (one-shot: its full timeline). */
 export function spriteClipDurationMs(clip: SpriteClip): number {
   'worklet';
-  return clip.frames.length * clip.frameDurationMs;
+  return assertSelectableClip(clip) * clip.frameDurationMs;
 }
 
 /**
@@ -107,13 +127,8 @@ export function spriteFrameNameForClip(
   elapsedMs: number,
 ): string {
   'worklet';
-  const animation = animations[clip];
-  if (animation === undefined) {
+  if (!Object.prototype.hasOwnProperty.call(animations, clip) || animations[clip] === undefined) {
     throw new Error(`[ASSET_UNKNOWN_CLIP] unknown animation clip ${JSON.stringify(clip)}`);
   }
-  const name = sampleSpriteClipFrameName(animation, elapsedMs);
-  if (name === '') {
-    throw new Error(`[ASSET_EMPTY_CLIP] clip ${JSON.stringify(clip)} selects no frame`);
-  }
-  return name;
+  return sampleSpriteClipFrameName(animations[clip]!, elapsedMs);
 }

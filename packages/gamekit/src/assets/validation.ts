@@ -83,11 +83,12 @@ export function validateClip(
     }
   }
   const duration = clip.frameDurationMs;
-  if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0) {
+  if (typeof duration !== 'number' || !Number.isFinite(duration) || duration <= 0 ||
+    !Number.isFinite(duration * clip.frames.length)) {
     throw new GameAssetError(
       'ASSET_INVALID_DURATION',
       [...path, 'frameDurationMs'],
-      `clip ${JSON.stringify(name)} duration must be finite and greater than zero`,
+      `clip ${JSON.stringify(name)} frame and total duration must be finite and greater than zero`,
     );
   }
   if (clip.mode !== 'loop' && clip.mode !== 'once') {
